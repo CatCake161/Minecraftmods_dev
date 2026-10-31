@@ -1,6 +1,7 @@
 # Cinema P0 技术验证
 
 这是影院系统的独立技术验证工程，不参与模组构建，也不修改 `src/` 下的模组代码。
+扬声器/投影仪的完整设计取舍和 P0.5 验证矩阵见 [P05-DESIGN.md](P05-DESIGN.md)。
 目标是在写方块和投影仪之前，先回答三个问题：
 
 1. **解码**：FFmpeg/JavaCV 能否稳定解 720p30（以及 1080p60）？
@@ -20,8 +21,8 @@
 | JavaCV | 1.5.14 + FFmpeg 8.1.2 |
 | JCodec | 0.2.5 |
 
-测试素材由本机 FFmpeg CLI 8.1.1 生成：10 秒 H.264 + AAC 48 kHz，
-`testsrc2` 动态测试图，`-movflags +faststart`。
+测试素材由本机 FFmpeg CLI 8.1.1 生成：10 秒 H.264 + AAC 48 kHz，立体声（左右声道不同频率），
+`testsrc2` 动态测试图，`-movflags +faststart`。另有一个 5 秒 5.1 素材，每个声道使用不同频率。
 
 ## 生成测试素材
 
@@ -31,8 +32,9 @@
 
 输出：
 
-- `spike/testmedia/test720p30.mp4`：1280×720、30 fps、约 4 Mbps、AAC 128 kbps
-- `spike/testmedia/test1080p60.mp4`：1920×1080、60 fps、约 8 Mbps、AAC 128 kbps
+- `spike/testmedia/test720p30.mp4`：1280×720、30 fps、约 4 Mbps、AAC 192 kbps 立体声
+- `spike/testmedia/test1080p60.mp4`：1920×1080、60 fps、约 8 Mbps、AAC 192 kbps 立体声
+- `spike/testmedia/test51.mp4`：5.1 声道映射测试，FL/FR/FC/LFE/BL/BR = 440/554/659/80/880/988 Hz，AAC 384 kbps
 
 `spike/testmedia/` 已在 `.gitignore` 中忽略，不会提交。
 
@@ -46,6 +48,18 @@ $f = (Resolve-Path 'spike\testmedia\test720p30.mp4').Path
 
 # 元数据
 .\gradlew -p spike run --args="info $f"
+
+# OpenAL 能力探测（含双设备/双上下文共存）
+.\gradlew -p spike run --args="caps"
+
+# 流式 source 的 AL_SEC_OFFSET 语义诊断
+.\gradlew -p spike run --args="offset"
+
+# 六只扬声器同 context、同一设备时钟启动，测声道间采样对齐
+.\gradlew -p spike run --args="speakers"
+
+# 5.1 解码与声道顺序验证
+.\gradlew -p spike run --args="surround $(Resolve-Path 'spike\testmedia\test51.mp4').Path"
 
 # 解码吞吐（FFmpeg vs JCodec）
 .\gradlew -p spike run --args="decode $f"
@@ -90,18 +104,78 @@ $f = (Resolve-Path 'spike\testmedia\test720p30.mp4').Path
 
 ### 3. 音频与音画同步
 
-音频：AAC 48 kHz → 立体声 S16，0.5 秒一块，4 个流式缓冲。
+音频：AAC 48 kHz → 真实立体声 S16（左右声道 440/554 Hz），0.5 秒一块，4 个流式缓冲。
 实测 10 秒素材：
 
 | 指标 | 结果 |
 |---|---|
-| 音频解码 | 480256 帧 / 10.005 s，耗时 1.2 s（**8.2× 实时**） |
-| 音频时钟 vs 墙钟 | p95 **13.9 ms**，max **14.9 ms** |
-| 音画同步 720p30 | 300/300 帧呈现，**0 丢帧**，迟到 p95 13.3 ms，max 66.7 ms |
-| 音画同步 1080p60 | 599/600 帧呈现，**1 丢帧**，迟到 p95 13.3 ms，max 86.7 ms |
+| 音频解码 | 480256 帧 / 10.005 s，耗时 1.2 s（**8.3× 实时**） |
+| 混音器时钟 vs 墙钟 | p95 **10.6 ms**，max **11.5 ms** |
+| 设备输出延迟 | **50–60 ms**（OpenAL Soft WASAPI） |
+| 音画同步 720p30 | 299/300 帧呈现，**0 丢帧**，迟到 p95 3.3 ms |
+| 音画同步 1080p60 | 598/600 帧呈现，**0 丢帧**，迟到 p95 3.3 ms |
 
-音频时钟稳定、单调，和墙钟的偏差远小于 50 ms 目标；作为视频母时钟可用。
-100 ms 的丢帧阈值在本次测试中只触发了 1 次（1080p60，启动阶段）。
+**重要修正**：`AL_SEC_OFFSET` 是混音器位置，不是用户实际听到的位置。P0 最初把它
+直接当作音频时钟，视频会比声音早约 50–60 ms。现在改用
+`AL_SEC_OFFSET_LATENCY_SOFT`，并从音频 PTS 中减去设备延迟，视频目标改为
+“正在到达扬声器的采样”的 PTS；上表的同步结果已包含这一修正。
+
+`AL_SEC_OFFSET` 还是**相对当前队首 buffer** 的偏移，换 buffer 时会归零；
+媒体时间必须用“队首 buffer 起点 + offset”计算。跨 buffer 减延迟时不能把结果
+钳到队首起点，否则每个 buffer 开头都会产生约一个延迟长度的跳变。
+
+## P0.5：扬声器与投影仪前置验证（进行中）
+
+新增命令：`caps`、`offset`、`speakers`、`surround`。
+
+### 4. OpenAL 能力与双上下文
+
+本机 LWJGL 3.3.3 自带 OpenAL Soft **1.23.1**：
+
+| 能力 | 结果 |
+|---|---|
+| EFX | 1.0，最多 **2 个 auxiliary send** |
+| HRTF | 支持（`ALC_SOFT_HRTF`） |
+| 扬声器半径 | 支持（`AL_EXT_SOURCE_RADIUS`） |
+| 真实输出延迟 | 支持（`AL_SOFT_source_latency`） |
+| 设备时钟 | 支持（`ALC_SOFT_device_clock`） |
+| 采样级定时启动 | 支持（`AL_SOFT_source_start_delay`） |
+| 线程本地 context | 支持（`ALC_EXT_thread_local_context`） |
+| B-format / 空间化 | 支持 |
+| 双设备 + 双 context 同进程 | **通过**，切换回来后 `alGetError=0` |
+
+双设备测试只证明“能开”，不等于 Minecraft 内与 `SoundEngine` 共存没有问题；
+这仍是 P0.5 的必测项。
+
+### 5. 5.1 解码与声道顺序
+
+`test51.mp4` 六个声道使用不同频率。JavaCV/FFmpeg 请求 6 声道后实际得到 6 声道，
+没有静默 downmix；主导频率矩阵为对角线：
+
+| 声道 | 主导频率 |
+|---|---|
+| FL | 440 Hz |
+| FR | 554 Hz |
+| FC | 659 Hz |
+| LFE | 80 Hz |
+| BL | 880 Hz |
+| BR | 988 Hz |
+
+结论：**5.1 可以直接解码为 FL/FR/FC/LFE/BL/BR 六路单声道**，不需要额外 splitter。
+
+### 6. 多扬声器同步、EFX、指向性
+
+`speakers` 在同一个 context 中创建 6 个 mono source，按 5.1 位置摆放，
+用 `alSourcePlayAtTimeSOFT` 安排到**同一个设备时钟时刻**启动：
+
+- 六路 sample offset 完全一致：**0 samples / 0.000 ms skew**
+- EFX EAX reverb send：创建、绑定成功
+- 每 source 的 low-pass direct filter：绑定成功
+- `AL_SOURCE_RADIUS`、`AL_CONE_INNER/OUTER_ANGLE`、`AL_CONE_OUTER_GAIN`：设置成功
+
+这说明“每只扬声器一个 source、同一 context 内采样级同步”的路线可行。
+尚未验证的是：真实长片流式播放、暂停/跳转/欠载后的重新对齐，以及
+Minecraft 内的 context 选择。
 
 ## 结论：GO
 
@@ -111,7 +185,11 @@ P0 通过标准：
 
 - [x] 720p30 解码吞吐远高于实时
 - [x] 720p30 每帧上传 < 2 ms（p50）
-- [x] 音画偏差 < 50 ms（实测 p95 约 14 ms）
+- [x] 混音器时钟与墙钟偏差 < 20 ms（实测 p95 约 11 ms）
+- [x] 设备延迟已测并可补偿（50–60 ms）
+- [x] 经过延迟补偿后音画目标偏差 < 10 ms
+- [x] 5.1 六声道可正确解码
+- [x] 六只扬声器可在同一设备时钟上采样级同步启动
 - [x] 1080p60 也可以作为可选档位运行
 
 已排除 JCodec：纯 Java、无原生库的优势不足以抵消性能差距。
@@ -127,21 +205,35 @@ P0 通过标准：
    回收已播放缓冲时要按 `AL_BUFFERS_PROCESSED` 数量下标读取，不能 `flip()` 后遍历。
 4. **纹理上传必须在 GL 线程**：解码线程只产出帧，上传和绘制留在渲染线程。
 5. **启动预热**：首帧纹理解码/分配有约 85 ms 尖峰，正式实现应在播放前预分配纹理。
+6. **输出延迟必须单独补偿**：`AL_SEC_OFFSET` 只到混音器；真实设备延迟约 50–60 ms。
+   用 `AL_SEC_OFFSET_LATENCY_SOFT` 的第二个返回值修正视频目标。
+7. **多扬声器不要各开一个 context**：同一 context 内六个 source 可以由同一个
+   mixer callback 采样级同步；用 `alSourcePlayAtTimeSOFT` 安排同一设备时钟启动。
 
 ## 未覆盖 / P1 风险
 
 - **OpenAL 与 Minecraft 共存**：spike 是独立进程。P1 必须在 Minecraft 客户端中验证
-  第二套 OpenAL context / 设备与 `SoundEngine` 共存，并处理线程本地 context。
+  独立 context / 设备与 `SoundEngine` 共存，比较“独立 context”和“共享 Minecraft
+  context”两条路线，处理线程本地 context、设备切换和资源重载。
 - **长片音频内存**：当前为了简化，先整段解码音频再播放。两小时立体声 48 kHz S16
-  约 690 MB，正式实现必须改成有界队列的流式解码。
+  约 690 MB，5.1 约 2.1 GB；正式实现必须改成有界队列的流式解码和每声道 ring buffer。
 - **原生库体积与许可**：JavaCV/FFmpeg 各平台原生库较大（约 50–100 MB/平台），
-  且涉及 LGPL/GPL 与 H.264 专利问题，发布前需要单独评估。
+  且涉及 LGPL/GPL 与 H.264 专利问题，发布前需要单独评估。当前 spike 的
+  `org.bytedeco:ffmpeg` 二进制来源和启用模块也要核对，不能默认按 LGPL 发布。
 - **跨平台**：目前只测了 Windows x64，natives 也是 hardcode；macOS/Linux 需要在打包阶段处理。
+  macOS 的 OpenAL/EFX 能力也需要单独探测。
 - **屏幕几何**：spike 只画了一个全屏 quad；多方块屏幕的 UV 切分、遮挡和光影兼容性尚未验证。
+- **投影仪**：投射几何、阴影遮挡、光束、环境光洗白、Sodium/Iris 兼容都还没有实测。
+- **LAN 同步**：媒体文件只在客户端本地，服务端只能同步播放状态和文件指纹；
+  缺少文件的玩家需要明确的降级 UI。
 
-## 下一步（P1）
+## 下一步（P0.5 → P1）
 
-1. 在 Minecraft 客户端里验证 OpenAL 独立 context 与 `SoundEngine` 共存。
-2. 2×2 屏幕方块 + 投影仪方块，每个屏幕共享一张 `DynamicTexture`。
-3. 流式音频解码 + 帧缓冲池 + 播放/暂停/停止/跳转。
-4. 本地文件选择与最小播放命令，720p30 默认档位。
+1. **Minecraft 内 OpenAL 共存**：先做独立 context，再做共享 context 对照；覆盖资源重载、
+   音频设备切换、暂停/恢复。
+2. **Minecraft 内扬声器原型**：六只 speaker block + receiver 的最小链路，
+   播放 5.1 测试片，验证每声道定位、同步、遮挡 low-pass 和 reverb。
+3. **投影仪视觉原型**：4×3 屏幕 + 投影仪方块，验证 dynamic texture 生命周期、
+   多方块 UV、投掷比/梯形校正/对焦、射线遮挡阴影、光束和 Sodium/Iris。
+4. **流式管线**：有界音频 ring buffer + 视频帧池 + 播放/暂停/停止/跳转。
+5. **本地文件选择与最小播放命令**，720p30 默认档位。

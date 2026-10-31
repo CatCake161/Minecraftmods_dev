@@ -2,8 +2,9 @@
 
 基于 **Minecraft 1.21.1 + Fabric** 的影院系统模组。
 
-当前阶段：**P0 技术验证已完成**（FFmpeg 解码 / 纹理上传 / OpenAL 音画同步），
-测试代码和实测数据见 [spike/README.md](spike/README.md)。
+当前阶段：**P0 技术验证已完成，P0.5 扬声器/投影仪前置验证进行中**。
+测试代码和实测数据见 [spike/README.md](spike/README.md)，
+扬声器与投影仪的设计/验证清单见 [spike/P05-DESIGN.md](spike/P05-DESIGN.md)。
 
 ## 环境要求
 

@@ -30,6 +30,7 @@ public final class AudioSyncBenchmark {
 
 		List<Double> ptsDrift = new ArrayList<>();
 		List<Double> clockDrift = new ArrayList<>();
+		List<Double> latencySamples = new ArrayList<>();
 		double maxAbsPtsDrift = 0;
 		double finalPtsDrift = 0;
 		double wallAtEnd;
@@ -45,20 +46,22 @@ public final class AudioSyncBenchmark {
 				player.pump();
 				double wall = (System.nanoTime() - startNanos) / 1e9;
 				double pts = player.mediaPtsSeconds();
-				double clock = player.clockSeconds();
+				double audible = player.audiblePtsSeconds();
+				double latency = player.latencySeconds();
 
 				if (wall >= WARMUP_SECONDS) {
 					double ptsError = pts - wall;
-					double clockError = wall - clock;
+					double audibleError = audible + latency - wall;
 					ptsDrift.add(ptsError);
-					clockDrift.add(clockError);
+					clockDrift.add(audibleError);
+					latencySamples.add(latency);
 					maxAbsPtsDrift = Math.max(maxAbsPtsDrift, Math.abs(ptsError));
 					finalPtsDrift = ptsError;
 				}
 				if (wall - lastLog >= 1.0) {
 					lastLog = wall;
-					System.out.printf("t=%5.2fs  pts=%6.3f  clock=%6.3f  drift=%+7.1f ms%n",
-						wall, pts, clock, (pts - wall) * 1000);
+					System.out.printf("t=%5.2fs  mixer=%6.3f  audible=%6.3f  latency=%5.1f ms  mixer-wall=%+6.1f ms%n",
+						wall, pts, audible, latency * 1000, (pts - wall) * 1000);
 				}
 				Thread.sleep(5);
 			}
@@ -66,10 +69,11 @@ public final class AudioSyncBenchmark {
 		}
 
 		System.out.printf("wall time    : %.3f s%n", wallAtEnd);
-		System.out.printf("A/V offset   : final %+.1f ms, max |drift| %.1f ms%n",
+		System.out.printf("clock error  : final %+.1f ms, max |drift| %.1f ms%n",
 			finalPtsDrift * 1000, maxAbsPtsDrift * 1000);
-		printDrift("pts-wall ms", ptsDrift);
-		printDrift("wall-clock ms", clockDrift);
+		printDrift("mixer-wall ms", ptsDrift);
+		printDrift("audible+lat-wall ms", clockDrift);
+		printDrift("latency ms", latencySamples);
 	}
 
 	private static void printDrift(String label, List<Double> samples) {

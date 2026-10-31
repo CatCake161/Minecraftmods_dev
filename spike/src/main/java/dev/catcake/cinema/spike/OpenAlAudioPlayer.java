@@ -6,7 +6,9 @@ import org.lwjgl.openal.AL11;
 import org.lwjgl.openal.ALC;
 import org.lwjgl.openal.ALC10;
 import org.lwjgl.openal.ALCCapabilities;
+import org.lwjgl.openal.SOFTSourceLatency;
 
+import java.nio.DoubleBuffer;
 import java.nio.IntBuffer;
 import java.nio.ShortBuffer;
 import java.util.ArrayDeque;
@@ -37,6 +39,8 @@ final class OpenAlAudioPlayer implements AutoCloseable {
 	private final Deque<QueuedBuffer> queued = new ArrayDeque<>();
 
 	private ShortBuffer directSamples = ShortBuffer.allocate(0);
+	private final DoubleBuffer latencyQuery = org.lwjgl.BufferUtils.createDoubleBuffer(2);
+	private double lastLatencySeconds;
 
 	private double consumedSeconds;
 	private double lastEndPtsSeconds;
@@ -152,6 +156,66 @@ final class OpenAlAudioPlayer implements AutoCloseable {
 		int state = alGetSourcei(source, AL_SOURCE_STATE);
 		double offset = state == AL_PLAYING || state == AL_PAUSED ? alGetSourcef(source, AL11.AL_SEC_OFFSET) : 0.0;
 		return queued.peekFirst().startPtsSeconds() + Math.max(0.0, offset);
+	}
+
+	/**
+	 * Media timestamp that is actually reaching the speakers now.
+	 *
+	 * <p>{@link AL11#AL_SEC_OFFSET} stops at the mixer. The device and audio
+	 * server add another 20-80 ms on a normal Windows machine. Subtracting the
+	 * latency reported by {@code AL_SOFT_source_latency} is what keeps video
+	 * from running ahead of the sound.
+	 */
+	public double audiblePtsSeconds() {
+		if (queued.isEmpty()) {
+			return lastEndPtsSeconds;
+		}
+		int state = alGetSourcei(source, AL_SOURCE_STATE);
+		if (state != AL_PLAYING && state != AL_PAUSED) {
+			lastLatencySeconds = 0;
+			return queued.peekFirst().startPtsSeconds();
+		}
+
+		latencyQuery.clear();
+		SOFTSourceLatency.alGetSourcedvSOFT(source, SOFTSourceLatency.AL_SEC_OFFSET_LATENCY_SOFT, latencyQuery);
+		double offset = latencyQuery.get(0);
+		double latency = latencyQuery.get(1);
+		lastLatencySeconds = latency;
+		// AL_SEC_OFFSET is relative to the buffer at the head of the queue.
+		// Subtracting latency may point into the previous buffer, so do not
+		// clamp to the head buffer's start; only clamp at the beginning of the
+		// whole stream.
+		double audible = queued.peekFirst().startPtsSeconds() + offset;
+		if (state == AL_PLAYING) {
+			audible -= latency;
+		}
+		return Math.max(0.0, audible);
+	}
+
+	/** Last reported delay between the mixer and the physical output. */
+	public double latencySeconds() {
+		return lastLatencySeconds;
+	}
+
+	/** Raw {@code AL_SEC_OFFSET} for diagnostics. */
+	public double sourceOffsetSeconds() {
+		int state = alGetSourcei(source, AL_SOURCE_STATE);
+		return state == AL_PLAYING || state == AL_PAUSED ? alGetSourcef(source, AL11.AL_SEC_OFFSET) : 0.0;
+	}
+
+	/** Number of buffers the mixer has finished, for diagnostics. */
+	public int buffersProcessed() {
+		return alGetSourcei(source, AL_BUFFERS_PROCESSED);
+	}
+
+	/** Number of buffers still queued, for diagnostics. */
+	public int buffersQueued() {
+		return alGetSourcei(source, AL_BUFFERS_QUEUED);
+	}
+
+	/** PTS of the buffer at the head of the queue, for diagnostics. */
+	public double frontBufferStartSeconds() {
+		return queued.isEmpty() ? lastEndPtsSeconds : queued.peekFirst().startPtsSeconds();
 	}
 
 	public long startedAtNanos() {

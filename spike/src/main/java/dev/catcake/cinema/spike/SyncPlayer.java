@@ -72,6 +72,7 @@ public final class SyncPlayer {
 
 			List<Double> lateSamples = new ArrayList<>();
 			List<Double> uploadSamples = new ArrayList<>();
+			List<Double> latencySamples = new ArrayList<>();
 			VideoFrame pending = first;
 			int presented = 0;
 			int dropped = 0;
@@ -86,7 +87,8 @@ public final class SyncPlayer {
 					throw new IllegalStateException("video decoder failed", error.get());
 				}
 
-				double target = player.mediaPtsSeconds();
+				double target = player.audiblePtsSeconds();
+				latencySamples.add(player.latencySeconds() * 1000);
 				if (pending == null && !videoDone.get()) {
 					pending = frames.poll();
 				}
@@ -119,6 +121,7 @@ public final class SyncPlayer {
 				presented / Math.max(wall, 1e-9), decoded.get() / Math.max(wall, 1e-9));
 			printStats("late ms", lateSamples, false);
 			System.out.printf("max lateness  : %.1f ms%n", maxLate * 1000);
+			printStats("device latency ms", latencySamples, true);
 			printStats("present ms", uploadSamples, true);
 		} finally {
 			cancelled.set(true);
