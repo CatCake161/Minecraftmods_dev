@@ -128,6 +128,29 @@ $f = (Resolve-Path 'spike\testmedia\test720p30.mp4').Path
 
 新增命令：`caps`、`offset`、`speakers`、`surround`。
 
+### Minecraft 内测试
+
+独立 Gradle 工程之外，模组里也有两个客户端测试入口（仅用于 P0.5）：
+
+```powershell
+# 先生成一个 superflat 测试世界（只需一次；也可以用现有世界）
+$env:JAVA_HOME='C:\Users\Whuch\.jdks\openjdk-26.0.2.1'
+# runServer 生成 run/spike 后，复制到 run/saves/spike
+
+# 5.1 扬声器：独立 OpenAL context + 6 个 mono source
+$env:JAVA_TOOL_OPTIONS='-Dfirstmod.spike.audio=independent -Dfirstmod.spike.exit=true'
+.\gradlew runClient --args="--quickPlaySingleplayer=spike"
+
+# 屏幕 + 投影光束：自动启用、截图、退出
+$env:JAVA_TOOL_OPTIONS='-Dfirstmod.spike.visual=true -Dfirstmod.spike.exit=true'
+.\gradlew runClient --args="--quickPlaySingleplayer=spike"
+```
+
+也可以在游戏内使用 `/cinema_audio_spike` 和 `/cinema_visual_spike`；
+`/cinema_visual_spike screenshot` 手动截图。截图输出到 `run/screenshots/`。
+
+Sodium/Iris/BSL 只作为测试环境放入 `run/mods`、`run/shaderpacks`，不进入模组依赖。
+
 ### 4. OpenAL 能力与双上下文
 
 本机 LWJGL 3.3.3 自带 OpenAL Soft **1.23.1**：
@@ -174,8 +197,60 @@ $f = (Resolve-Path 'spike\testmedia\test720p30.mp4').Path
 - `AL_SOURCE_RADIUS`、`AL_CONE_INNER/OUTER_ANGLE`、`AL_CONE_OUTER_GAIN`：设置成功
 
 这说明“每只扬声器一个 source、同一 context 内采样级同步”的路线可行。
-尚未验证的是：真实长片流式播放、暂停/跳转/欠载后的重新对齐，以及
-Minecraft 内的 context 选择。
+尚未验证的是：真实长片流式播放、暂停/跳转/欠载后的重新对齐。
+
+### 7. Minecraft 客户端内的独立 context
+
+客户端命令/自动测试 `cinema_audio_spike` 在真实 Minecraft 中打开独立 device/context：
+
+- 六路 sample offset 完全一致：**0 samples / 0.000 ms skew**
+- EFX、device clock、start delay 均可用
+- 关闭独立 context 后，Minecraft `SoundEngine` 仍能正常播放 UI 音效
+- 客户端正常退出，没有 crash
+- 不调用 `ALC.destroy()`，避免破坏 Minecraft 共享的 OpenAL 函数指针
+
+结论：第一版采用**独立 context + 影院输出设备**配置；共享 Minecraft context
+不再作为必经路线。
+
+### 8. Minecraft 客户端内的屏幕与光束
+
+客户端命令/自动测试 `cinema_visual_spike` 渲染 4.8×2.7 的世界空间屏幕：
+
+![P0.5 screen + beam](screenshots/p05-visual.png)
+
+- `DynamicTexture` 测试图每 3 帧上传，颜色条/灰度梯/运动标记正确
+- 投影仪 UV 由真实 view/projection 矩阵计算，屏幕覆盖正确
+- 自定义 additive RenderType 的光束可见，且**不遮挡屏幕**
+- 32×18 = 576 条遮挡射线，单次约 **0.5–1.1 ms**
+- 截图由 `Screenshot.grab` 自动保存到 `run/screenshots/`
+
+关键渲染坑：
+
+1. `AFTER_ENTITIES` 的 `matrixStack` 是 identity；要 `translate(origin - camera)`
+   后提交局部坐标，不能直接提交 camera-relative 世界坐标。
+2. 投影 UV 的 `lookAt` 必须用世界坐标；再减一次 lens 会让 `clip.w` 变负。
+3. 光束 RenderType 必须只写颜色、不写深度；`RenderType.lightning()` 会挡掉屏幕。
+4. `RenderType.create` / `RenderStateShard` 常量在 1.21.1 需要 access widener；
+   正式实现应封装成独立工具类。
+5. 屏幕顶点 light 用 `0xF000F0`；正式实现要按环境光做洗白，而不是永远 fullbright。
+
+尚未验证：多方块屏幕 UV、真实视频帧、遮挡阴影视觉效果、对焦/梯形、
+Sodium/Iris、资源重载/世界卸载。
+
+### 9. Sodium / Iris 兼容性
+
+| 环境 | 屏幕 | 光束 |
+|---|---|---|
+| 原版 | ✅ | ✅ |
+| Sodium 0.6.13 | ✅ | ✅ |
+| Sodium + Iris 1.8.7（无光影包） | ✅ | ✅ |
+| Sodium + Iris + BSL 10.1.8 | ✅ | ❌ 不显示 |
+
+![P0.5 screen under BSL](screenshots/p05-bsl.png)
+
+屏幕用的 `entitySolid` 能被 Iris/BSL 正常合成；自定义
+`RenderType.create` + additive 光束不会被 BSL 合成。第一版需要为光影包
+准备粒子束/原版 RenderType 的光束回退，不能假设自定义 RenderType 一定可见。
 
 ## 结论：GO
 

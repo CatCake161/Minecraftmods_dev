@@ -6,6 +6,14 @@
 
 ## 1. 已经测到的硬事实
 
+### 已锁定的产品方向
+
+- 投影面：**专用屏幕方块**（第一版不做任意地形）。
+- 扬声器：**5.1 架构**（FL/FR/FC/LFE/BL/BR），P1 同时保留立体声回退。
+- 投影仪：**核心光学**——投掷比/变焦、对焦、梯形校正、遮挡阴影、可见光束、
+  环境光洗白、灯泡预热/风扇声。
+- 新增 **AV 接收器方块**，主座位作为“皇帝位”/校准参考点。
+
 ### OpenAL（Windows，LWJGL 3.3.3 / OpenAL Soft 1.23.1）
 
 | 能力 | 结果 | 对设计的影响 |
@@ -29,6 +37,72 @@
    并新增 5.1 测试片；5.1 六声道解码顺序验证通过。
 4. 同一 context 内 6 个 source 用同一设备时钟启动，实测 **0 sample skew**。
    EFX reverb、direct low-pass、source radius、cone 均可正常设置。
+
+### 1.1 Minecraft 内独立 context（P0.5-A）
+
+**通过。** 在真实客户端中打开独立 OpenAL device/context，播放 6 个 mono source：
+
+- 六路 sample offset 完全一致：**0 samples / 0.000 ms skew**
+- EFX/device clock/start delay 均可用
+- 关闭独立 context 后，Minecraft `SoundEngine` 仍能正常请求 UI 音效，客户端正常退出
+- 不调用 `ALC.destroy()`，避免破坏 Minecraft 共享的 LWJGL OpenAL 函数指针
+
+结论：第一版可以走**独立 context**，并把它绑定到“影院输出设备”配置；
+共享 Minecraft context 不再是必须路线。
+
+### 1.2 Minecraft 内屏幕 + 光束（P0.5-B）
+
+**通过。** 客户端内用 `WorldRenderEvents.AFTER_ENTITIES` 渲染了 4.8×2.7 的
+世界空间屏幕，纹理由 `DynamicTexture` 每 3 帧上传一次；投影仪 UV 用真实的
+view/projection 矩阵计算；光束用自定义 additive RenderType。
+
+![P0.5 screen + beam](screenshots/p05-visual.png)
+
+关键结果：
+
+- 屏幕纹理、颜色条、灰度梯、运动标记均正确显示。
+- 投影仪偏轴（镜头比屏幕中心高 1 m）时 UV 仍能覆盖屏幕；FOV 按镜头到屏幕
+  的实际距离计算后，UV 约在 0–1 之间。
+- 光束可叠加在屏幕前方而不遮挡屏幕：**自定义 RenderType 必须只写颜色、不写深度**。
+  `RenderType.lightning()` 会写深度，导致屏幕被光束完全遮住。
+- 遮挡采样 32×18 = **576 条射线**，单次约 **0.5–1.1 ms**（每 20 次纹理更新一次）。
+- 截图路径为 `run/screenshots/`，自动截图在 `-Dfirstmod.spike.visual=true` 时触发。
+
+踩到的渲染坑（P1 必须保留）：
+
+1. `WorldRenderContext.matrixStack()` 在 1.21.1 的 `AFTER_ENTITIES` 是 identity；
+   正确做法是 `translate(origin - camera)`，然后提交**以 origin 为原点的局部坐标**。
+   直接提交 camera-relative 世界坐标会被当作在相机后方，只看到一条被近平面裁出的线。
+2. 投影 UV 的 view 矩阵 `lookAt` 必须接收**世界坐标**，不能再减一次 lens，
+   否则 `clip.w` 为负、UV 会变成几十。
+3. 光束 RenderType 需要 `COLOR_WRITE`（不写深度）+ `ADDITIVE_TRANSPARENCY`；
+   否则深度测试会把屏幕挡掉。
+4. `RenderType.create` 和 `RenderStateShard` 的常量在 1.21.1 不是 public，
+   当前 spike 用 access widener 打开；正式实现应封装成一个独立的 render type
+   工具类，避免每个调用点都依赖 AW。
+5. 屏幕使用 `entitySolid`/`entityCutoutNoCull` 时要把顶点 light 设为 `0xF000F0`，
+   否则屏幕会被环境光压暗；正式实现还要按环境光做“洗白”，不能完全 fullbright。
+
+尚未验证：多方块屏幕 UV 切分、实体/方块遮挡阴影的视觉效果、Sodium/Iris、
+对焦模糊、梯形校正、真实视频帧（当前是程序化测试图）。
+
+### 1.3 Sodium / Iris 兼容性
+
+- **Sodium 0.6.13 + Iris 1.8.7（无光影包）**：屏幕和光束都正常。
+- **Sodium + Iris + BSL 10.1.8**：屏幕正常显示，但**自定义 additive 光束不显示**。
+  屏幕使用的是 `entitySolid`，Iris 会按普通实体/方块渲染处理；光束使用的是
+  自定义 `RenderType.create` + `ADDITIVE_TRANSPARENCY` + `COLOR_WRITE`，
+  Iris/BSL 不会把它合成到最终画面。
+
+![P0.5 screen under BSL](screenshots/p05-bsl.png)
+
+这意味着第一版需要两条光束路线：
+
+1. **无光影包**：自定义 additive 锥体（已通过）。
+2. **Iris 光影包**：改用 Iris 能识别的渲染方式——粒子束、原版 RenderType，
+   或独立的 Iris shader 集成；不能假设自定义 RenderType 一定可见。
+
+屏幕本身可以继续用实体 RenderType，不需要为光影包单独做一套。
 
 ## 2. 扬声器系统
 
@@ -194,7 +268,7 @@ C/D 需要投影仪深度图/自定义 shader/光影包适配，和 Sodium/Iris 
 | 项目 | 状态 | 备注 |
 |---|---|---|
 | OpenAL 能力探测 | ✅ | EFX/HRTF/radius/latency/device clock/start delay |
-| 双设备/双 context 共存 | ✅ | 独立进程；Minecraft 内待测 |
+| 双设备/双 context 共存 | ✅ | 独立进程 + Minecraft 内独立 context 均通过 |
 | 真实立体声解码 | ✅ | 修正了原来 mono 素材 |
 | 5.1 解码/声道顺序 | ✅ | FL/FR/FC/LFE/BL/BR |
 | 六 source 采样级同步 | ✅ | 0 sample skew |
@@ -205,7 +279,8 @@ C/D 需要投影仪深度图/自定义 shader/光影包适配，和 Sodium/Iris 
 | 立体声 upmix / 5.1 downmix | 🟡 | 写成纯函数并测试 |
 | LFE/低频管理 | 🟡 | 先只播 LFE，再做 bass management |
 | HRTF 耳机虚拟化 | ⬜ | 可选 |
-| Minecraft 内独立 vs 共享 context | 🟡 | **最关键** |
+| Minecraft 内独立 context | ✅ | 6 source、0 skew、关闭后 SoundEngine 正常 |
+| Minecraft 内共享 context | ⬜ | 不再作为第一版必经路线 |
 | 音频设备切换/资源重载 | 🟡 | 需要生命周期处理 |
 | macOS/Linux OpenAL 能力 | ⬜ | 发布前 |
 
@@ -215,14 +290,18 @@ C/D 需要投影仪深度图/自定义 shader/光影包适配，和 Sodium/Iris 
 |---|---|---|
 | 解码/上传/同步 | ✅ | P0 |
 | 真实 5.1 播放链路 | 🟡 | 需要把 6 路接到 speaker |
+| DynamicTexture 屏幕渲染 | ✅ | 客户端内动态纹理 + 世界空间 quad 已验证 |
 | 多方块屏幕 UV | 🟡 | 需要 block entity renderer |
 | DynamicTexture 生命周期 | 🟡 | 资源重载/世界卸载 |
-| 投影几何：投掷比/梯形/对焦 | 🟡 | 先做离线数学/GL 原型 |
-| 遮挡阴影 raycast | 🟡 | 成本/块状阴影待测 |
-| 光束渲染 | 🟡 | 透明排序/Iris |
+| 投影 UV/投掷比/梯形 | ✅ | 真实 view/projection 矩阵，UV 约 0–1 |
+| 对焦模糊 | 🟡 | 需要降采样/多 tap |
+| 遮挡阴影 raycast 成本 | ✅ | 576 rays ≈ 0.5–1.1 ms/次 |
+| 遮挡阴影视觉效果 | 🟡 | 需要放置遮挡物测试 |
+| 光束渲染 | ✅ | 自定义 additive、no depth write；无光影包正常 |
 | 环境光洗白 | 🟡 | lightmap 采样 |
-| Sodium 兼容 | 🟡 | 真实客户端 |
-| Iris + 光影包兼容 | 🟡 | 真实客户端；可能需要降级模式 |
+| Sodium 兼容 | ✅ | Sodium 0.6.13 屏幕/光束正常 |
+| Iris + 光影包：屏幕 | ✅ | Iris 1.8.7 + BSL 10.1.8 屏幕正常 |
+| Iris + 光影包：光束 | ❌ | 自定义 RenderType 不被 BSL 合成，需粒子/原版渲染回退 |
 | 真实动态光照 | ⬜ | 需要 Iris shader，建议后置 |
 | 任意地形投影 | ⬜ | 建议后置 |
 | 多投影仪/多屏幕 | ⬜ | 不做 MVP |
@@ -269,39 +348,35 @@ C/D 需要投影仪深度图/自定义 shader/光影包适配，和 Sodium/Iris 
 - **IRLights**（MIT）：证明了 Iris 下可以做聚光灯/阴影/体积光/gobo，
   但它是光影包注入型工具，不适合作为核心依赖；可作为“真实光照”R&D参考。
 
-## 6. 需要你决定的事情
+## 6. 已决定（2026-10-31）
 
-1. **扬声器目标**：先做 2.0，还是一次到位 5.1？
-   建议：架构按 5.1 设计，P1 先跑通 2.0 + 5.1 测试片。
-2. **投影面**：只支持专用屏幕方块，还是也支持共面墙/任意地形？
-   建议：专用屏幕 + 共面墙；任意地形后置。
-3. **真实光照**：屏幕/光束的“假光”够不够，还是要照亮地形？
-   建议：第一版假光 + 可选 LambDynamicLights；真正聚光灯后置。
-4. **物理模拟深度**：投掷比/对焦/梯形/遮挡/环境光/光束/灯泡/风扇，
-   哪些必须第一版有？过热/通风/穿孔屏幕要不要？
-5. **接收器方块**：是否接受新增一个 AV Receiver 方块？
-6. **座位**：是否让座位定义皇帝位/校准点？是否要真正坐下？
-7. **LAN**：第一版是否接受“每个玩家本地都要有同一文件”，
-   还是需要主机串流媒体？
-8. **分辨率/编码**：1080p H.264/AAC 作为默认，4K/HEVC/AV1 后置？
+1. **扬声器目标**：第一版直接做 **5.1 架构**（FL/FR/FC/LFE/BL/BR），保留立体声回退。
+2. **投影面**：第一版只支持**专用屏幕方块**；共面墙/任意地形后置。
+3. **真实光照**：第一版做屏幕/光束的物理近似光效；真正照亮地形后置。
+4. **物理模拟深度**：核心光学——投掷比/变焦、对焦、梯形校正、遮挡阴影、
+   可见光束、环境光洗白、灯泡预热/风扇声。过热/通风/穿孔屏幕后置。
+5. **接收器**：新增 **AV 接收器方块**，负责扬声器配对/路由/延迟/混响。
+6. **座位**：主座位定义**皇帝位**和声场/投影校准参考点；是否真正坐下后置。
+7. **LAN**：第一版接受“每个玩家本地都有同一文件”；主机串流后置。
+8. **编码**：1080p H.264/AAC 默认；4K/HEVC/AV1 后置。
 
 ## 7. 建议的下一步
 
-**P0.5-A（1–2 天）**：Minecraft 内 OpenAL 共存 + 六 speaker 最小原型。
-- 独立 context 和共享 context 各做一个分支/开关。
-- 用 5.1 测试片验证六路定位和同步。
-- 测资源重载、设备切换、暂停。
+**P0.5-A：Minecraft 内 OpenAL 共存 + 六 speaker 最小原型。**
+- ✅ 独立 context 已验证（6 source、0 skew、SoundEngine 仍正常）。
+- ⬜ 共享 context 分支不再作为第一版必经路线。
+- ⬜ 资源重载、设备切换、暂停/恢复。
 
-**P0.5-B（2–3 天）**：屏幕 + 投影仪视觉原型。
-- 4×3 屏幕方块 + 投影仪方块。
-- 动态纹理、多方块 UV、投掷比/梯形/对焦。
-- 射线遮挡 shadow mask + 光束。
-- Sodium/Iris 开关测试。
+**P0.5-B：屏幕 + 投影仪视觉原型。**
+- ✅ 动态纹理 + 世界空间屏幕 + 投影 UV + 光束 + 截图。
+- ✅ 576 条遮挡射线的成本基线。
+- ⬜ 多方块屏幕 UV 切分；真实视频帧；对焦/梯形；遮挡物视觉效果。
+- ⬜ Sodium/Iris 开关测试。
 
-**P0.5-C（1 天）**：播放器状态机 + 流式音频。
-- bounded queue、暂停/跳转、欠载恢复、长片内存。
+**P0.5-C：播放器状态机 + 流式音频。**
+- ⬜ bounded queue、暂停/跳转、欠载恢复、长片内存。
 
-**P1**：方块/物品/配方/GUI/网络/本地文件选择/最小影院闭环。
+**P1：方块/物品/配方/GUI/网络/本地文件选择/最小影院闭环。**
 
-> 如果 P0.5-A/B 中发现独立 context 或自定义光束在 Iris 下不可接受，
+> 如果 P0.5-B 中发现自定义光束在 Iris 下不可接受，
 > 就应回到本文第 3.1 节重新选 A/B/C/D，而不是硬着头皮进 P1。
