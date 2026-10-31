@@ -149,10 +149,14 @@ $env:JAVA_TOOL_OPTIONS='-Dfirstmod.spike.visual=true -Dfirstmod.spike.exit=true'
 $video=(Resolve-Path 'spike\testmedia\test720p30_51.mp4').Path
 $env:JAVA_TOOL_OPTIONS="-Dfirstmod.spike.video=$video -Dfirstmod.spike.exit=true"
 .\gradlew runClient --args="--quickPlaySingleplayer=spike"
+
+# 播放 + 5 秒后 seek 到 5.0 s
+$env:JAVA_TOOL_OPTIONS="-Dfirstmod.spike.video=$video -Dfirstmod.spike.video.seek=5.0 -Dfirstmod.spike.exit=true"
+.\gradlew runClient --args="--quickPlaySingleplayer=spike"
 ```
 
 也可以在游戏内使用 `/cinema_audio_spike`、`/cinema_visual_spike`、
-`/cinema_play <path>`、`/cinema_pause`、`/cinema_stop`；
+`/cinema_play <path>`、`/cinema_pause`、`/cinema_seek <seconds>`、`/cinema_stop`；
 `/cinema_visual_spike screenshot` 手动截图。截图输出到 `run/screenshots/`。
 带 `firstmod.spike.*` 属性的自动测试会在启动后把游戏窗口置前，便于观察。
 
@@ -273,13 +277,19 @@ RenderType 在 BSL 下不可见的问题也随之消失。
 Sodium/Iris 直接崩溃。只保留 `javacv`/`ffmpeg`/`javacpp` 三件套并设置
 `transitive = false` 后解决。
 
-**剩余问题**：
+**剩余问题/结果**：
 
-1. JavaCV 首次加载约 **5.5–6 s**；正式播放前需要预热。
-2. 独立 OpenAL context 停止后，Minecraft `SoundEngine` 退出时会打印
-   `Deleting stream buffers: Invalid name parameter`（非致命）；后续可改共享
-   context 或进程级单例。
-3. seek 尚未实现；两小时长片仍需内存/背压测试。
+1. JavaCV 首次加载约 **5.5–7.7 s**，现在在客户端启动时后台预热；预热完成后
+   解码器启动约 **0.12 s**。
+2. OpenAL context 改为**进程级单例**，seek 不再新建 context/device；
+   seek 和退出时不再出现 `Allocate new source` / `Stop: Invalid operation`。
+3. `seek` 已实现：本次 0→5 s，前段 80 帧、后段 150 帧，**0 丢帧**；
+   当前是“关键帧附近重启”，不是逐帧精确 seek。
+4. 10 分钟 320×180 5.1 素材背压烟测：seek 到 300 s 后继续播放，
+   音频解码器在约 21.5 s 媒体处被有界队列阻塞，内存没有线性增长；
+   两小时长片仍需完整测试。
+5. 进程退出时仍偶尔出现 1 条 `Deleting stream buffers: Invalid operation`；
+   不影响播放，是独立 context 退出时序的残留。
 
 ## 结论：GO
 

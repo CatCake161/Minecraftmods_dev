@@ -16,13 +16,21 @@ public final class VideoDecoder implements AutoCloseable {
 	private final int height;
 
 	public VideoDecoder(Path file) throws Exception {
+		this(file, 0.0);
+	}
+
+	public VideoDecoder(Path file, double startSeconds) throws Exception {
 		grabber = new FFmpegFrameGrabber(file.toFile());
 		grabber.setPixelFormat(AV_PIX_FMT_RGBA);
 		grabber.setVideoOption("threads", "auto");
 		grabber.start();
+		if (startSeconds > 0.0) {
+			grabber.setTimestamp((long) (startSeconds * 1_000_000L));
+		}
 		width = grabber.getImageWidth();
 		height = grabber.getImageHeight();
-		FirstMod.LOGGER.info("cinema video decoder: {}x{} {} fps", width, height, grabber.getFrameRate());
+		FirstMod.LOGGER.info("cinema video decoder: {}x{} {} fps, start={} s",
+			width, height, grabber.getFrameRate(), String.format("%.2f", startSeconds));
 	}
 
 	/**

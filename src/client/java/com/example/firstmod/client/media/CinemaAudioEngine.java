@@ -52,6 +52,9 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	private final Deque<ChunkMeta> masterQueue = new ArrayDeque<>();
 	private final AtomicBoolean running = new AtomicBoolean(true);
 	private final Thread thread;
+	private final java.util.concurrent.atomic.AtomicBoolean threadStarted = new java.util.concurrent.atomic.AtomicBoolean();
+	private volatile boolean resetRequested;
+	private volatile java.util.concurrent.CountDownLatch resetDone;
 
 	@SuppressWarnings("unchecked")
 	private final Deque<Integer>[] freeBuffers = new Deque[SPEAKERS];
@@ -82,7 +85,25 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	}
 
 	public void start() {
-		thread.start();
+		if (threadStarted.compareAndSet(false, true)) {
+			thread.start();
+		}
+	}
+
+	/** Stops all current sources and prepares the same device/context for a new file. */
+	public void reset() {
+		if (!threadStarted.get()) {
+			clearQueues();
+			return;
+		}
+		java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
+		resetDone = latch;
+		resetRequested = true;
+		try {
+			latch.await(1, TimeUnit.SECONDS);
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+		}
 	}
 
 	public void submit(AudioChunk chunk) throws InterruptedException {
@@ -181,6 +202,10 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	}
 
 	private void pump() {
+		if (resetRequested) {
+			performReset();
+			return;
+		}
 		reclaimProcessed();
 		if (pendingChunk == null) {
 			pendingChunk = input.poll();
@@ -341,6 +366,33 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		if (device != NULL) {
 			ALC10.alcCloseDevice(device);
 		}
+	}
+
+	private void performReset() {
+		cleanup();
+		for (Deque<Integer> free : freeBuffers) {
+			free.clear();
+		}
+		clearQueues();
+		started = false;
+		startRequested = false;
+		paused = false;
+		appliedPaused = false;
+		audiblePts = 0;
+		latencySeconds = 0;
+		lastEndPts = 0;
+		setupSources();
+		resetRequested = false;
+		java.util.concurrent.CountDownLatch latch = resetDone;
+		if (latch != null) {
+			latch.countDown();
+		}
+	}
+
+	private void clearQueues() {
+		input.clear();
+		masterQueue.clear();
+		pendingChunk = null;
 	}
 
 	@Override

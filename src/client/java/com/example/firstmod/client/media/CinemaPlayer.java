@@ -26,11 +26,13 @@ public final class CinemaPlayer implements AutoCloseable {
 	private static final double PRESENT_LEAD_SECONDS = 0.005;
 
 	private static CinemaPlayer active;
+	private static CinemaAudioEngine sharedAudio;
 
 	private final Minecraft client;
 	private final Path file;
+	private final double startSeconds;
 	private final CinemaVideoTexture texture = new CinemaVideoTexture();
-	private final CinemaAudioEngine audio = new CinemaAudioEngine();
+	private final CinemaAudioEngine audio;
 	private final BlockingQueue<VideoFrame> frames = new ArrayBlockingQueue<>(8);
 	private final AtomicBoolean running = new AtomicBoolean(true);
 	private final AtomicBoolean closed = new AtomicBoolean();
@@ -49,9 +51,14 @@ public final class CinemaPlayer implements AutoCloseable {
 	private double lastPts;
 	private double lastStatsAt;
 
-	private CinemaPlayer(Minecraft client, Path file) {
+	private CinemaPlayer(Minecraft client, Path file, double startSeconds) {
 		this.client = client;
 		this.file = file;
+		this.startSeconds = startSeconds;
+		if (sharedAudio == null) {
+			sharedAudio = new CinemaAudioEngine();
+		}
+		this.audio = sharedAudio;
 		client.getTextureManager().register(TEXTURE_ID, texture);
 		videoThread = new Thread(this::decodeVideo, "cinema-video");
 		videoThread.setDaemon(true);
@@ -60,14 +67,27 @@ public final class CinemaPlayer implements AutoCloseable {
 	}
 
 	public static CinemaPlayer play(Minecraft client, Path file) {
+		return play(client, file, 0.0);
+	}
+
+	public static CinemaPlayer play(Minecraft client, Path file, double startSeconds) {
 		if (!Files.isRegularFile(file)) {
 			throw new IllegalArgumentException("not a local media file: " + file);
 		}
 		stopActive(client);
-		CinemaPlayer player = new CinemaPlayer(client, file);
+		CinemaPlayer player = new CinemaPlayer(client, file, Math.max(0.0, startSeconds));
 		active = player;
 		player.start();
 		return player;
+	}
+
+	/** Restarts the active file at a new timestamp. */
+	public static CinemaPlayer seekActive(Minecraft client, double seconds) {
+		CinemaPlayer current = active;
+		if (current == null) {
+			throw new IllegalStateException("cinema is not playing");
+		}
+		return play(client, current.file, seconds);
 	}
 
 	public static CinemaPlayer active() {
@@ -167,7 +187,8 @@ public final class CinemaPlayer implements AutoCloseable {
 	}
 
 	private void decodeVideo() {
-		try (VideoDecoder decoder = new VideoDecoder(file)) {
+		CinemaPrewarm.await();
+		try (VideoDecoder decoder = new VideoDecoder(file, startSeconds)) {
 			VideoFrame frame;
 			while (running.get() && (frame = decoder.next()) != null) {
 				if (!frames.offer(frame, 100, TimeUnit.MILLISECONDS)) {
@@ -182,9 +203,10 @@ public final class CinemaPlayer implements AutoCloseable {
 	}
 
 	private void decodeAudio() {
+		CinemaPrewarm.await();
 		try {
 			StreamingAudioDecoder.decode(file, CinemaAudioEngine.SAMPLE_RATE, CinemaAudioEngine.CHANNELS,
-				audio::submit, () -> !running.get());
+				startSeconds, audio::submit, () -> !running.get());
 		} catch (Throwable t) {
 			error.compareAndSet(null, t);
 		}
@@ -210,7 +232,7 @@ public final class CinemaPlayer implements AutoCloseable {
 			return;
 		}
 		running.set(false);
-		audio.close();
+		audio.reset();
 		videoThread.interrupt();
 		audioThread.interrupt();
 		try {

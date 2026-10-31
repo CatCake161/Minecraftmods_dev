@@ -3,7 +3,9 @@ package com.example.firstmod.client;
 import com.example.firstmod.FirstMod;
 import com.example.firstmod.client.audio.InGameAudioSpike;
 import com.example.firstmod.client.media.CinemaPlayer;
+import com.example.firstmod.client.media.CinemaPrewarm;
 import com.example.firstmod.client.render.CinemaVisualSpike;
+import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
@@ -27,6 +29,7 @@ public class FirstModClient implements ClientModInitializer {
 	@Override
 	public void onInitializeClient() {
 		// Client-only setup goes here (rendering, keybinds, screens).
+		CinemaPrewarm.start();
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
 			dispatcher.register(ClientCommandManager.literal("cinema_audio_spike")
 				.executes(context -> {
@@ -89,6 +92,25 @@ public class FirstModClient implements ClientModInitializer {
 					"cinema " + (player.isPaused() ? "paused" : "resumed")));
 				return 1;
 			})));
+
+		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
+			dispatcher.register(ClientCommandManager.literal("cinema_seek")
+				.then(ClientCommandManager.argument("seconds", DoubleArgumentType.doubleArg(0.0))
+					.executes(context -> {
+						double seconds = DoubleArgumentType.getDouble(context, "seconds");
+						try {
+							CinemaPlayer.seekActive(context.getSource().getClient(), seconds);
+							CinemaVisualSpike.enableVideo(
+								context.getSource().getClient(), CinemaPlayer.TEXTURE_ID);
+							context.getSource().sendFeedback(Component.literal(
+								"cinema seek: " + String.format("%.1f", seconds) + " s"));
+							return 1;
+						} catch (Exception e) {
+							context.getSource().sendError(Component.literal(
+								"cinema seek failed: " + e.getMessage()));
+							return 0;
+						}
+					}))));
 
 		ClientLifecycleEvents.CLIENT_STOPPING.register(client -> CinemaPlayer.stopActive(client));
 		ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> CinemaPlayer.stopActive(client));
@@ -168,6 +190,19 @@ public class FirstModClient implements ClientModInitializer {
 						CinemaVisualSpike.enableVideo(client, CinemaPlayer.TEXTURE_ID);
 					} catch (Throwable t) {
 						FirstMod.LOGGER.error("cinema video spike failed", t);
+					}
+				}
+				if (autoVideoTicks == 100) {
+					String seek = System.getProperty("firstmod.spike.video.seek");
+					if (seek != null) {
+						try {
+							double seconds = Double.parseDouble(seek);
+							FirstMod.LOGGER.info("cinema video spike: seeking to {} s", seconds);
+							CinemaPlayer.seekActive(client, seconds);
+							CinemaVisualSpike.enableVideo(client, CinemaPlayer.TEXTURE_ID);
+						} catch (Throwable t) {
+							FirstMod.LOGGER.error("cinema video seek failed", t);
+						}
 					}
 				}
 				if (autoVideoTicks == 180) {

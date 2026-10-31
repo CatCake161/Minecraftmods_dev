@@ -86,6 +86,10 @@ public final class CinemaVisualSpike {
 	}
 
 	private static void enableInternal(Minecraft client, ResourceLocation textureId, boolean video) {
+		if (video && enabled && videoMode) {
+			screenTexture = textureId;
+			return;
+		}
 		if (client.player == null || client.level == null) {
 			return;
 		}

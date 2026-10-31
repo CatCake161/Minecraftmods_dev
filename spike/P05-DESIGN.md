@@ -119,17 +119,21 @@ clientRuntimeOnly 'org.bytedeco:ffmpeg:8.1.2-1.5.14:windows-x86_64'
 clientRuntimeOnly 'org.bytedeco:javacpp:1.5.14:windows-x86_64'
 ```
 
-**剩余问题**：
+**剩余问题/结果**：
 
-1. JavaCV 首次加载约 **5.5–6 s**（native + 类加载）；正式播放前要预热，
-   否则观众会看到 6 秒黑屏。
-2. 独立 OpenAL context 停止后，Minecraft `SoundEngine` 在退出时会打印
-   `Deleting stream buffers: Invalid name parameter`（本次 3 条，非致命）。
-   第一版可以接受；更干净的做法是共享 Minecraft context 或把影院 context
-   做成进程级单例，退出时延迟关闭。
-3. 当前音频解码 10 s 素材能全部塞进队列；两小时电影仍依赖有界背压，
-   需要专门的长片测试。
-4. seek 尚未实现。
+1. JavaCV 首次加载约 **5.5–7.7 s**，现在在客户端启动时后台预热；
+   预热完成后解码器启动约 **0.12 s**，不再出现播放前的 6 秒黑屏。
+2. 独立 OpenAL context 改为**进程级单例**：seek 不再新建 context/device，
+   seek 和退出时不再出现 `Allocate new source` / `Stop: Invalid operation`。
+   进程退出时由 shutdown hook 关闭 context/device。
+3. `seek` 已实现（重启解码器到目标时间戳）；本次 0→5 s seek：
+   前段 80 帧、后段 150 帧，**0 丢帧**。当前是“关键帧附近重启”，
+   不是逐帧精确 seek。
+4. 已用 10 分钟 320×180 5.1 素材做背压烟测：seek 到 300 s 后继续播放，
+   音频解码器在约 21.5 s 媒体处被有界队列阻塞，内存没有线性增长；
+   两小时长片仍需一次完整测试。
+5. 进程退出时仍偶尔出现 1 条 `Deleting stream buffers: Invalid operation`；
+   不影响播放，是独立 context 退出时序的残留。
 
 ## 2. 扬声器系统
 
@@ -298,10 +302,11 @@ C/D 需要投影仪深度图/自定义 shader/光影包适配，和 Sodium/Iris 
 | 真实立体声解码 | ✅ | 修正了原来 mono 素材 |
 | 5.1 解码/声道顺序 | ✅ | FL/FR/FC/LFE/BL/BR |
 | 真实 720p30 + 5.1 播放 | ✅ | 126 帧呈现、0 丢帧；六路 source 调度成功 |
-| 长片流式 + bounded queue | 🟡 | 10 s 素材已验证；两小时电影仍需长片背压测试 |
+| 长片流式 + bounded queue | 🟡 | 10 分钟 5.1 素材背压烟测通过；2 小时完整测试待做 |
 | 暂停/停止 | ✅ | `/cinema_pause`、`/cinema_stop` |
-| seek | ⬜ | 尚未实现 |
-| 启动预热 | ⬜ | JavaCV 首次加载约 5.5–6 s |
+| seek | ✅ | `/cinema_seek`；关键帧附近重启，0→5 s 后 150 帧/0 丢帧 |
+| 启动预热 | ✅ | 后台预热；预热后解码器启动约 0.12 s |
+| 音频 context 生命周期 | ✅ | 进程级单例；seek/退出无 OpenAL 错误 |
 | 六 source 采样级同步 | ✅ | 0 sample skew |
 | EFX reverb/direct filter | ✅ | 创建/绑定成功，听感待测 |
 | 长片流式 + bounded queue | 🟡 | 两小时 5.1 PCM 约 2.1 GB，不能预解码 |
@@ -402,11 +407,11 @@ C/D 需要投影仪深度图/自定义 shader/光影包适配，和 Sodium/Iris 
 - ✅ 动态纹理 + 世界空间屏幕 + 投影 UV + 截图。
 - ✅ 576 条遮挡射线的成本基线。
 - ✅ Sodium 0.6.13、Iris 1.8.7 + BSL 10.1.8 屏幕显示正常。
-- ⬜ 多方块屏幕 UV 切分；真实视频帧；对焦/梯形；遮挡物视觉效果。
+- ⬜ 多方块屏幕 UV 切分；对焦/梯形；遮挡物视觉效果。
 
 **P0.5-C：播放器状态机 + 流式媒体。**
 - ✅ 有界视频帧队列 + 有界音频块队列 + 真实 720p30/5.1 播放。
-- ✅ 播放/暂停/停止。
-- ⬜ seek、启动预热、两小时长片内存测试。
+- ✅ 播放/暂停/停止/seek；启动预热。
+- ⬜ 两小时长片内存测试。
 
 **P1：方块/物品/配方/GUI/网络/本地文件选择/最小影院闭环。**

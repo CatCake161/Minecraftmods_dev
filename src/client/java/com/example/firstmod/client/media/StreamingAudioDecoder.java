@@ -28,6 +28,11 @@ public final class StreamingAudioDecoder {
 
 	public static void decode(Path file, int sampleRate, int channels, ChunkSink sink,
 							  BooleanSupplier cancelled) throws Exception {
+		decode(file, sampleRate, channels, 0.0, sink, cancelled);
+	}
+
+	public static void decode(Path file, int sampleRate, int channels, double startSeconds, ChunkSink sink,
+							  BooleanSupplier cancelled) throws Exception {
 		int chunkFrames = sampleRate / 2;
 		int chunkShorts = chunkFrames * channels;
 		ShortBuffer accumulator = BufferUtils.createShortBuffer(chunkShorts);
@@ -42,8 +47,12 @@ public final class StreamingAudioDecoder {
 			grabber.setSampleRate(sampleRate);
 			grabber.setAudioChannels(channels);
 			grabber.start();
-			FirstMod.LOGGER.info("cinema audio decoder: {} Hz, {} channels requested, {} reported, codec={}",
-				grabber.getSampleRate(), channels, grabber.getAudioChannels(), grabber.getAudioCodecName());
+			if (startSeconds > 0.0) {
+				grabber.setTimestamp((long) (startSeconds * 1_000_000L));
+			}
+			FirstMod.LOGGER.info("cinema audio decoder: {} Hz, {} channels requested, {} reported, codec={}, start={} s",
+				grabber.getSampleRate(), channels, grabber.getAudioChannels(), grabber.getAudioCodecName(),
+				String.format("%.2f", startSeconds));
 
 			Frame frame;
 			while (!cancelled.getAsBoolean() && (frame = grabber.grabSamples()) != null) {
