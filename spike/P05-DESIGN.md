@@ -95,6 +95,42 @@ view/projection 矩阵计算。可见光束已按决定删除。
 屏幕使用 `entitySolid`，Iris 会按普通实体/方块渲染处理；这也是删除光束后
 渲染路径更稳的原因。
 
+### 1.4 真实视频 + 5.1（P0.5-C）
+
+**通过。** 客户端内播放 `test720p30_51.mp4`（1280×720、30 fps、AAC 5.1）：
+
+- 视频帧走独立解码线程 → 有界队列（8 帧）→ `CinemaVideoTexture` 上传
+- 音频走独立解码线程 → 32 块有界队列 → 六路 mono source
+- 六路 source 用同一设备时钟启动
+- 本次自动测试：**126 帧呈现、0 丢帧**；音频 5.1 六声道正常调度
+
+![P0.5 real video](screenshots/p05-video.png)
+
+**JavaCV / Fabric 兼容坑**：`javacv` 的传递依赖（ASM/commons 等）会污染
+Fabric 开发环境 classpath，导致 Fabric Loader/Mixin 的
+`PreLaunchEntrypoint`/`IMixinConfigPlugin` 在两个 classloader 之间 cast 失败，
+Sodium/Iris 直接崩溃。解决方式是只保留解码需要的三件套：
+
+```gradle
+clientImplementation('org.bytedeco:javacv:1.5.14') { transitive = false }
+clientImplementation('org.bytedeco:ffmpeg:8.1.2-1.5.14') { transitive = false }
+clientImplementation('org.bytedeco:javacpp:1.5.14') { transitive = false }
+clientRuntimeOnly 'org.bytedeco:ffmpeg:8.1.2-1.5.14:windows-x86_64'
+clientRuntimeOnly 'org.bytedeco:javacpp:1.5.14:windows-x86_64'
+```
+
+**剩余问题**：
+
+1. JavaCV 首次加载约 **5.5–6 s**（native + 类加载）；正式播放前要预热，
+   否则观众会看到 6 秒黑屏。
+2. 独立 OpenAL context 停止后，Minecraft `SoundEngine` 在退出时会打印
+   `Deleting stream buffers: Invalid name parameter`（本次 3 条，非致命）。
+   第一版可以接受；更干净的做法是共享 Minecraft context 或把影院 context
+   做成进程级单例，退出时延迟关闭。
+3. 当前音频解码 10 s 素材能全部塞进队列；两小时电影仍依赖有界背压，
+   需要专门的长片测试。
+4. seek 尚未实现。
+
 ## 2. 扬声器系统
 
 ### 2.1 推荐拓扑
@@ -261,6 +297,11 @@ C/D 需要投影仪深度图/自定义 shader/光影包适配，和 Sodium/Iris 
 | 双设备/双 context 共存 | ✅ | 独立进程 + Minecraft 内独立 context 均通过 |
 | 真实立体声解码 | ✅ | 修正了原来 mono 素材 |
 | 5.1 解码/声道顺序 | ✅ | FL/FR/FC/LFE/BL/BR |
+| 真实 720p30 + 5.1 播放 | ✅ | 126 帧呈现、0 丢帧；六路 source 调度成功 |
+| 长片流式 + bounded queue | 🟡 | 10 s 素材已验证；两小时电影仍需长片背压测试 |
+| 暂停/停止 | ✅ | `/cinema_pause`、`/cinema_stop` |
+| seek | ⬜ | 尚未实现 |
+| 启动预热 | ⬜ | JavaCV 首次加载约 5.5–6 s |
 | 六 source 采样级同步 | ✅ | 0 sample skew |
 | EFX reverb/direct filter | ✅ | 创建/绑定成功，听感待测 |
 | 长片流式 + bounded queue | 🟡 | 两小时 5.1 PCM 约 2.1 GB，不能预解码 |
@@ -278,11 +319,11 @@ C/D 需要投影仪深度图/自定义 shader/光影包适配，和 Sodium/Iris 
 
 | 项目 | 状态 | 备注 |
 |---|---|---|
-| 解码/上传/同步 | ✅ | P0 |
-| 真实 5.1 播放链路 | 🟡 | 需要把 6 路接到 speaker |
-| DynamicTexture 屏幕渲染 | ✅ | 客户端内动态纹理 + 世界空间 quad 已验证 |
+| 解码/上传/同步 | ✅ | P0 + P0.5-C 真实视频 |
+| 真实 5.1 播放链路 | ✅ | 六路 speaker source 已接通 |
+| 视频纹理屏幕渲染 | ✅ | `CinemaVideoTexture`，真实 720p30 帧上传 |
 | 多方块屏幕 UV | 🟡 | 需要 block entity renderer |
-| DynamicTexture 生命周期 | 🟡 | 资源重载/世界卸载 |
+| 视频纹理生命周期 | 🟡 | 注册/释放已验证；资源重载待测 |
 | 投影 UV/投掷比/梯形 | ✅ | 真实 view/projection 矩阵，UV 约 0–1 |
 | 对焦模糊 | 🟡 | 需要降采样/多 tap |
 | 遮挡阴影 raycast 成本 | ✅ | 576 rays ≈ 0.5–1.1 ms/次 |
@@ -363,7 +404,9 @@ C/D 需要投影仪深度图/自定义 shader/光影包适配，和 Sodium/Iris 
 - ✅ Sodium 0.6.13、Iris 1.8.7 + BSL 10.1.8 屏幕显示正常。
 - ⬜ 多方块屏幕 UV 切分；真实视频帧；对焦/梯形；遮挡物视觉效果。
 
-**P0.5-C：播放器状态机 + 流式音频。**
-- ⬜ bounded queue、暂停/跳转、欠载恢复、长片内存。
+**P0.5-C：播放器状态机 + 流式媒体。**
+- ✅ 有界视频帧队列 + 有界音频块队列 + 真实 720p30/5.1 播放。
+- ✅ 播放/暂停/停止。
+- ⬜ seek、启动预热、两小时长片内存测试。
 
 **P1：方块/物品/配方/GUI/网络/本地文件选择/最小影院闭环。**

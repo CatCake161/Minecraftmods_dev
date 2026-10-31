@@ -1,6 +1,7 @@
 package com.example.firstmod.client.render;
 
 import com.example.firstmod.FirstMod;
+import com.example.firstmod.client.media.CinemaPlayer;
 import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
@@ -32,11 +33,13 @@ public final class CinemaVisualSpike {
 	private static final int HEIGHT = 144;
 	private static final int SHADOW_COLS = 32;
 	private static final int SHADOW_ROWS = 18;
-	private static final ResourceLocation TEXTURE_ID = FirstMod.id("spike_screen");
+	private static final ResourceLocation TEST_TEXTURE_ID = FirstMod.id("spike_screen");
 
 	private static final boolean[] SHADOW = new boolean[SHADOW_COLS * SHADOW_ROWS];
 	private static final float[] UVS = new float[8];
 
+	private static ResourceLocation screenTexture = TEST_TEXTURE_ID;
+	private static boolean videoMode;
 	private static boolean enabled;
 	private static boolean initialized;
 	private static DynamicTexture texture;
@@ -61,18 +64,36 @@ public final class CinemaVisualSpike {
 
 	public static void toggle(Minecraft client) {
 		if (enabled) {
-			enabled = false;
-			FirstMod.LOGGER.info("cinema visual spike: off");
+			disable();
 			return;
 		}
 		enable(client);
 	}
 
+	public static void disable() {
+		enabled = false;
+		videoMode = false;
+		screenTexture = TEST_TEXTURE_ID;
+		FirstMod.LOGGER.info("cinema visual spike: off");
+	}
+
 	public static void enable(Minecraft client) {
+		enableInternal(client, TEST_TEXTURE_ID, false);
+	}
+
+	public static void enableVideo(Minecraft client, ResourceLocation textureId) {
+		enableInternal(client, textureId, true);
+	}
+
+	private static void enableInternal(Minecraft client, ResourceLocation textureId, boolean video) {
 		if (client.player == null || client.level == null) {
 			return;
 		}
-		ensureTexture(client);
+		videoMode = video;
+		screenTexture = textureId;
+		if (!video) {
+			ensureTexture(client);
+		}
 
 		Vec3 look = client.player.getLookAngle();
 		Vec3 forward = new Vec3(look.x, 0.0, look.z);
@@ -133,7 +154,12 @@ public final class CinemaVisualSpike {
 			return;
 		}
 
-		if (++frame % 3 == 0) {
+		if (videoMode) {
+			CinemaPlayer player = CinemaPlayer.active();
+			if (player != null) {
+				player.presentFrame();
+			}
+		} else if (++frame % 3 == 0) {
 			updateTexture(client);
 		}
 
@@ -150,7 +176,7 @@ public final class CinemaVisualSpike {
 		Vec3 p3 = up;
 
 		// Screen.
-		VertexConsumer screen = context.consumers().getBuffer(RenderType.entitySolid(TEXTURE_ID));
+		VertexConsumer screen = context.consumers().getBuffer(RenderType.entitySolid(screenTexture));
 		screenVertex(screen, pose, p0, UVS[0], UVS[1]);
 		screenVertex(screen, pose, p1, UVS[2], UVS[3]);
 		screenVertex(screen, pose, p2, UVS[4], UVS[5]);
@@ -185,7 +211,7 @@ public final class CinemaVisualSpike {
 			return;
 		}
 		texture = new DynamicTexture(WIDTH, HEIGHT, true);
-		client.getTextureManager().register(TEXTURE_ID, texture);
+		client.getTextureManager().register(TEST_TEXTURE_ID, texture);
 		updateTexture(client);
 		initialized = true;
 	}

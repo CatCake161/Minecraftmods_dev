@@ -144,9 +144,15 @@ $env:JAVA_TOOL_OPTIONS='-Dfirstmod.spike.audio=independent -Dfirstmod.spike.exit
 # 屏幕 + 投影 UV：自动启用、截图、退出
 $env:JAVA_TOOL_OPTIONS='-Dfirstmod.spike.visual=true -Dfirstmod.spike.exit=true'
 .\gradlew runClient --args="--quickPlaySingleplayer=spike"
+
+# 真实 720p30 + 5.1：自动播放、截图、退出
+$video=(Resolve-Path 'spike\testmedia\test720p30_51.mp4').Path
+$env:JAVA_TOOL_OPTIONS="-Dfirstmod.spike.video=$video -Dfirstmod.spike.exit=true"
+.\gradlew runClient --args="--quickPlaySingleplayer=spike"
 ```
 
-也可以在游戏内使用 `/cinema_audio_spike` 和 `/cinema_visual_spike`；
+也可以在游戏内使用 `/cinema_audio_spike`、`/cinema_visual_spike`、
+`/cinema_play <path>`、`/cinema_pause`、`/cinema_stop`；
 `/cinema_visual_spike screenshot` 手动截图。截图输出到 `run/screenshots/`。
 带 `firstmod.spike.*` 属性的自动测试会在启动后把游戏窗口置前，便于观察。
 
@@ -250,6 +256,30 @@ Sodium/Iris/BSL 只作为测试环境放入 `run/mods`、`run/shaderpacks`，不
 
 屏幕使用 `entitySolid`，Iris/BSL 能正常合成；可见光束删除后，之前自定义
 RenderType 在 BSL 下不可见的问题也随之消失。
+
+### 10. 真实 720p30 + 5.1 播放（P0.5-C）
+
+客户端播放 `test720p30_51.mp4`（1280×720、30 fps、AAC 5.1）：
+
+![P0.5 real video](screenshots/p05-video.png)
+
+- 视频解码线程 → 8 帧有界队列 → `CinemaVideoTexture`
+- 音频解码线程 → 32 块有界队列 → 六路 mono OpenAL source
+- 本次自动测试：**126 帧呈现、0 丢帧**；六路 source 在同一设备时钟启动
+- 播放/暂停/停止命令：`/cinema_play <path>`、`/cinema_pause`、`/cinema_stop`
+
+**JavaCV + Fabric 的坑**：`javacv` 的传递依赖会污染 Fabric 开发环境 classpath，
+导致 Fabric Loader/Mixin 的 preLaunch/plugin 类在两个 classloader 之间 cast 失败，
+Sodium/Iris 直接崩溃。只保留 `javacv`/`ffmpeg`/`javacpp` 三件套并设置
+`transitive = false` 后解决。
+
+**剩余问题**：
+
+1. JavaCV 首次加载约 **5.5–6 s**；正式播放前需要预热。
+2. 独立 OpenAL context 停止后，Minecraft `SoundEngine` 退出时会打印
+   `Deleting stream buffers: Invalid name parameter`（非致命）；后续可改共享
+   context 或进程级单例。
+3. seek 尚未实现；两小时长片仍需内存/背压测试。
 
 ## 结论：GO
 
