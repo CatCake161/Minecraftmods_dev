@@ -297,15 +297,15 @@ Sodium/Iris 直接崩溃。只保留 `javacv`/`ffmpeg`/`javacpp` 三件套并设
 
 已注册：
 
-- `firstmod:screen`：1×1 屏幕方块，深色边框，block entity renderer 在正面绘制 16:9 视频面
+- `firstmod:screen`：屏幕方块，block entity renderer 自动扫描连续矩形（最大 16×16），
+  由 master 方块绘制一张完整视频面，避免方块缝；视频按 contain 比例加黑边
 - `firstmod:projector`：投影仪方块（当前只有朝向和方块模型，镜头/几何下一步）
 - 物品模型、blockstate、创造模式物品栏
 
 ![P1 screen block](screenshots/p1-screen-block.png)
 
-测试属性 `-Dfirstmod.spike.blocks=true` 会在玩家前方放置屏幕、后方放置投影仪，
-再用真实 720p30/5.1 播放。当前屏幕仍是 1 方块大小；下一步做 4×3 多方块 UV 和
-投影仪镜头/遮挡。
+测试属性 `-Dfirstmod.spike.blocks=true` 会在玩家前方生成 4×3 屏幕、后方放置投影仪，
+再用真实 720p30/5.1 播放。下一步做投影仪镜头/投掷比/对焦/遮挡。
 
 ## 结论：GO
 

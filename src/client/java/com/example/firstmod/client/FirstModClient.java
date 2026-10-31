@@ -236,13 +236,24 @@ public class FirstModClient implements ClientModInitializer {
 		if (client.level == null || client.player == null) {
 			return;
 		}
-		Direction facing = client.player.getDirection();
-		BlockPos screenPos = client.player.blockPosition().relative(facing, 4).above();
-		BlockPos projectorPos = client.player.blockPosition().relative(facing, -3).above();
-		client.level.setBlockAndUpdate(screenPos,
-			FirstMod.SCREEN_BLOCK.defaultBlockState().setValue(ScreenBlock.FACING, facing.getOpposite()));
-		client.level.setBlockAndUpdate(projectorPos,
-			FirstMod.PROJECTOR_BLOCK.defaultBlockState().setValue(ProjectorBlock.FACING, facing));
-		FirstMod.LOGGER.info("cinema block spike: screen={} projector={} facing={}", screenPos, projectorPos, facing);
+		Direction forward = client.player.getDirection();
+		Direction screenFacing = forward.getOpposite();
+		BlockPos center = client.player.blockPosition().relative(forward, 4).above();
+		for (int horizontal = -2; horizontal <= 1; horizontal++) {
+			for (int vertical = 0; vertical < 3; vertical++) {
+				BlockPos pos = switch (screenFacing) {
+					case NORTH, SOUTH -> center.offset(horizontal, vertical, 0);
+					case WEST, EAST -> center.offset(0, vertical, horizontal);
+					default -> center;
+				};
+				client.level.setBlockAndUpdate(pos, FirstMod.SCREEN_BLOCK.defaultBlockState()
+					.setValue(ScreenBlock.FACING, screenFacing));
+			}
+		}
+		BlockPos projectorPos = client.player.blockPosition().relative(forward, -3).above();
+		client.level.setBlockAndUpdate(projectorPos, FirstMod.PROJECTOR_BLOCK.defaultBlockState()
+			.setValue(ProjectorBlock.FACING, forward));
+		FirstMod.LOGGER.info("cinema block spike: 4x3 screen={} projector={} facing={}",
+			center, projectorPos, forward);
 	}
 }

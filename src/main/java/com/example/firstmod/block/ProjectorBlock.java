@@ -1,6 +1,7 @@
 package com.example.firstmod.block;
 
 import net.minecraft.world.item.context.BlockPlaceContext;
+import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.HorizontalDirectionalBlock;
 import net.minecraft.world.level.block.state.BlockState;

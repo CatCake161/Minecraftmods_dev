@@ -417,9 +417,9 @@ C/D 需要投影仪深度图/自定义 shader/光影包适配，和 Sodium/Iris 
 - ⬜ 两小时长片内存测试。
 
 **P1：影院房间。**
-- ✅ `ScreenBlock` + `ScreenBlockEntity` + 视频纹理 renderer（1×1）
+- ✅ `ScreenBlock` + `ScreenBlockEntity` + 视频纹理 renderer
+- ✅ 4×3 多方块屏幕扫描/UV/master 渲染
 - ✅ `ProjectorBlock` 方块/朝向/模型（镜头与投影几何下一步）
-- ⬜ 4×3 多方块屏幕 UV
 - ⬜ 投影仪镜头/投掷比/对焦/遮挡
 - ⬜ AV Receiver + Speaker + Seat
 - ⬜ GUI/网络/本地文件选择
