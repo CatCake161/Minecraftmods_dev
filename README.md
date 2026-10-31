@@ -1,6 +1,9 @@
-# First Mod
+# First Mod · Minecraft Cinema
 
-基于 **Minecraft 1.21.1 + Fabric** 的模组项目骨架。
+基于 **Minecraft 1.21.1 + Fabric** 的影院系统模组。
+
+当前阶段：**P0 技术验证已完成**（FFmpeg 解码 / 纹理上传 / OpenAL 音画同步），
+测试代码和实测数据见 [spike/README.md](spike/README.md)。
 
 ## 环境要求
 
