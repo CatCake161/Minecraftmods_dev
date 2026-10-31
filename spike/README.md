@@ -141,13 +141,14 @@ $env:JAVA_HOME='C:\Users\Whuch\.jdks\openjdk-26.0.2.1'
 $env:JAVA_TOOL_OPTIONS='-Dfirstmod.spike.audio=independent -Dfirstmod.spike.exit=true'
 .\gradlew runClient --args="--quickPlaySingleplayer=spike"
 
-# 屏幕 + 投影光束：自动启用、截图、退出
+# 屏幕 + 投影 UV：自动启用、截图、退出
 $env:JAVA_TOOL_OPTIONS='-Dfirstmod.spike.visual=true -Dfirstmod.spike.exit=true'
 .\gradlew runClient --args="--quickPlaySingleplayer=spike"
 ```
 
 也可以在游戏内使用 `/cinema_audio_spike` 和 `/cinema_visual_spike`；
 `/cinema_visual_spike screenshot` 手动截图。截图输出到 `run/screenshots/`。
+带 `firstmod.spike.*` 属性的自动测试会在启动后把游戏窗口置前，便于观察。
 
 Sodium/Iris/BSL 只作为测试环境放入 `run/mods`、`run/shaderpacks`，不进入模组依赖。
 
@@ -212,45 +213,43 @@ Sodium/Iris/BSL 只作为测试环境放入 `run/mods`、`run/shaderpacks`，不
 结论：第一版采用**独立 context + 影院输出设备**配置；共享 Minecraft context
 不再作为必经路线。
 
-### 8. Minecraft 客户端内的屏幕与光束
+### 8. Minecraft 客户端内的屏幕与投影 UV
 
 客户端命令/自动测试 `cinema_visual_spike` 渲染 4.8×2.7 的世界空间屏幕：
 
-![P0.5 screen + beam](screenshots/p05-visual.png)
+![P0.5 screen](screenshots/p05-screen.png)
 
 - `DynamicTexture` 测试图每 3 帧上传，颜色条/灰度梯/运动标记正确
 - 投影仪 UV 由真实 view/projection 矩阵计算，屏幕覆盖正确
-- 自定义 additive RenderType 的光束可见，且**不遮挡屏幕**
 - 32×18 = 576 条遮挡射线，单次约 **0.5–1.1 ms**
 - 截图由 `Screenshot.grab` 自动保存到 `run/screenshots/`
+- **可见光束已按决定删除**；不再渲染光锥/粒子束，也不再需要自定义 RenderType
 
 关键渲染坑：
 
 1. `AFTER_ENTITIES` 的 `matrixStack` 是 identity；要 `translate(origin - camera)`
    后提交局部坐标，不能直接提交 camera-relative 世界坐标。
 2. 投影 UV 的 `lookAt` 必须用世界坐标；再减一次 lens 会让 `clip.w` 变负。
-3. 光束 RenderType 必须只写颜色、不写深度；`RenderType.lightning()` 会挡掉屏幕。
-4. `RenderType.create` / `RenderStateShard` 常量在 1.21.1 需要 access widener；
-   正式实现应封装成独立工具类。
-5. 屏幕顶点 light 用 `0xF000F0`；正式实现要按环境光做洗白，而不是永远 fullbright。
+3. 屏幕顶点 light 用 `0xF000F0`；正式实现要按环境光做洗白，而不是永远 fullbright。
+4. 正式屏幕应优先用 block entity renderer，而不是全局 `WorldRenderEvents` 临时 quad；
+   当前 spike 只是为了先验证纹理/UV/矩阵。
 
 尚未验证：多方块屏幕 UV、真实视频帧、遮挡阴影视觉效果、对焦/梯形、
-Sodium/Iris、资源重载/世界卸载。
+资源重载/世界卸载。
 
 ### 9. Sodium / Iris 兼容性
 
-| 环境 | 屏幕 | 光束 |
-|---|---|---|
-| 原版 | ✅ | ✅ |
-| Sodium 0.6.13 | ✅ | ✅ |
-| Sodium + Iris 1.8.7（无光影包） | ✅ | ✅ |
-| Sodium + Iris + BSL 10.1.8 | ✅ | ❌ 不显示 |
+| 环境 | 屏幕 |
+|---|---|
+| 原版 | ✅ |
+| Sodium 0.6.13 | ✅ |
+| Sodium + Iris 1.8.7（无光影包） | ✅ |
+| Sodium + Iris + BSL 10.1.8 | ✅ |
 
-![P0.5 screen under BSL](screenshots/p05-bsl.png)
+![P0.5 screen under BSL](screenshots/p05-screen.png)
 
-屏幕用的 `entitySolid` 能被 Iris/BSL 正常合成；自定义
-`RenderType.create` + additive 光束不会被 BSL 合成。第一版需要为光影包
-准备粒子束/原版 RenderType 的光束回退，不能假设自定义 RenderType 一定可见。
+屏幕使用 `entitySolid`，Iris/BSL 能正常合成；可见光束删除后，之前自定义
+RenderType 在 BSL 下不可见的问题也随之消失。
 
 ## 结论：GO
 
@@ -298,17 +297,17 @@ P0 通过标准：
 - **跨平台**：目前只测了 Windows x64，natives 也是 hardcode；macOS/Linux 需要在打包阶段处理。
   macOS 的 OpenAL/EFX 能力也需要单独探测。
 - **屏幕几何**：spike 只画了一个全屏 quad；多方块屏幕的 UV 切分、遮挡和光影兼容性尚未验证。
-- **投影仪**：投射几何、阴影遮挡、光束、环境光洗白、Sodium/Iris 兼容都还没有实测。
+- **投影仪**：投射几何/遮挡阴影/环境光洗白已经做了基础验证；对焦/梯形、
+  block entity renderer、资源重载仍待验证。可见光束已删除。
 - **LAN 同步**：媒体文件只在客户端本地，服务端只能同步播放状态和文件指纹；
   缺少文件的玩家需要明确的降级 UI。
 
 ## 下一步（P0.5 → P1）
 
-1. **Minecraft 内 OpenAL 共存**：先做独立 context，再做共享 context 对照；覆盖资源重载、
-   音频设备切换、暂停/恢复。
+1. **Minecraft 内 OpenAL 生命周期**：资源重载、音频设备切换、暂停/恢复。
 2. **Minecraft 内扬声器原型**：六只 speaker block + receiver 的最小链路，
    播放 5.1 测试片，验证每声道定位、同步、遮挡 low-pass 和 reverb。
 3. **投影仪视觉原型**：4×3 屏幕 + 投影仪方块，验证 dynamic texture 生命周期、
-   多方块 UV、投掷比/梯形校正/对焦、射线遮挡阴影、光束和 Sodium/Iris。
+   多方块 UV、投掷比/梯形校正/对焦、射线遮挡阴影和 Sodium/Iris。
 4. **流式管线**：有界音频 ring buffer + 视频帧池 + 播放/暂停/停止/跳转。
 5. **本地文件选择与最小播放命令**，720p30 默认档位。

@@ -2,14 +2,11 @@ package com.example.firstmod.client.render;
 
 import com.example.firstmod.FirstMod;
 import com.mojang.blaze3d.platform.NativeImage;
-import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
-import com.mojang.blaze3d.vertex.VertexFormat;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Screenshot;
-import net.minecraft.client.renderer.RenderStateShard;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.client.renderer.texture.OverlayTexture;
@@ -36,15 +33,6 @@ public final class CinemaVisualSpike {
 	private static final int SHADOW_COLS = 32;
 	private static final int SHADOW_ROWS = 18;
 	private static final ResourceLocation TEXTURE_ID = FirstMod.id("spike_screen");
-	private static final RenderType BEAM = RenderType.create("firstmod_cinema_beam",
-		DefaultVertexFormat.POSITION_COLOR, VertexFormat.Mode.QUADS, 1536,
-		RenderType.CompositeState.builder()
-			.setShaderState(RenderStateShard.POSITION_COLOR_SHADER)
-			.setTransparencyState(RenderStateShard.ADDITIVE_TRANSPARENCY)
-			.setCullState(RenderStateShard.NO_CULL)
-			.setWriteMaskState(RenderStateShard.COLOR_WRITE)
-			.setDepthTestState(RenderStateShard.LEQUAL_DEPTH_TEST)
-			.createCompositeState(false));
 
 	private static final boolean[] SHADOW = new boolean[SHADOW_COLS * SHADOW_ROWS];
 	private static final float[] UVS = new float[8];
@@ -159,15 +147,6 @@ public final class CinemaVisualSpike {
 		Vec3 p1 = right;
 		Vec3 p2 = right.add(up);
 		Vec3 p3 = up;
-		Vec3 lensLocal = lens.subtract(origin);
-
-		// Beam: four quads from the lens to the screen edges. The custom render
-		// type writes color but not depth, so the beam cannot hide the screen.
-		VertexConsumer beam = context.consumers().getBuffer(BEAM);
-		beamQuad(beam, pose, lensLocal, p0, p1);
-		beamQuad(beam, pose, lensLocal, p1, p2);
-		beamQuad(beam, pose, lensLocal, p2, p3);
-		beamQuad(beam, pose, lensLocal, p3, p0);
 
 		// Screen.
 		VertexConsumer screen = context.consumers().getBuffer(RenderType.entitySolid(TEXTURE_ID));
@@ -177,15 +156,6 @@ public final class CinemaVisualSpike {
 		screenVertex(screen, pose, p3, UVS[6], UVS[7]);
 
 		poseStack.popPose();
-	}
-
-	private static void beamQuad(VertexConsumer beam, Matrix4f pose, Vec3 lensRel, Vec3 a, Vec3 b) {
-		beam.addVertex(pose, (float) lensRel.x, (float) lensRel.y, (float) lensRel.z)
-			.setColor(0.035f, 0.065f, 0.12f, 1.0f);
-		beam.addVertex(pose, (float) a.x, (float) a.y, (float) a.z).setColor(0.004f, 0.008f, 0.015f, 1.0f);
-		beam.addVertex(pose, (float) b.x, (float) b.y, (float) b.z).setColor(0.004f, 0.008f, 0.015f, 1.0f);
-		beam.addVertex(pose, (float) lensRel.x, (float) lensRel.y, (float) lensRel.z)
-			.setColor(0.035f, 0.065f, 0.12f, 1.0f);
 	}
 
 	private static void screenVertex(VertexConsumer screen, Matrix4f pose, Vec3 p, float u, float v) {
