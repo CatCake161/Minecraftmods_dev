@@ -19,6 +19,40 @@ public record ScreenGeometry(BlockPos master, Direction facing, int width, int h
 							 Vec3 right, Vec3 up) {
 	private static final int MAX = 16;
 
+	/** Unit normal pointing out of the screen toward the audience. */
+	public Vec3 normal() {
+		return new Vec3(facing.getStepX(), 0.0, facing.getStepZ());
+	}
+
+	/** Distance from the block origin to the visible screen surface. */
+	public double frontOffset() {
+		return facing.getStepX() > 0 || facing.getStepZ() > 0 ? 1.0 : 0.0;
+	}
+
+	/** World-space bottom-left corner of the visible screen surface. */
+	public Vec3 surfaceOrigin() {
+		Vec3 origin = Vec3.atLowerCornerOf(master).add(normal().scale(frontOffset()));
+		if (right.x < 0.0) {
+			origin = origin.add(1.0, 0.0, 0.0);
+		}
+		if (right.z < 0.0) {
+			origin = origin.add(0.0, 0.0, 1.0);
+		}
+		return origin;
+	}
+
+	/** World-space center of the visible screen surface. */
+	public Vec3 center() {
+		return surfaceOrigin()
+			.add(right.scale(width / 2.0))
+			.add(up.scale(height / 2.0));
+	}
+
+	/** Surface origin relative to the master block's minimum corner. */
+	public Vec3 localSurfaceOrigin() {
+		return surfaceOrigin().subtract(Vec3.atLowerCornerOf(master));
+	}
+
 	public static ScreenGeometry find(Level level, BlockPos pos, BlockState state) {
 		Direction facing = state.getValue(ScreenBlock.FACING);
 		boolean alongX = facing.getAxis() == Direction.Axis.Z;
@@ -45,15 +79,15 @@ public record ScreenGeometry(BlockPos master, Direction facing, int width, int h
 
 		int width = maxH - minH + 1;
 		int height = maxY - minY + 1;
-		int masterX = pos.getX() + stepX * (facing == Direction.NORTH || facing == Direction.WEST ? maxH : minH);
-		int masterZ = pos.getZ() + stepZ * (facing == Direction.NORTH || facing == Direction.WEST ? maxH : minH);
+		int masterX = pos.getX() + stepX * (facing == Direction.NORTH || facing == Direction.EAST ? maxH : minH);
+		int masterZ = pos.getZ() + stepZ * (facing == Direction.NORTH || facing == Direction.EAST ? maxH : minH);
 		BlockPos master = new BlockPos(masterX, pos.getY() + minY, masterZ);
 
 		Vec3 right = switch (facing) {
 			case NORTH -> new Vec3(-1, 0, 0);
 			case SOUTH -> new Vec3(1, 0, 0);
-			case WEST -> new Vec3(0, 0, -1);
-			case EAST -> new Vec3(0, 0, 1);
+			case WEST -> new Vec3(0, 0, 1);
+			case EAST -> new Vec3(0, 0, -1);
 			default -> new Vec3(1, 0, 0);
 		};
 		return new ScreenGeometry(master, facing, width, height, right, new Vec3(0, 1, 0));

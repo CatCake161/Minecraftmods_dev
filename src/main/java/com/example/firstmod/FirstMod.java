@@ -2,8 +2,11 @@ package com.example.firstmod;
 
 import com.example.firstmod.block.ProjectorBlock;
 import com.example.firstmod.block.ScreenBlock;
+import com.example.firstmod.block.entity.ProjectorBlockEntity;
 import com.example.firstmod.block.entity.ScreenBlockEntity;
+import com.example.firstmod.command.ProjectorCommand;
 import net.fabricmc.api.ModInitializer;
+import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.itemgroup.v1.ItemGroupEvents;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -26,10 +29,11 @@ public class FirstMod implements ModInitializer {
 	public static final ScreenBlock SCREEN_BLOCK = new ScreenBlock(
 		BlockBehaviour.Properties.of().strength(1.5f).noOcclusion());
 	public static final ProjectorBlock PROJECTOR_BLOCK = new ProjectorBlock(
-		BlockBehaviour.Properties.of().strength(2.0f));
+		BlockBehaviour.Properties.of().strength(2.0f).noOcclusion());
 	public static final Item SCREEN_ITEM = new BlockItem(SCREEN_BLOCK, new Item.Properties());
 	public static final Item PROJECTOR_ITEM = new BlockItem(PROJECTOR_BLOCK, new Item.Properties());
 	public static BlockEntityType<ScreenBlockEntity> SCREEN_BLOCK_ENTITY;
+	public static BlockEntityType<ProjectorBlockEntity> PROJECTOR_BLOCK_ENTITY;
 
 	@Override
 	public void onInitialize() {
@@ -39,6 +43,11 @@ public class FirstMod implements ModInitializer {
 		Registry.register(BuiltInRegistries.ITEM, id("projector"), PROJECTOR_ITEM);
 		SCREEN_BLOCK_ENTITY = Registry.register(BuiltInRegistries.BLOCK_ENTITY_TYPE, id("screen"),
 			BlockEntityType.Builder.of(ScreenBlockEntity::new, SCREEN_BLOCK).build(null));
+		PROJECTOR_BLOCK_ENTITY = Registry.register(BuiltInRegistries.BLOCK_ENTITY_TYPE, id("projector"),
+			BlockEntityType.Builder.of(ProjectorBlockEntity::new, PROJECTOR_BLOCK).build(null));
+
+		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+			ProjectorCommand.register(dispatcher));
 
 		ItemGroupEvents.modifyEntriesEvent(CreativeModeTabs.FUNCTIONAL_BLOCKS).register(entries -> {
 			entries.accept(SCREEN_ITEM);

@@ -329,13 +329,13 @@ C/D 需要投影仪深度图/自定义 shader/光影包适配，和 Sodium/Iris 
 | 解码/上传/同步 | ✅ | P0 + P0.5-C 真实视频 |
 | 真实 5.1 播放链路 | ✅ | 六路 speaker source 已接通 |
 | 视频纹理屏幕渲染 | ✅ | `CinemaVideoTexture`，真实 720p30 帧上传 |
-| 多方块屏幕 UV | 🟡 | 需要 block entity renderer |
+| 多方块屏幕 UV | ✅ | 配对投影仪时每块按镜头 UV 投影/裁剪；未配对保持黑屏 |
 | 视频纹理生命周期 | 🟡 | 注册/释放已验证；资源重载待测 |
-| 投影 UV/投掷比/梯形 | ✅ | 真实 view/projection 矩阵，UV 约 0–1 |
-| 对焦模糊 | 🟡 | 需要降采样/多 tap |
-| 遮挡阴影 raycast 成本 | ✅ | 576 rays ≈ 0.5–1.1 ms/次 |
-| 遮挡阴影视觉效果 | 🟡 | 需要放置遮挡物测试 |
-| 环境光洗白 | 🟡 | lightmap 采样 |
+| 投影 UV/投掷比/梯形 | ✅ | throw ratio + lookAt/perspective + UV 预畸变 |
+| 对焦模糊 | ✅ | mipmap + LOD bias；视觉验收待用户 |
+| 遮挡阴影 raycast 成本 | ✅ | 576 rays ≈ 2–3 ms/次（含世界查询） |
+| 遮挡阴影视觉效果 | 🟡 | 玻璃遮挡测试通过；最终效果待用户游戏内验收 |
+| 环境光洗白 | 🟡 | 正午约 0.26 alpha；最终效果待用户游戏内验收 |
 | Sodium 兼容 | ✅ | Sodium 0.6.13 屏幕正常 |
 | Iris + 光影包 | ✅ | Iris 1.8.7 + BSL 10.1.8 屏幕正常；可见光束已删除 |
 | 真实动态光照 | ⬜ | 需要 Iris shader，建议后置 |
@@ -419,8 +419,9 @@ C/D 需要投影仪深度图/自定义 shader/光影包适配，和 Sodium/Iris 
 **P1：影院房间。**
 - ✅ `ScreenBlock` + `ScreenBlockEntity` + 视频纹理 renderer
 - ✅ 4×3 多方块屏幕扫描/UV/master 渲染
-- ✅ `ProjectorBlock` 方块/朝向/模型（镜头与投影几何下一步）
-- ⬜ 投影仪镜头/投掷比/对焦/遮挡
+- ✅ `ProjectorBlock` + `ProjectorBlockEntity`；镜头/投掷比/自动对焦/梯形/遮挡阴影/环境光洗白/灯泡预热
+- ✅ 手动测试模式与客户端调参命令
+- ⬜ 投影仪风扇声、镜头光晕、过热/通风
 - ⬜ AV Receiver + Speaker + Seat
 - ⬜ GUI/网络/本地文件选择
 

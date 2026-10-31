@@ -4,6 +4,7 @@ import com.example.firstmod.FirstMod;
 import net.minecraft.client.Minecraft;
 import net.minecraft.resources.ResourceLocation;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -33,10 +34,12 @@ public final class CinemaPlayer implements AutoCloseable {
 	private final double startSeconds;
 	private final CinemaVideoTexture texture = new CinemaVideoTexture();
 	private final CinemaAudioEngine audio;
+	private final StreamingAudioDecoder audioDecoder;
 	private final BlockingQueue<VideoFrame> frames = new ArrayBlockingQueue<>(8);
 	private final AtomicBoolean running = new AtomicBoolean(true);
 	private final AtomicBoolean closed = new AtomicBoolean();
 	private final AtomicReference<Throwable> error = new AtomicReference<>();
+	private volatile VideoDecoder videoDecoder;
 
 	private final Thread videoThread;
 	private final Thread audioThread;
@@ -44,14 +47,19 @@ public final class CinemaPlayer implements AutoCloseable {
 	private volatile int width = -1;
 	private volatile int height = -1;
 	private volatile boolean paused;
+	private volatile boolean audioUnavailable;
 	private boolean firstVideoFrame;
 	private VideoFrame pendingFrame;
 	private int presented;
 	private int dropped;
 	private double lastPts;
 	private double lastStatsAt;
+	private long playbackStartNanos = -1;
+	private long pausedAtNanos;
+	private long pausedTotalNanos;
 
-	private CinemaPlayer(Minecraft client, Path file, double startSeconds) {
+	private CinemaPlayer(Minecraft client, Path file, double startSeconds) throws IOException {
+		Ffmpeg.ffmpeg();
 		this.client = client;
 		this.file = file;
 		this.startSeconds = startSeconds;
@@ -59,6 +67,7 @@ public final class CinemaPlayer implements AutoCloseable {
 			sharedAudio = new CinemaAudioEngine();
 		}
 		this.audio = sharedAudio;
+		this.audioDecoder = new StreamingAudioDecoder(startSeconds, () -> !running.get());
 		client.getTextureManager().register(TEXTURE_ID, texture);
 		videoThread = new Thread(this::decodeVideo, "cinema-video");
 		videoThread.setDaemon(true);
@@ -66,11 +75,11 @@ public final class CinemaPlayer implements AutoCloseable {
 		audioThread.setDaemon(true);
 	}
 
-	public static CinemaPlayer play(Minecraft client, Path file) {
+	public static CinemaPlayer play(Minecraft client, Path file) throws IOException {
 		return play(client, file, 0.0);
 	}
 
-	public static CinemaPlayer play(Minecraft client, Path file, double startSeconds) {
+	public static CinemaPlayer play(Minecraft client, Path file, double startSeconds) throws IOException {
 		if (!Files.isRegularFile(file)) {
 			throw new IllegalArgumentException("not a local media file: " + file);
 		}
@@ -82,7 +91,7 @@ public final class CinemaPlayer implements AutoCloseable {
 	}
 
 	/** Restarts the active file at a new timestamp. */
-	public static CinemaPlayer seekActive(Minecraft client, double seconds) {
+	public static CinemaPlayer seekActive(Minecraft client, double seconds) throws IOException {
 		CinemaPlayer current = active;
 		if (current == null) {
 			throw new IllegalStateException("cinema is not playing");
@@ -121,6 +130,15 @@ public final class CinemaPlayer implements AutoCloseable {
 		return height;
 	}
 
+	public float aspect() {
+		return width > 0 && height > 0 ? width / (float) height : 16.0f / 9.0f;
+	}
+
+	/** Applies projector focus blur to the shared video texture for this draw. */
+	public void setFocusBlur(float lod) {
+		texture.setBlurBias(lod);
+	}
+
 	public boolean isPaused() {
 		return paused;
 	}
@@ -139,6 +157,15 @@ public final class CinemaPlayer implements AutoCloseable {
 	public void togglePause() {
 		paused = !paused;
 		audio.setPaused(paused);
+		if (audioUnavailable) {
+			long now = System.nanoTime();
+			if (paused) {
+				pausedAtNanos = now;
+			} else if (pausedAtNanos != 0) {
+				pausedTotalNanos += now - pausedAtNanos;
+				pausedAtNanos = 0;
+			}
+		}
 		FirstMod.LOGGER.info("cinema player: {}", paused ? "paused" : "resumed");
 	}
 
@@ -164,16 +191,18 @@ public final class CinemaPlayer implements AutoCloseable {
 		}
 		if (!firstVideoFrame) {
 			firstVideoFrame = true;
+			playbackStartNanos = System.nanoTime();
 			audio.startPlayback();
 		}
-		if (!audio.isStarted()) {
+		if (!audio.isStarted() && !audioUnavailable) {
 			pendingFrame = frame;
 			return;
 		}
 
-		double target = audio.audiblePtsSeconds();
+		double target = audioUnavailable ? wallClockTarget() : audio.audiblePtsSeconds();
 		while (frame != null && frame.ptsSeconds() < target - MAX_LATE_SECONDS) {
 			dropped++;
+			frame.release();
 			frame = frames.poll();
 		}
 		if (frame == null) {
@@ -187,35 +216,62 @@ public final class CinemaPlayer implements AutoCloseable {
 			lastPts = frame.ptsSeconds();
 			presented++;
 			pendingFrame = null;
+			frame.release();
 			logStatsIfNeeded();
 		} else {
 			pendingFrame = frame;
 		}
 	}
 
+	private double wallClockTarget() {
+		long now = System.nanoTime();
+		long elapsed = now - (playbackStartNanos < 0 ? now : playbackStartNanos) - pausedTotalNanos;
+		if (paused && pausedAtNanos != 0) {
+			elapsed -= now - pausedAtNanos;
+		}
+		return startSeconds + Math.max(0L, elapsed) / 1e9;
+	}
+
 	private void decodeVideo() {
 		CinemaPrewarm.await();
 		try (VideoDecoder decoder = new VideoDecoder(file, startSeconds)) {
-			VideoFrame frame;
-			while (running.get() && (frame = decoder.next()) != null) {
+			videoDecoder = decoder;
+			while (running.get()) {
+				VideoFrame frame = decoder.next();
+				if (frame == null) {
+					break;
+				}
+				if (!running.get()) {
+					frame.release();
+					break;
+				}
 				if (!frames.offer(frame, 100, TimeUnit.MILLISECONDS)) {
 					while (running.get() && !frames.offer(frame, 100, TimeUnit.MILLISECONDS)) {
 						// Wait for the render thread to consume a frame.
+					}
+					if (!running.get()) {
+						frame.release();
 					}
 				}
 			}
 		} catch (Throwable t) {
 			error.compareAndSet(null, t);
+		} finally {
+			videoDecoder = null;
 		}
 	}
 
 	private void decodeAudio() {
 		CinemaPrewarm.await();
 		try {
-			StreamingAudioDecoder.decode(file, CinemaAudioEngine.SAMPLE_RATE, CinemaAudioEngine.CHANNELS,
-				startSeconds, audio::submit, () -> !running.get());
+			boolean hasAudio = audioDecoder.decode(file, audio::submit);
+			if (!hasAudio) {
+				audioUnavailable = true;
+				FirstMod.LOGGER.info("cinema player: no audio stream; using wall clock for video");
+			}
 		} catch (Throwable t) {
-			error.compareAndSet(null, t);
+			audioUnavailable = true;
+			FirstMod.LOGGER.warn("cinema audio decode failed; continuing video-only", t);
 		}
 	}
 
@@ -240,6 +296,11 @@ public final class CinemaPlayer implements AutoCloseable {
 		}
 		running.set(false);
 		audio.reset();
+		VideoDecoder decoder = videoDecoder;
+		if (decoder != null) {
+			decoder.close();
+		}
+		audioDecoder.close();
 		videoThread.interrupt();
 		audioThread.interrupt();
 		try {
@@ -247,6 +308,14 @@ public final class CinemaPlayer implements AutoCloseable {
 			audioThread.join(1_000);
 		} catch (InterruptedException e) {
 			Thread.currentThread().interrupt();
+		}
+		if (pendingFrame != null) {
+			pendingFrame.release();
+			pendingFrame = null;
+		}
+		VideoFrame queued;
+		while ((queued = frames.poll()) != null) {
+			queued.release();
 		}
 		client.getTextureManager().release(TEXTURE_ID);
 		FirstMod.LOGGER.info("cinema player: stopped (presented={}, dropped={})", presented, dropped);

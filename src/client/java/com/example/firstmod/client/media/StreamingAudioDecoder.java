@@ -1,24 +1,125 @@
 package com.example.firstmod.client.media;
 
 import com.example.firstmod.FirstMod;
-import org.bytedeco.javacv.FFmpegFrameGrabber;
-import org.bytedeco.javacv.Frame;
-import org.lwjgl.BufferUtils;
 
+import java.io.BufferedInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.ShortBuffer;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 
-import static org.bytedeco.ffmpeg.global.avutil.AV_SAMPLE_FMT_S16;
-
 /**
- * Streams decoded 5.1 audio into bounded chunks.
- *
- * <p>The sink is expected to block when the playback queue is full. The
- * decoder therefore never holds more than a small, bounded amount of PCM.
+ * Streams decoded 5.1 audio from an external FFmpeg process into bounded chunks.
  */
-public final class StreamingAudioDecoder {
-	private StreamingAudioDecoder() {
+public final class StreamingAudioDecoder implements AutoCloseable {
+	private static final int CHANNELS = 6;
+	private static final int SAMPLE_RATE = 48_000;
+
+	private Process process;
+	private volatile boolean closed;
+	private final BooleanSupplier cancelled;
+	private final double startSeconds;
+
+	public StreamingAudioDecoder(double startSeconds, BooleanSupplier cancelled) {
+		this.startSeconds = Math.max(0.0, startSeconds);
+		this.cancelled = cancelled;
+	}
+
+	public boolean decode(Path file, ChunkSink sink) throws Exception {
+		int chunkFrames = SAMPLE_RATE / 2;
+		int chunkBytes = chunkFrames * CHANNELS * 2;
+		byte[] bytes = new byte[chunkBytes];
+		long totalFrames = 0;
+		long started = System.nanoTime();
+
+		List<String> command = new ArrayList<>();
+		command.add(Ffmpeg.ffmpeg().toString());
+		command.add("-hide_banner");
+		command.add("-nostdin");
+		command.add("-loglevel");
+		command.add("error");
+		if (startSeconds > 0.0) {
+			command.add("-ss");
+			command.add(String.format(java.util.Locale.ROOT, "%.3f", startSeconds));
+		}
+		command.add("-i");
+		command.add(file.toString());
+		command.add("-map");
+		command.add("0:a:0");
+		command.add("-vn");
+		command.add("-sn");
+		command.add("-dn");
+		command.add("-ac");
+		command.add(Integer.toString(CHANNELS));
+		command.add("-ar");
+		command.add(Integer.toString(SAMPLE_RATE));
+		command.add("-channel_layout");
+		command.add("5.1");
+		command.add("-f");
+		command.add("s16le");
+		command.add("-acodec");
+		command.add("pcm_s16le");
+		command.add("pipe:1");
+
+		process = new ProcessBuilder(command).redirectErrorStream(false).start();
+		FirstMod.LOGGER.info("cinema audio decoder: ffmpeg {} Hz, {} channels, start={} s",
+			SAMPLE_RATE, CHANNELS, String.format("%.2f", startSeconds));
+
+		try (InputStream input = new BufferedInputStream(process.getInputStream(), 64 * 1024)) {
+			while (!closed && !cancelled.getAsBoolean()) {
+				int read = readFully(input, bytes);
+				if (read < 0) {
+					break;
+				}
+				if (read == 0) {
+					continue;
+				}
+				int frames = read / (CHANNELS * 2);
+				if (frames <= 0) {
+					continue;
+				}
+				double pts = startSeconds + totalFrames / (double) SAMPLE_RATE;
+				ShortBuffer samples = ByteBuffer.wrap(bytes, 0, read)
+					.order(ByteOrder.LITTLE_ENDIAN)
+					.asShortBuffer();
+				short[] data = new short[samples.remaining()];
+				samples.get(data);
+				sink.accept(new AudioChunk(pts, data));
+				totalFrames += frames;
+			}
+		}
+
+		int exit = process.waitFor();
+		if (exit != 0 && totalFrames == 0 && !closed && !cancelled.getAsBoolean()) {
+			FirstMod.LOGGER.warn("cinema audio decoder: no usable audio stream (ffmpeg exit {})", exit);
+			return false;
+		}
+		double elapsed = (System.nanoTime() - started) / 1e9;
+		double duration = totalFrames / (double) SAMPLE_RATE;
+		FirstMod.LOGGER.info("cinema audio decoder: {} frames, {} s media in {} s wall",
+			totalFrames, String.format("%.3f", duration), String.format("%.3f", elapsed));
+		return totalFrames > 0;
+	}
+
+	private static int readFully(InputStream input, byte[] buffer) throws IOException {
+		int total = 0;
+		while (total < buffer.length) {
+			int read = input.read(buffer, total, buffer.length - total);
+			if (read < 0) {
+				return total == 0 ? -1 : total;
+			}
+			total += read;
+			if (read == 0) {
+				break;
+			}
+		}
+		return total;
 	}
 
 	@FunctionalInterface
@@ -26,85 +127,20 @@ public final class StreamingAudioDecoder {
 		void accept(AudioChunk chunk) throws InterruptedException;
 	}
 
-	public static void decode(Path file, int sampleRate, int channels, ChunkSink sink,
-							  BooleanSupplier cancelled) throws Exception {
-		decode(file, sampleRate, channels, 0.0, sink, cancelled);
-	}
-
-	public static void decode(Path file, int sampleRate, int channels, double startSeconds, ChunkSink sink,
-							  BooleanSupplier cancelled) throws Exception {
-		int chunkFrames = sampleRate / 2;
-		int chunkShorts = chunkFrames * channels;
-		ShortBuffer accumulator = BufferUtils.createShortBuffer(chunkShorts);
-		int accumulatedFrames = 0;
-		double chunkStartPts = -1;
-		double fallbackPts = 0;
-		long totalFrames = 0;
-		long started = System.nanoTime();
-
-		try (FFmpegFrameGrabber grabber = new FFmpegFrameGrabber(file.toFile())) {
-			grabber.setSampleFormat(AV_SAMPLE_FMT_S16);
-			grabber.setSampleRate(sampleRate);
-			grabber.setAudioChannels(channels);
-			grabber.start();
-			if (startSeconds > 0.0) {
-				grabber.setTimestamp((long) (startSeconds * 1_000_000L));
-			}
-			FirstMod.LOGGER.info("cinema audio decoder: {} Hz, {} channels requested, {} reported, codec={}, start={} s",
-				grabber.getSampleRate(), channels, grabber.getAudioChannels(), grabber.getAudioCodecName(),
-				String.format("%.2f", startSeconds));
-
-			Frame frame;
-			while (!cancelled.getAsBoolean() && (frame = grabber.grabSamples()) != null) {
-				if (frame.samples == null || frame.samples.length == 0) {
-					continue;
+	@Override
+	public void close() {
+		closed = true;
+		Process current = process;
+		if (current != null) {
+			current.destroy();
+			try {
+				if (!current.waitFor(500, TimeUnit.MILLISECONDS)) {
+					current.destroyForcibly();
 				}
-				ShortBuffer source = (ShortBuffer) frame.samples[0];
-				int frameFrames = source.remaining() / channels;
-				double framePts = frame.timestamp >= 0 ? frame.timestamp / 1_000_000.0 : fallbackPts;
-				fallbackPts = framePts + frameFrames / (double) sampleRate;
-				int consumedFrames = 0;
-
-				while (source.hasRemaining() && !cancelled.getAsBoolean()) {
-					if (accumulatedFrames == 0) {
-						chunkStartPts = framePts + consumedFrames / (double) sampleRate;
-					}
-
-					int framesToCopy = Math.min(source.remaining() / channels, chunkFrames - accumulatedFrames);
-					int shortsToCopy = framesToCopy * channels;
-					ShortBuffer slice = source.duplicate();
-					slice.limit(slice.position() + shortsToCopy);
-					accumulator.put(slice);
-					source.position(source.position() + shortsToCopy);
-
-					accumulatedFrames += framesToCopy;
-					consumedFrames += framesToCopy;
-					totalFrames += framesToCopy;
-
-					if (accumulatedFrames == chunkFrames) {
-						accumulator.flip();
-						sink.accept(new AudioChunk(chunkStartPts, toArray(accumulator)));
-						accumulator = BufferUtils.createShortBuffer(chunkShorts);
-						accumulatedFrames = 0;
-					}
-				}
-			}
-
-			if (accumulatedFrames > 0 && !cancelled.getAsBoolean()) {
-				accumulator.flip();
-				sink.accept(new AudioChunk(chunkStartPts < 0 ? 0 : chunkStartPts, toArray(accumulator)));
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+				current.destroyForcibly();
 			}
 		}
-
-		double elapsed = (System.nanoTime() - started) / 1e9;
-		double duration = totalFrames / (double) sampleRate;
-		FirstMod.LOGGER.info("cinema audio decoder: {} frames, {} s media in {} s wall",
-			totalFrames, String.format("%.3f", duration), String.format("%.3f", elapsed));
-	}
-
-	private static short[] toArray(ShortBuffer buffer) {
-		short[] result = new short[buffer.remaining()];
-		buffer.get(result);
-		return result;
 	}
 }

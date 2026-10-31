@@ -32,21 +32,8 @@ dependencies {
 	// Fabric API. This is technically optional, but you probably want it anyway.
 	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 
-	// Cinema media stack. JavaCV/FFmpeg is client-only; the server never decodes.
-	// Keep the transitive graph minimal: JavaCPP's optional tooling pulls in ASM
-	// and other libraries that are not needed by the decoder and can disturb
-	// Fabric's development classloader.
-	clientImplementation('org.bytedeco:javacv:1.5.14') {
-		transitive = false
-	}
-	clientImplementation('org.bytedeco:ffmpeg:8.1.2-1.5.14') {
-		transitive = false
-	}
-	clientImplementation('org.bytedeco:javacpp:1.5.14') {
-		transitive = false
-	}
-	clientRuntimeOnly 'org.bytedeco:ffmpeg:8.1.2-1.5.14:windows-x86_64'
-	clientRuntimeOnly 'org.bytedeco:javacpp:1.5.14:windows-x86_64'
+	// Cinema uses an external FFmpeg full build (ffmpeg.exe/ffprobe.exe) placed
+	// under <game>/mods/. It is not bundled with the mod.
 }
 
 processResources {

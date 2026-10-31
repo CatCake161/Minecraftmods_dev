@@ -1,5 +1,8 @@
 # Cinema P0 技术验证
 
+> 注意：**主模组已迁移到外部 FFmpeg 进程**（用户把 gyan.dev full build 放到 `mods/ffmpeg/bin/`）。
+> 本文的 JavaCV 数据是 P0 历史对比；spike 工程仍可单独用 JavaCV 运行。
+
 这是影院系统的独立技术验证工程，不参与模组构建，也不修改 `src/` 下的模组代码。
 扬声器/投影仪的完整设计取舍和 P0.5 验证矩阵见 [P05-DESIGN.md](P05-DESIGN.md)。
 目标是在写方块和投影仪之前，先回答三个问题：
@@ -293,19 +296,47 @@ Sodium/Iris 直接崩溃。只保留 `javacv`/`ffmpeg`/`javacpp` 三件套并设
    `Allocate new source`、`Stop: Invalid operation` 或
    `Deleting stream buffers` 错误。
 
-### 11. P1 第一刀：屏幕方块
+### 11. P1 第二刀：投影仪光学
 
-已注册：
+已注册/实现：
 
-- `firstmod:screen`：屏幕方块，block entity renderer 自动扫描连续矩形（最大 16×16），
-  由 master 方块绘制一张完整视频面，避免方块缝；视频按 contain 比例加黑边
-- `firstmod:projector`：投影仪方块（当前只有朝向和方块模型，镜头/几何下一步）
-- 物品模型、blockstate、创造模式物品栏
+- `firstmod:screen`：4×3 多方块屏幕，master 渲染；有投影仪时按镜头 UV 逐块投影/裁剪，未配对时保持黑屏
+- `firstmod:projector`：带镜头模型的投影仪方块 + `ProjectorBlockEntity`
+- 投掷比/变焦、自动对焦/手动焦距、垂直/水平梯形、亮度、灯泡预热/冷却
+- 屏幕自动配对；镜头 view/projection 计算四角 UV；梯形预畸变
+- 对焦：视频纹理 mipmap + `GL_TEXTURE_LOD_BIAS`；覆盖 `entityCutoutNoCull` 每次绘制的过滤重置
+- 遮挡阴影：32×18 射线，玻璃遮挡测试时 96 格被遮挡，约 2–3 ms/次
+- 环境光洗白：屏幕位置 sky/block light + `getSkyDarken`
+- 修复东/西朝向屏幕 master/right 反向导致的错位/镜像
 
-![P1 screen block](screenshots/p1-screen-block.png)
+自动测试（截图后退出）：
 
-测试属性 `-Dfirstmod.spike.blocks=true` 会在玩家前方生成 4×3 屏幕、后方放置投影仪，
-再用真实 720p30/5.1 播放。下一步做投影仪镜头/投掷比/对焦/遮挡。
+```powershell
+$video=(Resolve-Path 'spike\testmedia\test720p30_51.mp4').Path
+$env:JAVA_TOOL_OPTIONS="-Dfirstmod.spike.video=$video -Dfirstmod.spike.blocks=true -Dfirstmod.spike.projector.shadow=true -Dfirstmod.spike.exit=true"
+.\gradlew runClient --args="--quickPlaySingleplayer=spike"
+```
+
+**手动测试（推荐）**：自动搭景、固定时间/天气/无动物，但不截图、不退出、不锁定玩家。
+
+```powershell
+$video=(Resolve-Path 'spike\testmedia\test720p30_51.mp4').Path
+$env:JAVA_TOOL_OPTIONS="-Dfirstmod.spike.video=$video -Dfirstmod.spike.blocks=true -Dfirstmod.spike.manual=true"
+.\gradlew runClient --args="--quickPlaySingleplayer=spike"
+```
+
+游戏内：
+
+- `/cinema_help` 或 `/cinema help`：6 页指令文档（源文件 `docs/CINEMA_COMMANDS.md`）
+- `/cinema_projector_client info`
+- `/cinema_projector_client throw 1.75` / `throw auto`
+- `/cinema_projector_client focus 2.0` / `focus auto`
+- `/cinema_projector_client keystone 10 0`
+- `/cinema_projector_client brightness 0.8`
+- `/cinema_projector_client power`
+- `/cinema_test_scene` 按当前视角重新搭 4×3 屏幕 + 投影仪
+- `/cinema_test_scene clear` 删除测试场景（包括测试用玻璃遮挡物和附近残留 barrier）
+- `/time set midnight` 可测试夜间环境光洗白（测试环境把时间循环关了）
 
 ## 结论：GO
 

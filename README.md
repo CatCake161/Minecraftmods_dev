@@ -2,7 +2,7 @@
 
 基于 **Minecraft 1.21.1 + Fabric** 的影院系统模组。
 
-当前阶段：**P0.5 已完成；P1 已开始**（屏幕/投影仪方块、共享 OpenAL device、真实 720p30 + 5.1 播放）。
+当前阶段：**P1 投影仪光学第一版**（屏幕/投影仪方块、投掷比/对焦/梯形/阴影/环境光、外部 FFmpeg 解码）。
 测试代码和实测数据见 [spike/README.md](spike/README.md)，
 扬声器与投影仪的设计/验证清单见 [spike/P05-DESIGN.md](spike/P05-DESIGN.md)。
 
@@ -16,6 +16,42 @@
 | Java（编译/运行游戏） | 21（`build.gradle` 已配置 toolchain，缺失时 Gradle 会自动下载） |
 | Java（运行 Gradle） | 25 或更高（Loom 1.19 的要求） |
 | Gradle | 9.8.2（随 wrapper 提供，无需单独安装） |
+| FFmpeg | **必须安装** full build（gyan.dev），见下 |
+
+## FFmpeg 安装（必须）
+
+模组不再内置 JavaCV/FFmpeg。请从 <https://www.gyan.dev/ffmpeg/builds/> 下载 **full build**，
+把 `ffmpeg.exe` 和 `ffprobe.exe` 放到：
+
+```text
+.minecraft/mods/ffmpeg/bin/ffmpeg.exe
+.minecraft/mods/ffmpeg/bin/ffprobe.exe
+```
+
+开发环境对应：
+
+```text
+run/mods/ffmpeg/bin/ffmpeg.exe
+run/mods/ffmpeg/bin/ffprobe.exe
+```
+
+也可以直接把 `ffmpeg.exe` 放在 `mods/` 下，或用 JVM 参数指定：
+
+```text
+-Dfirstmod.ffmpeg.path=C:\path\to\ffmpeg.exe
+```
+
+4K 默认会缩到 1080p；要保留原生分辨率：
+
+```text
+-Dfirstmod.video.maxHeight=0
+```
+
+硬件解码默认 `auto`；遇到驱动问题时关闭：
+
+```text
+-Dfirstmod.ffmpeg.hwaccel=none
+```
 
 > 注意：Gradle 进程需要 JDK 25+，而模组编译目标和游戏运行使用 JDK 21。
 > 本机已安装：`%USERPROFILE%\.jdks\openjdk-26.0.2.1`（Gradle）和

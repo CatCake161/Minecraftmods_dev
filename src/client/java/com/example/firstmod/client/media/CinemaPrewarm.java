@@ -1,15 +1,14 @@
 package com.example.firstmod.client.media;
 
 import com.example.firstmod.FirstMod;
-import org.bytedeco.javacv.FFmpegFrameGrabber;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Loads JavaCV/FFmpeg native libraries in the background while the client is
- * starting. First use otherwise costs several seconds (native extraction plus
- * class loading) and would leave the cinema screen black after pressing play.
+ * Verifies the external FFmpeg installation in the background while the client
+ * starts. FFmpeg is a required runtime component; this also makes the install
+ * error visible in the log before the user tries to play a file.
  */
 public final class CinemaPrewarm {
 	private static final CompletableFuture<Void> LOADED = new CompletableFuture<>();
@@ -40,13 +39,14 @@ public final class CinemaPrewarm {
 	private static void load() {
 		long started = System.nanoTime();
 		try {
-			FFmpegFrameGrabber.tryLoad();
+			String version = Ffmpeg.version();
 			LOADED.complete(null);
-			FirstMod.LOGGER.info("cinema prewarm: JavaCV/FFmpeg ready in {} ms",
-				String.format("%.0f", (System.nanoTime() - started) / 1e6));
+			FirstMod.LOGGER.info("cinema prewarm: external FFmpeg ready in {} ms: {}",
+				String.format("%.0f", (System.nanoTime() - started) / 1e6), version);
 		} catch (Throwable t) {
 			LOADED.completeExceptionally(t);
-			FirstMod.LOGGER.error("cinema prewarm failed", t);
+			FirstMod.LOGGER.error("cinema prewarm failed: {}", t.getMessage());
+			FirstMod.LOGGER.error(Ffmpeg.INSTALL_HINT);
 		}
 	}
 }
