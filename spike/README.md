@@ -219,8 +219,8 @@ Sodium/Iris/BSL 只作为测试环境放入 `run/mods`、`run/shaderpacks`，不
 
 ![P0.5 screen](screenshots/p05-screen.png)
 
-- `DynamicTexture` 测试图每 3 帧上传，颜色条/灰度梯/运动标记正确
-- 投影仪 UV 由真实 view/projection 矩阵计算，屏幕覆盖正确
+- `DynamicTexture` 测试图每 3 帧上传，颜色条/灰度梯正确
+- 投影仪 UV 由真实 view/projection 矩阵计算，镜头位于玩家后方 4 格，屏幕覆盖正确
 - 32×18 = 576 条遮挡射线，单次约 **0.5–1.1 ms**
 - 截图由 `Screenshot.grab` 自动保存到 `run/screenshots/`
 - **可见光束已按决定删除**；不再渲染光锥/粒子束，也不再需要自定义 RenderType

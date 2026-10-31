@@ -85,6 +85,7 @@ public final class CinemaVisualSpike {
 		Vec3 center = eye.add(forward.scale(6.0));
 		double screenWidth = 4.8;
 		double screenHeight = 2.7;
+		double projectorBack = 4.0;
 
 		origin = center.subtract(rightDir.scale(screenWidth / 2.0)).subtract(0.0, screenHeight / 2.0, 0.0);
 		right = rightDir.scale(screenWidth);
@@ -94,12 +95,12 @@ public final class CinemaVisualSpike {
 		// Projector lens: a little behind/above the player, aimed at the
 		// screen center. The UVs come from a real view/projection matrix, so
 		// an off-axis lens produces a keystoned image instead of a flat quad.
-		lens = eye.add(forward.scale(1.2)).add(0.0, 1.0, 0.0);
+		lens = eye.subtract(forward.scale(projectorBack));
 		projectorView = new Matrix4f().lookAt(
 			new Vector3f((float) lens.x, (float) lens.y, (float) lens.z),
 			new Vector3f((float) center.x, (float) center.y, (float) center.z),
 			new Vector3f(0.0f, 1.0f, 0.0f));
-		float fovY = (float) (2.0 * Math.atan((screenHeight / 2.0) / (6.0 - 1.2)));
+		float fovY = (float) (2.0 * Math.atan((screenHeight / 2.0) / (6.0 + projectorBack)));
 		projectorProjection = new Matrix4f().perspective(fovY, (float) screenWidth / (float) screenHeight,
 			0.05f, 100.0f);
 
@@ -215,13 +216,7 @@ public final class CinemaVisualSpike {
 			int bar = Math.min(6, (x - 4) * 7 / (WIDTH - 8));
 			int[] colors = {0xFFFFFFFF, 0xFFFFFF00, 0xFF00FFFF, 0xFF00FF00,
 				0xFFFF00FF, 0xFFFF0000, 0xFF0000FF};
-			int color = colors[bar];
-			// Moving diagonal marker makes dropped frames / stale textures visible.
-			int marker = (frame * 3) % (WIDTH + HEIGHT);
-			if (Math.abs((x + y) - marker) < 3) {
-				color = 0xFF000000;
-			}
-			return color;
+			return colors[bar];
 		}
 		int step = Math.max(0, Math.min(15, (x - 4) * 16 / (WIDTH - 8)));
 		int gray = step * 17;
