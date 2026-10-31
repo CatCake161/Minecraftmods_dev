@@ -1,10 +1,13 @@
 package com.example.firstmod.client;
 
 import com.example.firstmod.FirstMod;
+import com.example.firstmod.block.ProjectorBlock;
+import com.example.firstmod.block.ScreenBlock;
 import com.example.firstmod.client.audio.InGameAudioSpike;
 import com.example.firstmod.client.media.CinemaPlayer;
 import com.example.firstmod.client.media.CinemaPrewarm;
 import com.example.firstmod.client.render.CinemaVisualSpike;
+import com.example.firstmod.client.render.ScreenBlockEntityRenderer;
 import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import net.fabricmc.api.ClientModInitializer;
@@ -13,8 +16,11 @@ import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallba
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
+import net.fabricmc.fabric.api.client.rendering.v1.BlockEntityRendererRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
 import net.minecraft.network.chat.Component;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import org.lwjgl.glfw.GLFW;
 
 import java.nio.file.Path;
@@ -115,6 +121,8 @@ public class FirstModClient implements ClientModInitializer {
 		ClientLifecycleEvents.CLIENT_STOPPING.register(client -> CinemaPlayer.stopActive(client));
 		ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> CinemaPlayer.stopActive(client));
 
+		BlockEntityRendererRegistry.register(FirstMod.SCREEN_BLOCK_ENTITY, ScreenBlockEntityRenderer::new);
+		WorldRenderEvents.AFTER_ENTITIES.register(context -> CinemaPlayer.presentActiveFrame());
 		WorldRenderEvents.AFTER_ENTITIES.register(CinemaVisualSpike::render);
 
 		if (System.getProperty("firstmod.spike.audio") != null
@@ -183,11 +191,16 @@ public class FirstModClient implements ClientModInitializer {
 					return;
 				}
 				autoVideoTicks++;
+				if (autoVideoTicks == 30 && System.getProperty("firstmod.spike.blocks") != null) {
+					placeTestBlocks(client);
+				}
 				if (autoVideoTicks == 40) {
 					try {
 						FirstMod.LOGGER.info("cinema video spike: playing {}", videoPath);
 						CinemaPlayer.play(client, Path.of(videoPath));
-						CinemaVisualSpike.enableVideo(client, CinemaPlayer.TEXTURE_ID);
+						if (System.getProperty("firstmod.spike.blocks") == null) {
+							CinemaVisualSpike.enableVideo(client, CinemaPlayer.TEXTURE_ID);
+						}
 					} catch (Throwable t) {
 						FirstMod.LOGGER.error("cinema video spike failed", t);
 					}
@@ -217,5 +230,19 @@ public class FirstModClient implements ClientModInitializer {
 				}
 			});
 		}
+	}
+
+	private static void placeTestBlocks(net.minecraft.client.Minecraft client) {
+		if (client.level == null || client.player == null) {
+			return;
+		}
+		Direction facing = client.player.getDirection();
+		BlockPos screenPos = client.player.blockPosition().relative(facing, 4).above();
+		BlockPos projectorPos = client.player.blockPosition().relative(facing, -3).above();
+		client.level.setBlockAndUpdate(screenPos,
+			FirstMod.SCREEN_BLOCK.defaultBlockState().setValue(ScreenBlock.FACING, facing.getOpposite()));
+		client.level.setBlockAndUpdate(projectorPos,
+			FirstMod.PROJECTOR_BLOCK.defaultBlockState().setValue(ProjectorBlock.FACING, facing));
+		FirstMod.LOGGER.info("cinema block spike: screen={} projector={} facing={}", screenPos, projectorPos, facing);
 	}
 }

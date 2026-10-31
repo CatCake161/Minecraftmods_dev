@@ -3,7 +3,10 @@
 	"package": "com.example.firstmod.client.mixin",
 	"compatibilityLevel": "JAVA_21",
 	"client": [
-		"FirstModClientMixin"
+		"FirstModClientMixin",
+		"LibraryAccessor",
+		"SoundEngineAccessor",
+		"SoundManagerAccessor"
 	],
 	"injectors": {
 		"defaultRequire": 1

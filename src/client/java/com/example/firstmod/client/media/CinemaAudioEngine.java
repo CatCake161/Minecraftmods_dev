@@ -74,6 +74,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	private ALCapabilities previousProcessCaps;
 	private long deviceHandle = NULL;
 	private long contextHandle = NULL;
+	private boolean ownsDevice;
 
 	public CinemaAudioEngine() {
 		for (int i = 0; i < SPEAKERS; i++) {
@@ -138,7 +139,12 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		long device = NULL;
 		long context = NULL;
 		try {
-			device = ALC10.alcOpenDevice((CharSequence) null);
+			device = MinecraftOpenAl.device();
+			if (device == NULL) {
+				FirstMod.LOGGER.warn("cinema audio: Minecraft OpenAL device unavailable; opening a fallback device");
+				device = ALC10.alcOpenDevice((CharSequence) null);
+				ownsDevice = true;
+			}
 			if (device == NULL) {
 				throw new IllegalStateException("alcOpenDevice() failed");
 			}
@@ -366,7 +372,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		if (context != NULL) {
 			ALC10.alcDestroyContext(context);
 		}
-		if (device != NULL) {
+		if (device != NULL && ownsDevice) {
 			ALC10.alcCloseDevice(device);
 		}
 	}

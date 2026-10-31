@@ -1,0 +1,8 @@
+{
+	"variants": {
+		"facing=north": { "model": "firstmod:block/projector" },
+		"facing=south": { "model": "firstmod:block/projector", "y": 180 },
+		"facing=west": { "model": "firstmod:block/projector", "y": 270 },
+		"facing=east": { "model": "firstmod:block/projector", "y": 90 }
+	}
+}

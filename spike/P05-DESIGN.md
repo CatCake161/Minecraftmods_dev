@@ -132,9 +132,10 @@ clientRuntimeOnly 'org.bytedeco:javacpp:1.5.14:windows-x86_64'
 4. 已用 10 分钟 320×180 5.1 素材做背压烟测：seek 到 300 s 后继续播放，
    音频解码器在约 21.5 s 媒体处被有界队列阻塞，内存没有线性增长；
    两小时长片仍需一次完整测试。
-5. OpenAL 退出问题已修复：不再用 `AL.createCapabilities()` 替换 Minecraft 的
-   process caps，而是复用 Minecraft 的 AL 函数指针，并把 context 做成进程级单例；
-   seek/退出时不再出现 `Allocate new source` 或 `Deleting stream buffers` 错误。
+5. OpenAL 退出问题已修复：影院 context 建在 **Minecraft 已经打开的 device** 上，
+   复用 Minecraft 的 AL process caps（不再调用 `AL.createCapabilities()`），
+   并把 context 做成进程级单例；seek/退出时不再出现
+   `Allocate new source`、`Stop: Invalid operation` 或 `Deleting stream buffers` 错误。
 
 ## 2. 扬声器系统
 
@@ -415,4 +416,12 @@ C/D 需要投影仪深度图/自定义 shader/光影包适配，和 Sodium/Iris 
 - ✅ 播放/暂停/停止/seek；启动预热。
 - ⬜ 两小时长片内存测试。
 
-**P1：方块/物品/配方/GUI/网络/本地文件选择/最小影院闭环。**
+**P1：影院房间。**
+- ✅ `ScreenBlock` + `ScreenBlockEntity` + 视频纹理 renderer（1×1）
+- ✅ `ProjectorBlock` 方块/朝向/模型（镜头与投影几何下一步）
+- ⬜ 4×3 多方块屏幕 UV
+- ⬜ 投影仪镜头/投掷比/对焦/遮挡
+- ⬜ AV Receiver + Speaker + Seat
+- ⬜ GUI/网络/本地文件选择
+
+**P1 之后：** 方块配方/材质、LAN 同步、资源重载、原生库打包许可。

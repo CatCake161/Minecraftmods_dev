@@ -158,12 +158,7 @@ public final class CinemaVisualSpike {
 			return;
 		}
 
-		if (videoMode) {
-			CinemaPlayer player = CinemaPlayer.active();
-			if (player != null) {
-				player.presentFrame();
-			}
-		} else if (++frame % 3 == 0) {
+		if (!videoMode && ++frame % 3 == 0) {
 			updateTexture(client);
 		}
 

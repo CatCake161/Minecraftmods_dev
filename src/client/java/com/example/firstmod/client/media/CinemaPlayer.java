@@ -94,6 +94,13 @@ public final class CinemaPlayer implements AutoCloseable {
 		return active;
 	}
 
+	public static void presentActiveFrame() {
+		CinemaPlayer player = active;
+		if (player != null) {
+			player.presentFrame();
+		}
+	}
+
 	public static void stopActive(Minecraft client) {
 		CinemaPlayer player = active;
 		active = null;

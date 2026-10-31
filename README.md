@@ -2,7 +2,7 @@
 
 基于 **Minecraft 1.21.1 + Fabric** 的影院系统模组。
 
-当前阶段：**P0 已完成；P0.5-A/B/C 已验证**（Minecraft 内 5.1 扬声器、屏幕/投影 UV、真实 720p30 + 5.1 播放）。
+当前阶段：**P0.5 已完成；P1 已开始**（屏幕/投影仪方块、共享 OpenAL device、真实 720p30 + 5.1 播放）。
 测试代码和实测数据见 [spike/README.md](spike/README.md)，
 扬声器与投影仪的设计/验证清单见 [spike/P05-DESIGN.md](spike/P05-DESIGN.md)。
 

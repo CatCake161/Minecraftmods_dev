@@ -1,0 +1,8 @@
+{
+	"variants": {
+		"facing=north": { "model": "firstmod:block/screen" },
+		"facing=south": { "model": "firstmod:block/screen", "y": 180 },
+		"facing=west": { "model": "firstmod:block/screen", "y": 270 },
+		"facing=east": { "model": "firstmod:block/screen", "y": 90 }
+	}
+}

@@ -288,9 +288,24 @@ Sodium/Iris 直接崩溃。只保留 `javacv`/`ffmpeg`/`javacpp` 三件套并设
 4. 10 分钟 320×180 5.1 素材背压烟测：seek 到 300 s 后继续播放，
    音频解码器在约 21.5 s 媒体处被有界队列阻塞，内存没有线性增长；
    两小时长片仍需完整测试。
-5. OpenAL 退出问题已修复：复用 Minecraft 的 AL process caps，context 改为
-   进程级单例；seek/退出不再出现 `Allocate new source` 或
+5. OpenAL 退出问题已修复：影院 context 建在 Minecraft 的 OpenAL device 上，
+   复用 Minecraft process caps；context 进程级单例。seek/退出不再出现
+   `Allocate new source`、`Stop: Invalid operation` 或
    `Deleting stream buffers` 错误。
+
+### 11. P1 第一刀：屏幕方块
+
+已注册：
+
+- `firstmod:screen`：1×1 屏幕方块，深色边框，block entity renderer 在正面绘制 16:9 视频面
+- `firstmod:projector`：投影仪方块（当前只有朝向和方块模型，镜头/几何下一步）
+- 物品模型、blockstate、创造模式物品栏
+
+![P1 screen block](screenshots/p1-screen-block.png)
+
+测试属性 `-Dfirstmod.spike.blocks=true` 会在玩家前方放置屏幕、后方放置投影仪，
+再用真实 720p30/5.1 播放。当前屏幕仍是 1 方块大小；下一步做 4×3 多方块 UV 和
+投影仪镜头/遮挡。
 
 ## 结论：GO
 
