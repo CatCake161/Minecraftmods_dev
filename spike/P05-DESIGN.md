@@ -132,8 +132,9 @@ clientRuntimeOnly 'org.bytedeco:javacpp:1.5.14:windows-x86_64'
 4. 已用 10 分钟 320×180 5.1 素材做背压烟测：seek 到 300 s 后继续播放，
    音频解码器在约 21.5 s 媒体处被有界队列阻塞，内存没有线性增长；
    两小时长片仍需一次完整测试。
-5. 进程退出时仍偶尔出现 1 条 `Deleting stream buffers: Invalid operation`；
-   不影响播放，是独立 context 退出时序的残留。
+5. OpenAL 退出问题已修复：不再用 `AL.createCapabilities()` 替换 Minecraft 的
+   process caps，而是复用 Minecraft 的 AL 函数指针，并把 context 做成进程级单例；
+   seek/退出时不再出现 `Allocate new source` 或 `Deleting stream buffers` 错误。
 
 ## 2. 扬声器系统
 

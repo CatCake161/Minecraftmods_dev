@@ -147,7 +147,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			try {
 				previousProcessCaps = AL.getCapabilities();
 			} catch (IllegalStateException ignored) {
-				// No process-wide caps yet; nothing to restore.
+				// No process-wide caps yet; fall back to creating them below.
 			}
 			context = ALC10.alcCreateContext(device, (IntBuffer) null);
 			if (context == NULL) {
@@ -155,9 +155,16 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			}
 			contextHandle = context;
 			ALC10.alcMakeContextCurrent(context);
-			AL.createCapabilities(deviceCaps);
-			FirstMod.LOGGER.info("cinema audio: OpenAL {} on {}", AL10.alGetString(AL10.AL_VERSION),
-				ALC10.alcGetString(device, ALC10.ALC_DEVICE_SPECIFIER));
+			if (previousProcessCaps != null) {
+				// Reuse Minecraft's AL function pointers. Calling
+				// AL.createCapabilities() here replaces LWJGL's process-wide ICD
+				// with the cinema context and upsets SoundEngine at shutdown.
+				AL.setCurrentThread(previousProcessCaps);
+			} else {
+				AL.createCapabilities(deviceCaps);
+			}
+			FirstMod.LOGGER.info("cinema audio: OpenAL {} on {} (sharedCaps={})", AL10.alGetString(AL10.AL_VERSION),
+				ALC10.alcGetString(device, ALC10.ALC_DEVICE_SPECIFIER), previousProcessCaps != null);
 
 			setupSources();
 			while (running.get()) {
@@ -170,13 +177,9 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			FirstMod.LOGGER.error("cinema audio engine failed", t);
 		} finally {
 			cleanup();
-			if (previousProcessCaps != null) {
-				AL.setCurrentProcess(previousProcessCaps);
-			}
-			AL.setCurrentThread(null);
-			// Keep the context/device allocated for the process lifetime. Closing
-			// them here makes Minecraft's SoundEngine see an invalid default
-			// device during client shutdown on this OpenAL Soft build.
+			// Never replace Minecraft's process-wide OpenAL capabilities. Only
+			// clear/replace this thread's capability binding.
+			AL.setCurrentThread(previousProcessCaps);
 		}
 	}
 

@@ -288,8 +288,9 @@ Sodium/Iris 直接崩溃。只保留 `javacv`/`ffmpeg`/`javacpp` 三件套并设
 4. 10 分钟 320×180 5.1 素材背压烟测：seek 到 300 s 后继续播放，
    音频解码器在约 21.5 s 媒体处被有界队列阻塞，内存没有线性增长；
    两小时长片仍需完整测试。
-5. 进程退出时仍偶尔出现 1 条 `Deleting stream buffers: Invalid operation`；
-   不影响播放，是独立 context 退出时序的残留。
+5. OpenAL 退出问题已修复：复用 Minecraft 的 AL process caps，context 改为
+   进程级单例；seek/退出不再出现 `Allocate new source` 或
+   `Deleting stream buffers` 错误。
 
 ## 结论：GO
 
