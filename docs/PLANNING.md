@@ -27,25 +27,34 @@
 
 ## 3. 当前架构
 
-### 3.1 媒体管线
+### 3.1 信号链
+
+目标架构：
 
 ```text
-本地文件
-  ├─ ffmpeg 子进程 → rawvideo RGBA → 帧缓冲池 → 8 帧队列
-  │                                      └─ 纹理上传 → 屏幕投影
-  └─ ffmpeg 子进程 → S16LE 5.1 48 kHz → 有界块队列
-                                         └─ OpenAL 六路 mono source
+AV Receiver（权威媒体单元）
+  ├─ 本地文件 → ffmpeg 子进程 → 视频信号 → Projector（只做光学/灯泡/屏幕）
+  └─ 本地文件 → ffmpeg 子进程 → 5.1 音频 → Speaker（只做回放）
 ```
+
+当前过渡实现仍是全局 `CinemaPlayer` 直接驱动屏幕/OpenAL。后续必须把解码、播放状态、文件选择、音画时钟迁入 AV Receiver；投影仪只消费接收器输出的视频信号，扬声器只消费接收器输出的音频信号。
 
 关键组件：
 
 - `Ffmpeg`：定位 `ffmpeg.exe` / `ffprobe.exe`，读取 codec、尺寸、帧率、色彩元数据。
 - `VideoDecoder`：外部 FFmpeg → RGBA；硬件解码、HDR tonemap、分辨率上限、PTS。
 - `StreamingAudioDecoder`：外部 FFmpeg → 5.1 S16LE；音频块 PTS 由采样数计算。
-- `CinemaPlayer`：视频/音频线程、队列、音画同步、暂停/seek；无音轨时使用墙钟。
-- `CinemaVideoTexture`：RGBA 上传、按需 mipmap、对焦 LOD。
-- `CinemaAudioEngine`：共享 Minecraft OpenAL device，进程级 context，六路 source 同步启动。
+- `CinemaPlayer`：当前全局播放器；最终归 AV Receiver 所有。
+- `CinemaVideoTexture`：接收器视频输出 → RGBA 上传/对焦 LOD → 投影仪。
+- `CinemaAudioEngine`：接收器音频输出 → 共享 Minecraft OpenAL device，六路 source。
 - `CinemaPrewarm`：启动时检查外部 FFmpeg 版本。
+
+职责边界：
+
+- **AV Receiver**：解码、媒体文件、播放/暂停/seek、A/V 时钟、视频信号分发、音频路由。
+- **Projector**：只处理物理模拟和基本投影设置（投掷比/对焦/梯形/亮度/wash/灯泡/配对）。
+- **Speaker**：只接收接收器分配的声道并回放；不做解码。
+- **Seat**：皇帝位/校准参考点。
 
 默认参数：
 
@@ -85,9 +94,10 @@
 | P0.5-C | 真实 720p30 + 5.1、有界队列、seek、预热 | ✅ |
 | P1-1 | 屏幕方块、多方块扫描、master 渲染 | ✅ |
 | P1-2 | 投影仪镜头、投掷比、对焦、梯形、环境光、灯泡 | ✅ 第一版 |
-| P1-3 | 投影仪 GUI（wash/物理模拟开关）、风扇声 | ⬜ |
-| P1-4 | AV Receiver + Speaker + Seat | ⬜ |
-| P1-5 | 每屏独立播放器、LAN 同步 | ⬜ |
+| P1-3 | 投影仪 GUI（仅物理模拟/光学/灯泡/wash、配对） | ⬜ |
+| P1-4 | AV Receiver（解码、媒体、播放状态、视频/音频分发） | ⬜ |
+| P1-5 | Speaker + Seat（只接收 AV 的音频） | ⬜ |
+| P1-6 | 每接收器独立媒体、LAN 同步 | ⬜ |
 | P2 | 任意投影面、真实光照、HRTF、自动校准 | ⬜ |
 
 ## 5. 测试原则

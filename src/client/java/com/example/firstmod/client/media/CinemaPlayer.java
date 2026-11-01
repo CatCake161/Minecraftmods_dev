@@ -16,10 +16,10 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * Client-side cinema playback pipeline for one local file.
  *
- * <p>Video and audio decode independently. Video frames go through a small
- * bounded queue and are uploaded on the render thread. Audio is deinterleaved
- * into six speaker sources by {@link CinemaAudioEngine}; the audible audio PTS
- * is the master clock for video presentation.
+ * <p>Transitional ownership: this is currently a global player. The final
+ * architecture assigns media decoding, playback state and A/V clock to an
+ * AV Receiver block; projectors only receive its video signal and speakers
+ * only receive its audio channels.
  */
 public final class CinemaPlayer implements AutoCloseable {
 	public static final ResourceLocation TEXTURE_ID = FirstMod.id("cinema_video");
