@@ -197,6 +197,35 @@ public final class Ffmpeg {
 		}
 	}
 
+	public static AudioInfo probeAudio(Path file) throws IOException {
+		String output = runCapture(List.of(
+			ffprobe().toString(),
+			"-v", "error",
+			"-select_streams", "a:0",
+			"-show_entries", "stream=codec_name,channels,sample_rate",
+			"-of", "default=noprint_wrappers=1",
+			file.toString()), 30);
+		String codec = "unknown";
+		int channels = 0;
+		int sampleRate = 0;
+		for (String line : output.split("\\R")) {
+			int eq = line.indexOf('=');
+			if (eq <= 0) {
+				continue;
+			}
+			String key = line.substring(0, eq);
+			String value = line.substring(eq + 1);
+			switch (key) {
+				case "codec_name" -> codec = value;
+				case "channels" -> channels = parseInt(value, 0);
+				case "sample_rate" -> sampleRate = parseInt(value, 0);
+				default -> {
+				}
+			}
+		}
+		return channels > 0 ? new AudioInfo(codec, channels, sampleRate) : null;
+	}
+
 	private static int parseInt(String value, int fallback) {
 		try {
 			return Integer.parseInt(value.trim());
@@ -230,5 +259,8 @@ public final class Ffmpeg {
 			return "smpte2084".equalsIgnoreCase(colorTransfer)
 				|| "arib-std-b67".equalsIgnoreCase(colorTransfer);
 		}
+	}
+
+	public record AudioInfo(String codec, int channels, int sampleRate) {
 	}
 }

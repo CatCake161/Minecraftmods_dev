@@ -1,11 +1,13 @@
 package com.example.firstmod.client;
 
 import com.example.firstmod.FirstMod;
+import com.example.firstmod.block.entity.AvReceiverBlockEntity;
 import com.example.firstmod.block.entity.ProjectorBlockEntity;
 import com.example.firstmod.client.audio.InGameAudioSpike;
 import com.example.firstmod.client.command.CinemaHelpCommand;
 import com.example.firstmod.client.command.ClientCinemaCommand;
 import com.example.firstmod.client.command.ClientProjectorCommand;
+import com.example.firstmod.client.gui.AvReceiverScreen;
 import com.example.firstmod.client.gui.ProjectorScreen;
 import com.example.firstmod.client.media.AvReceiverPlaybackManager;
 import com.example.firstmod.client.media.CinemaPlayer;
@@ -53,17 +55,22 @@ public class FirstModClient implements ClientModInitializer {
 		CinemaPrewarm.start();
 
 		UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
-			if (!world.getBlockState(hitResult.getBlockPos()).is(FirstMod.PROJECTOR_BLOCK)) {
-				return InteractionResult.PASS;
-			}
 			BlockEntity blockEntity = world.getBlockEntity(hitResult.getBlockPos());
-			if (!(blockEntity instanceof ProjectorBlockEntity projector)) {
-				return InteractionResult.PASS;
+			if (world.getBlockState(hitResult.getBlockPos()).is(FirstMod.PROJECTOR_BLOCK)
+				&& blockEntity instanceof ProjectorBlockEntity projector) {
+				if (world.isClientSide) {
+					Minecraft.getInstance().setScreen(new ProjectorScreen(projector));
+				}
+				return InteractionResult.SUCCESS;
 			}
-			if (world.isClientSide) {
-				Minecraft.getInstance().setScreen(new ProjectorScreen(projector));
+			if (world.getBlockState(hitResult.getBlockPos()).is(FirstMod.AV_RECEIVER_BLOCK)
+				&& blockEntity instanceof AvReceiverBlockEntity receiver) {
+				if (world.isClientSide) {
+					Minecraft.getInstance().setScreen(new AvReceiverScreen(receiver));
+				}
+				return InteractionResult.SUCCESS;
 			}
-			return InteractionResult.SUCCESS;
+			return InteractionResult.PASS;
 		});
 
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->

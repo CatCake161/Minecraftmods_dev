@@ -34,6 +34,7 @@ public final class CinemaPlayer implements AutoCloseable {
 	private final double startSeconds;
 	private final ResourceLocation textureId;
 	private final CinemaVideoTexture texture;
+	private final boolean ownsTexture;
 	private final CinemaAudioEngine audio;
 	private final StreamingAudioDecoder audioDecoder;
 	private final BlockingQueue<VideoFrame> frames = new ArrayBlockingQueue<>(8);
@@ -60,16 +61,19 @@ public final class CinemaPlayer implements AutoCloseable {
 	private long pausedTotalNanos;
 
 	private CinemaPlayer(Minecraft client, Path file, double startSeconds, CinemaAudioEngine audio,
-						 ResourceLocation textureId) throws IOException {
+						 ResourceLocation textureId, CinemaVideoTexture texture) throws IOException {
 		Ffmpeg.ffmpeg();
 		this.client = client;
 		this.file = file;
 		this.startSeconds = startSeconds;
 		this.audio = audio;
 		this.textureId = textureId;
-		this.texture = new CinemaVideoTexture();
+		this.ownsTexture = texture == null;
+		this.texture = ownsTexture ? new CinemaVideoTexture() : texture;
 		this.audioDecoder = new StreamingAudioDecoder(startSeconds, () -> !running.get());
-		client.getTextureManager().register(textureId, texture);
+		if (ownsTexture) {
+			client.getTextureManager().register(textureId, this.texture);
+		}
 		videoThread = new Thread(this::decodeVideo, "cinema-video");
 		videoThread.setDaemon(true);
 		audioThread = new Thread(this::decodeAudio, "cinema-audio-decode");
@@ -89,7 +93,7 @@ public final class CinemaPlayer implements AutoCloseable {
 			legacyAudio = new CinemaAudioEngine();
 		}
 		CinemaPlayer player = new CinemaPlayer(client, file, Math.max(0.0, startSeconds),
-			legacyAudio, LEGACY_TEXTURE_ID);
+			legacyAudio, LEGACY_TEXTURE_ID, null);
 		active = player;
 		player.start();
 		return player;
@@ -97,15 +101,17 @@ public final class CinemaPlayer implements AutoCloseable {
 
 	/**
 	 * Opens an independent player for an AV receiver. The caller owns the audio
-	 * engine and texture id, so several receivers can later get independent
-	 * pipelines without sharing static state.
+	 * engine and the video texture, so a seek can reuse the same GL texture
+	 * instead of deleting and recreating it for every restart.
 	 */
 	public static CinemaPlayer open(Minecraft client, Path file, double startSeconds,
-									CinemaAudioEngine audio, ResourceLocation textureId) throws IOException {
+									CinemaAudioEngine audio, ResourceLocation textureId,
+									CinemaVideoTexture texture) throws IOException {
 		if (!Files.isRegularFile(file)) {
 			throw new IllegalArgumentException("not a local media file: " + file.getFileName());
 		}
-		CinemaPlayer player = new CinemaPlayer(client, file, Math.max(0.0, startSeconds), audio, textureId);
+		CinemaPlayer player = new CinemaPlayer(client, file, Math.max(0.0, startSeconds),
+			audio, textureId, texture);
 		player.start();
 		return player;
 	}
@@ -154,6 +160,18 @@ public final class CinemaPlayer implements AutoCloseable {
 		return width > 0 && height > 0 ? width / (float) height : 16.0f / 9.0f;
 	}
 
+	public int presentedFrames() {
+		return presented;
+	}
+
+	public int droppedFrames() {
+		return dropped;
+	}
+
+	public double lastPtsSeconds() {
+		return lastPts;
+	}
+
 	/** Applies projector focus blur to the shared video texture for this draw. */
 	public void setFocusBlur(float lod) {
 		texture.setBlurBias(lod);
@@ -161,6 +179,11 @@ public final class CinemaPlayer implements AutoCloseable {
 
 	public boolean isPaused() {
 		return paused;
+	}
+
+	/** True once audio has started or the first video frame has been presented. */
+	public boolean isStarted() {
+		return audio.isStarted() || playbackStartNanos >= 0;
 	}
 
 	public Throwable error() {
@@ -204,7 +227,7 @@ public final class CinemaPlayer implements AutoCloseable {
 		if (!audio.isStarted()) {
 			return startSeconds;
 		}
-		return audio.audiblePtsSeconds();
+		return Math.max(startSeconds, audio.audiblePtsSeconds());
 	}
 
 	public void setVolume(float volume, boolean muted) {
@@ -359,7 +382,9 @@ public final class CinemaPlayer implements AutoCloseable {
 		while ((queued = frames.poll()) != null) {
 			queued.release();
 		}
-		client.getTextureManager().release(textureId);
+		if (ownsTexture) {
+			client.getTextureManager().release(textureId);
+		}
 		FirstMod.LOGGER.info("cinema player: stopped (presented={}, dropped={})", presented, dropped);
 	}
 }

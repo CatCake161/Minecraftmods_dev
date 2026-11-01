@@ -11,87 +11,170 @@ import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HexFormat;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+import java.util.stream.Stream;
 
 /**
- * Client-side access to the fixed {@code <game>/cinema/media/} library.
+ * Client-side access to the media libraries.
  *
- * <p>The server never reads these files; it only stores the relative key and
- * the metadata the client reports when selecting a movie.
+ * <p>The default library is {@code <game>/cinema/media/}. Additional folders
+ * are registered through {@link LibraryRegistry} and exposed as
+ * {@code lib/<id>/<relative>} keys. Absolute paths never leave the client.
  */
 public final class MediaLibrary {
-	private static final String LIBRARY_PREFIX = "cinema/media/";
 	private static final int HASH_BUFFER_BYTES = 1024 * 1024;
+	private static final String EXTERNAL_PREFIX = "lib/";
+	private static final Set<String> VIDEO_EXTENSIONS = Set.of(
+		"mp4", "mkv", "webm", "mov", "m4v", "avi", "ts", "m2ts");
 
 	private MediaLibrary() {
 	}
 
 	public static Path root() {
-		Path root = Minecraft.getInstance().gameDirectory.toPath()
-			.resolve("cinema").resolve("media").toAbsolutePath().normalize();
-		try {
-			Files.createDirectories(root);
-		} catch (IOException e) {
-			FirstMod.LOGGER.warn("cinema media: could not create library directory", e);
-		}
-		return root;
+		return LibraryRegistry.defaultRoot();
 	}
 
 	/**
-	 * Resolves a command argument or a relative key to a file inside the
-	 * library. Absolute paths are accepted only when they already point inside
-	 * the library, so pasted paths keep working without allowing arbitrary
-	 * server-side paths.
+	 * Resolves a command argument or a media key to a local file. Accepted
+	 * forms: a key relative to the default library, a {@code lib/<id>/...}
+	 * key, or an absolute path inside a registered library.
 	 */
 	public static Path resolve(String raw) throws IOException {
-		Path root = root();
-		String key = keyFromInput(raw, root);
-		if (key == null) {
-			throw new IOException("Media must be inside cinema/media/ (relative key required)");
-		}
-		Path file = root.resolve(key).normalize();
-		if (!file.startsWith(root)) {
-			throw new IOException("Media key escapes the cinema library");
-		}
-		if (!Files.isRegularFile(file)) {
-			throw new IOException("Media file not found: " + key);
-		}
-		return file;
-	}
-
-	public static String keyFromInput(String raw, Path root) {
-		if (raw == null) {
-			return null;
+		if (raw == null || raw.isBlank()) {
+			throw new IOException("Media path is empty");
 		}
 		String value = raw.trim().replace('\\', '/');
-		if (value.isEmpty()) {
-			return null;
-		}
-		if (value.regionMatches(true, 0, LIBRARY_PREFIX, 0, LIBRARY_PREFIX.length())) {
-			value = value.substring(LIBRARY_PREFIX.length());
+		if (value.startsWith(EXTERNAL_PREFIX)) {
+			return resolveKey(value);
 		}
 		try {
 			Path input = Path.of(value);
 			if (input.isAbsolute()) {
 				Path absolute = input.toAbsolutePath().normalize();
-				if (!absolute.startsWith(root)) {
-					return null;
+				LibraryRegistry.Library library = LibraryRegistry.findByPath(absolute);
+				if (library == null) {
+					throw new IOException("Media is outside the registered libraries; add its folder in Settings");
 				}
-				return root.relativize(absolute).toString().replace('\\', '/');
+				return resolveKey(keyFor(absolute));
 			}
 		} catch (InvalidPathException e) {
-			return null;
+			throw new IOException("Invalid media path");
 		}
-		return MediaKey.normalize(value);
+		return resolveKey(value);
+	}
+
+	private static Path resolveKey(String key) throws IOException {
+		LibraryRegistry.Key parsed = LibraryRegistry.parseKey(key);
+		if (parsed == null || parsed.library() == null) {
+			throw new IOException("Unknown media library");
+		}
+		String relative = MediaKey.normalize(parsed.relative());
+		if (relative == null) {
+			throw new IOException("Invalid media key");
+		}
+		Path root = parsed.library().root();
+		Path file = root.resolve(relative).normalize();
+		if (!file.startsWith(root)) {
+			throw new IOException("Media key escapes the library");
+		}
+		if (!Files.isRegularFile(file)) {
+			throw new IOException("Media file not found: " + displayKey(key));
+		}
+		return file;
 	}
 
 	public static String keyFor(Path file) throws IOException {
-		Path root = root();
 		Path absolute = file.toAbsolutePath().normalize();
-		if (!absolute.startsWith(root)) {
-			throw new IOException("Media must be inside cinema/media/");
+		LibraryRegistry.Library library = LibraryRegistry.findByPath(absolute);
+		if (library == null) {
+			throw new IOException("Media is outside the registered libraries");
 		}
-		return root.relativize(absolute).toString().replace('\\', '/');
+		String relative = library.root().relativize(absolute).toString().replace('\\', '/');
+		return library.id().equals(LibraryRegistry.DEFAULT_ID)
+			? relative
+			: EXTERNAL_PREFIX + library.id() + "/" + relative;
+	}
+
+	/** Lists directories and video files in one library folder. */
+	public static List<Entry> list(String libraryId, String folder) throws IOException {
+		LibraryRegistry.Library library = LibraryRegistry.findById(libraryId);
+		if (library == null) {
+			throw new IOException("Unknown media library");
+		}
+		String normalizedFolder = folder == null ? "" : folder.trim();
+		if (!normalizedFolder.isEmpty()) {
+			String key = MediaKey.normalize(normalizedFolder);
+			if (key == null) {
+				throw new IOException("Invalid media folder");
+			}
+			normalizedFolder = key;
+		}
+		String folderKey = normalizedFolder;
+		Path root = library.root();
+		Path directory = folderKey.isEmpty() ? root : root.resolve(folderKey).normalize();
+		if (!directory.startsWith(root) || !Files.isDirectory(directory)) {
+			throw new IOException("Media folder not found: " + folderKey);
+		}
+		List<Entry> entries = new ArrayList<>();
+		try (Stream<Path> stream = Files.list(directory)) {
+			stream.sorted(Comparator.comparing(path -> path.getFileName().toString().toLowerCase(Locale.ROOT)))
+				.limit(250)
+				.forEach(path -> {
+					String name = path.getFileName().toString();
+					if (name.startsWith(".") || name.equalsIgnoreCase("desktop.ini")) {
+						return;
+					}
+					String relative = folderKey.isEmpty() ? name : folderKey + "/" + name;
+					String key = library.id().equals(LibraryRegistry.DEFAULT_ID)
+						? relative
+						: EXTERNAL_PREFIX + library.id() + "/" + relative;
+					if (Files.isDirectory(path)) {
+						entries.add(new Entry(key, name, library.id(), relative, true, 0L));
+					} else if (isVideoFile(name) && Files.isRegularFile(path)) {
+						try {
+							entries.add(new Entry(key, name, library.id(), folderKey, false, Files.size(path)));
+						} catch (IOException ignored) {
+							// Skip files that disappeared during the scan.
+						}
+					}
+				});
+		}
+		entries.sort(Comparator
+			.comparing(Entry::directory).reversed()
+			.thenComparing(entry -> entry.name().toLowerCase(Locale.ROOT)));
+		return entries;
+	}
+
+	public static List<Entry> list(String folder) throws IOException {
+		return list(LibraryRegistry.DEFAULT_ID, folder);
+	}
+
+	public static Probe probe(Path file) throws IOException {
+		Ffmpeg.VideoInfo video = Ffmpeg.probeVideo(file);
+		double duration = Ffmpeg.probeDuration(file);
+		Ffmpeg.AudioInfo audio = Ffmpeg.probeAudio(file);
+		return new Probe(duration, video, audio);
+	}
+
+	public static String parent(String folder) {
+		if (folder == null || folder.isEmpty()) {
+			return "";
+		}
+		int slash = folder.lastIndexOf('/');
+		return slash < 0 ? "" : folder.substring(0, slash);
+	}
+
+	public static boolean isVideoFile(String name) {
+		int dot = name.lastIndexOf('.');
+		if (dot < 0 || dot == name.length() - 1) {
+			return false;
+		}
+		return VIDEO_EXTENSIONS.contains(name.substring(dot + 1).toLowerCase(Locale.ROOT));
 	}
 
 	public static Metadata describe(Path file, String key) throws IOException {
@@ -101,7 +184,7 @@ public final class MediaLibrary {
 		try {
 			duration = Ffmpeg.probeDuration(file);
 		} catch (IOException e) {
-			FirstMod.LOGGER.warn("cinema media: could not probe duration for {}", key);
+			FirstMod.LOGGER.warn("cinema media: could not probe duration for {}", displayKey(key));
 		}
 		return new Metadata(key, size, sha256, duration);
 	}
@@ -125,6 +208,21 @@ public final class MediaLibrary {
 		return HexFormat.of().formatHex(digest.digest());
 	}
 
+	/** Never log or display an absolute path for a media key. */
+	public static String displayKey(String key) {
+		if (key == null || key.isEmpty()) {
+			return "none";
+		}
+		return key;
+	}
+
 	public record Metadata(String key, long size, String sha256, double durationSeconds) {
+	}
+
+	public record Entry(String key, String name, String libraryId, String folder,
+						boolean directory, long size) {
+	}
+
+	public record Probe(double durationSeconds, Ffmpeg.VideoInfo video, Ffmpeg.AudioInfo audio) {
 	}
 }

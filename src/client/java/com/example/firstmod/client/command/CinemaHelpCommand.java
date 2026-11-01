@@ -18,7 +18,7 @@ public final class CinemaHelpCommand {
 			"§e/cinema_seek <秒>§f  跳转；§e/cinema_volume <0-1>§f  音量",
 			"§e/cinema_mute§f  静音切换；§e/cinema_link§f  重新配对投影仪",
 			"§e/cinema_receiver info§f  查看接收器状态",
-			"§7命令作用于 64 格内最近的 AV 接收器；媒体放在 cinema/media/。"
+			"§7命令作用于 64 格内最近的 AV 接收器；默认库 cinema/media/，外部库在接收器 GUI 的 Settings 添加。"
 		),
 		List.of(
 			"§6Cinema 使用帮助 §7(2/7) §f投影仪（客户端）",
@@ -60,6 +60,8 @@ public final class CinemaHelpCommand {
 			"§7视频停在最后一帧：/cinema_seek 0 重播。",
 			"§7屏幕没画面：确认接收器正在播放、投影仪已配对、屏幕朝向投影仪。",
 			"§7同一时间只允许一个接收器占用音频；先 /cinema_stop 再切换。",
+			"§7外部媒体库：接收器 GUI → Settings → 输入文件夹绝对路径 → Add library。",
+			"§7Media 页左上角 Library 按钮切换默认库与外部库。",
 			"§7真实方块用 /cinema_projector；客户端调参用 /cinema_projector_client。",
 			"§e/cinema_audio_spike§f  运行 5.1/OpenAL 测试",
 			"§7找不到新命令时重启客户端；帮助命令本身不会修改世界。"

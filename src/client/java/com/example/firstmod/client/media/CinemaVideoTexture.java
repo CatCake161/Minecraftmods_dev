@@ -7,6 +7,7 @@ import net.minecraft.server.packs.resources.ResourceManager;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL12;
 import org.lwjgl.opengl.GL14;
+import org.lwjgl.opengl.GL21;
 import org.lwjgl.opengl.GL30;
 
 import java.nio.ByteBuffer;
@@ -18,6 +19,7 @@ import java.nio.ByteBuffer;
  * writes into direct {@link ByteBuffer}s and hands them over through the player.
  */
 public final class CinemaVideoTexture extends AbstractTexture {
+	private static final boolean FINISH_UPLOADS = Boolean.getBoolean("firstmod.video.glFinish");
 	private int width = -1;
 	private int height = -1;
 	private boolean allocated;
@@ -45,6 +47,7 @@ public final class CinemaVideoTexture extends AbstractTexture {
 		if (frameWidth <= 0 || frameHeight <= 0) {
 			return;
 		}
+		prepareUnpackState();
 		bind();
 		rgba.rewind();
 		if (!allocated || frameWidth != width || frameHeight != height) {
@@ -62,8 +65,30 @@ public final class CinemaVideoTexture extends AbstractTexture {
 		}
 		GL11.glTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, 0, frameWidth, frameHeight,
 			GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, rgba);
+		if (FINISH_UPLOADS) {
+			// Diagnostic switch for NVIDIA driver crashes on asynchronous
+			// glTexSubImage2D copies: -Dfirstmod.video.glFinish=true.
+			GL11.glFinish();
+		}
 		mipmapsValid = false;
 		GlStateManager._bindTexture(0);
+	}
+
+	/**
+	 * GUI/font/atlas uploads can leave a pixel-unpack buffer bound or change
+	 * row-length/alignment state. If that leaks into the next video upload, the
+	 * driver treats the Java pointer as a PBO offset and can crash natively.
+	 * Reset the unpack state for every frame, not just when the texture is
+	 * reallocated.
+	 */
+	private static void prepareUnpackState() {
+		GlStateManager._glBindBuffer(GL21.GL_PIXEL_UNPACK_BUFFER, 0);
+		GlStateManager._pixelStore(GL11.GL_UNPACK_ALIGNMENT, 1);
+		GlStateManager._pixelStore(GL11.GL_UNPACK_ROW_LENGTH, 0);
+		GlStateManager._pixelStore(GL11.GL_UNPACK_SKIP_PIXELS, 0);
+		GlStateManager._pixelStore(GL11.GL_UNPACK_SKIP_ROWS, 0);
+		GlStateManager._pixelStore(GL11.GL_UNPACK_SWAP_BYTES, 0);
+		GlStateManager._pixelStore(GL11.GL_UNPACK_LSB_FIRST, 0);
 	}
 
 	/** 0 = sharp, higher values sample lower mip levels (projector defocus). */

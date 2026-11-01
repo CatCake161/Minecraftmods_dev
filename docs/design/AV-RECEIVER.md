@@ -322,7 +322,8 @@ duration, volume, muted, missing, CinemaPlayer player
 
 ### 10.3 媒体页
 
-- 标题“本机媒体库”，固定 `cinema/media/`，只显示相对路径。
+- 标题“本机媒体库”；默认库为 `cinema/media/`，可添加外部文件夹库。
+- 左上角 `Library` 按钮在默认库与外部库之间切换，只显示库内相对路径。
 - 文件夹导航、搜索、刷新。
 - 条目显示：分辨率、codec、时长、HDR/SDR、音轨格式；缺文件、指纹不匹配、无法解码的条目标红。
 - 选中后显示详情与“播放”。
@@ -349,7 +350,8 @@ duration, volume, muted, missing, CinemaPlayer player
 
 ### 10.6 设置页
 
-- 媒体库位置只读显示 `cinema/media/`。
+- 默认媒体库只读显示 `cinema/media/`。
+- **外部媒体库**：输入文件夹绝对路径 → Add library；列表可选中/Remove library（只删注册，不删文件）。
 - 自动配对投影仪开关。
 - 默认音量/最大音量。
 - 重新扫描设备。
@@ -365,7 +367,7 @@ duration, volume, muted, missing, CinemaPlayer player
 
 ### 10.8 实现约束
 
-- 媒体库由客户端扫描；服务端不读客户端文件。选片时客户端上传相对 key、大小、SHA-256、时长；接收器只存元数据。
+- 媒体库由客户端扫描；服务端不读客户端文件。默认库 key 为相对路径，外部库 key 为 `lib/<id>/<相对路径>`；绝对路径只留在客户端 `cinema/libraries.json`。选片时客户端上传 key、大小、SHA-256、时长；接收器只存元数据。
 - GUI 控件走 `ReceiverControlPayload` C2S；服务端校验距离/方块/路径/数值。
 - 媒体列表、哈希、时长不得在渲染线程同步执行。
 - 支持 GUI scale 1..4、键盘操作、tooltip、禁用态；文本走 lang。
@@ -390,6 +392,14 @@ M1 已完成并通过游戏内验收：
 - 接收器每 20 tick 自动配对/重连 48 格内最近投影仪；`/cinema_link` 仅用于强制重扫。
 - 单接收器占用音频引擎；第二个接收器在播放/暂停状态下会被拒绝，需先 `/cinema_stop`。
 - 缺文件时屏幕黑屏、命令/日志提示，不崩溃；拆接收器/投影仪/屏幕均能停止或恢复。
+
+M2 已完成并通过游戏内验收：
+
+- 接收器 GUI：Media / Speakers / Signal / Settings 四页签；媒体列表、播放控制、音量/静音、诊断与设置。
+- 外部媒体库：`cinema/libraries.json` 保存客户端本地库；外部库 key 为 `lib/<id>/<相对路径>`；Settings 可添加/移除/选择库，Media 页 `Library` 按钮切换。
+- GUI 修复：长文本省略号、tooltip 自动换行、Settings 紧凑布局与库列表滚动、seek/音量滑块 pending、ESC 暂停同步、文字图层正确。
+- 记住上次使用的库与文件夹（当前游戏会话内）。
+- 4K HEVC 启动慢时不再被漂移检测反复重启；首帧显示后记录一次启动偏差继续播放。
 
 ## 12. 代码迁移步骤（M1）
 
@@ -425,4 +435,6 @@ M1 已完成并通过游戏内验收：
 4. **状态同步**：M1 用原版 block entity 更新（推荐，改动小），还是直接上专用 S2C 包？
 5. **多接收器**：M1 只允许一个接收器占用音频引擎（推荐），还是从第一版就做每接收器独立引擎？
 
-M1 采用推荐值：固定媒体库、相对 key、自动配对最近投影仪、原版 block entity 状态同步、单音频引擎。`/cinema_play` 已改为操作 64 格内最近接收器；GUI 与每接收器独立引擎留到 M2/M3。
+M1 采用推荐值：默认媒体库、相对 key、自动配对最近投影仪、原版 block entity 状态同步、单音频引擎。`/cinema_play` 已改为操作 64 格内最近接收器；GUI 与每接收器独立引擎留到 M2/M3。
+
+M2 采用：默认库 `cinema/media/` + 客户端外部库；外部库 key 为 `lib/<id>/<相对路径>`，绝对路径仅保存在客户端 `cinema/libraries.json`，不进入方块实体或网络包。LAN 客户端需要配置同名外部库才能解析同一 key。

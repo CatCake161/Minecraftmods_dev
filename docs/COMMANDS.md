@@ -12,11 +12,11 @@
 
 > M1：媒体解码/播放状态/音画时钟归 **AV Receiver**。客户端命令只负责选择本机媒体并发送控制包；投影仪只消费接收器的视频输出，扬声器只消费音频输出。
 
-媒体库固定为 `<game>/cinema/media/`，指令只接受库内相对路径（也接受粘贴库内绝对路径并自动转成相对 key）。同一时间只允许一个接收器处于播放/暂停状态。
+默认媒体库为 `<game>/cinema/media/`；可在接收器 GUI 的 **Settings → Add library** 添加外部文件夹。默认库使用相对 key，外部库使用 `lib/<id>/<相对路径>`；粘贴已注册库内的绝对路径也会自动转成 key。绝对路径不会写入接收器状态或网络包。同一时间只允许一个接收器处于播放/暂停状态。
 
 | 指令 | 说明 |
 |---|---|
-| `/cinema_play <媒体库相对路径>` | 选片并播放，例如 `movies/demo.mp4`；路径可以带空格 |
+| `/cinema_play <媒体库 key 或库内路径>` | 选片并播放，例如 `movies/demo.mp4`、`lib/ext1/demo.mp4`；路径可以带空格 |
 | `/cinema_pause` | 暂停 / 继续 |
 | `/cinema_seek <秒>` | 跳转；当前实现会在关键帧附近重启解码器 |
 | `/cinema_stop` | 停止播放并释放视频纹理 |
@@ -31,6 +31,14 @@
 ```
 
 命令作用于 64 格内最近的 AV 接收器。视频结束后会停在最后一帧；用 `/cinema_seek 0` 从头重播。
+
+### 外部媒体库
+
+- 接收器 GUI → **Settings** → 输入外部文件夹的绝对路径 → **Add library**。
+- 外部库列表可点击选中，**Remove library** 只删除注册，不删除磁盘文件。
+- **Media** 页左上角 `Library` 按钮在默认库和外部库之间切换。
+- 外部库 key 形如 `lib/<id>/<相对路径>`；id 由库名生成。
+- 配置保存在 `<game>/cinema/libraries.json`，仅客户端使用；LAN 客户端需要配置同名库才能播放同一外部库 key。
 
 ## 2. 投影仪（客户端）
 
@@ -105,7 +113,7 @@ $env:JAVA_TOOL_OPTIONS="-Dfirstmod.spike.video=$video -Dfirstmod.spike.manual=tr
 
 - 视频停在最后一帧：`/cinema_seek 0` 重播。
 - 屏幕没有画面：确认接收器正在播放、投影仪已配对、屏幕正面朝向投影仪、距离在 48 格内、光路没有不透明方块遮挡。
-- `/cinema_play` 提示找不到文件：文件必须放在 `<game>/cinema/media/`，参数用库内相对路径。
+- `/cinema_play` 提示找不到文件：文件必须放在默认库或 Settings 添加的外部库；参数用库内 key，或粘贴已注册库内的绝对路径。
 - 第二个接收器无法播放：M1 只允许一个接收器占用音频引擎；先对前一个执行 `/cinema_stop`。
 - `/cinema_projector_client` 没反应：它是客户端命令；真实方块用 `/cinema_projector`。
 - 找不到新命令：重启客户端加载最新代码。
