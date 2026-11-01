@@ -69,7 +69,10 @@
 | 物品 | ID | 当前行为 |
 |---|---|---|
 | AV 接收器 | `firstmod:av_receiver` | 空手右键显示媒体/状态/音量/视频输出 |
-| 影院扬声器 | `firstmod:speaker` | 空手右键循环 `NONE/FL/FR/FC/LFE/BL/BR` |
+| 落地式扬声器 | `firstmod:speaker` | 两格高；空手右键循环 `NONE/FL/FR/BL/BR` |
+| 书架式扬声器 | `firstmod:bookshelf_speaker` | 一格高；空手右键循环 `NONE/FL/FR/BL/BR` |
+| 中置扬声器 | `firstmod:center_speaker` | 一格高；空手右键循环 `NONE/FC` |
+| 低音炮 | `firstmod:subwoofer` | 一格高；空手右键循环 `NONE/LFE` |
 | 影院线材 | `firstmod:cable` | 仅物品与提示，连接行为未接 |
 | 影院遥控器 | `firstmod:remote_controller` | 仅物品与提示，遥控行为未接 |
 

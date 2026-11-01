@@ -1,8 +1,12 @@
 {
 	"variants": {
-		"facing=north": { "model": "firstmod:block/speaker" },
-		"facing=south": { "model": "firstmod:block/speaker", "y": 180 },
-		"facing=west": { "model": "firstmod:block/speaker", "y": 270 },
-		"facing=east": { "model": "firstmod:block/speaker", "y": 90 }
+		"facing=north,half=lower": { "model": "firstmod:block/speaker" },
+		"facing=south,half=lower": { "model": "firstmod:block/speaker", "y": 180 },
+		"facing=west,half=lower": { "model": "firstmod:block/speaker", "y": 270 },
+		"facing=east,half=lower": { "model": "firstmod:block/speaker", "y": 90 },
+		"facing=north,half=upper": { "model": "firstmod:block/speaker_upper" },
+		"facing=south,half=upper": { "model": "firstmod:block/speaker_upper", "y": 180 },
+		"facing=west,half=upper": { "model": "firstmod:block/speaker_upper", "y": 270 },
+		"facing=east,half=upper": { "model": "firstmod:block/speaker_upper", "y": 90 }
 	}
 }

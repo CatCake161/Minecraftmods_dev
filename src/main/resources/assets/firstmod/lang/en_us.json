@@ -2,10 +2,17 @@
 	"block.firstmod.screen": "Cinema Screen",
 	"block.firstmod.projector": "Cinema Projector",
 	"block.firstmod.av_receiver": "AV Receiver",
-	"block.firstmod.speaker": "Cinema Speaker",
+	"block.firstmod.speaker": "Floorstanding Speaker",
+	"block.firstmod.bookshelf_speaker": "Bookshelf Speaker",
+	"block.firstmod.center_speaker": "Center Speaker",
+	"block.firstmod.subwoofer": "Subwoofer",
 	"item.firstmod.cable": "Cinema Cable",
 	"item.firstmod.remote_controller": "Cinema Remote",
 	"item.firstmod.cable.tooltip": "Wiring tool for linking cinema devices (not yet active)",
 	"item.firstmod.remote_controller.tooltip": "Remote control for cinema devices (not yet active)",
-	"message.firstmod.speaker_role": "Speaker role: %s"
+	"speaker_type.firstmod.floorstanding": "Floorstanding speaker",
+	"speaker_type.firstmod.bookshelf": "Bookshelf speaker",
+	"speaker_type.firstmod.center": "Center speaker",
+	"speaker_type.firstmod.subwoofer": "Subwoofer",
+	"message.firstmod.speaker_role": "%s role: %s"
 }

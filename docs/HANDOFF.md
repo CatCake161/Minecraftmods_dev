@@ -12,7 +12,7 @@
 - 剩余验收：无音轨长播、亮度 0.01..1、wash 观感（BSL 下某些值画面异常，待定位）。
 - 投影仪光学、外部 FFmpeg、临时 wash GUI 已可运行。
 - **AV Receiver 方块/block entity 已创建**（媒体/播放状态字段、持久化、同步骨架）；播放管线尚未迁入，当前仍是全局 `CinemaPlayer` 直接驱动屏幕/OpenAL。设计见 `docs/design/AV-RECEIVER.md`。
-- Speaker 方块（右键循环 FL/FR/FC/LFE/BL/BR）、线材物品、遥控器物品已创建；线材/遥控器行为尚未接入。
+- 扬声器已拆分为四种箱体：落地式 `speaker`（两格高）、书架式 `bookshelf_speaker`（一格高，FL/FR/BL/BR）、中置 `center_speaker`（一格高，FC）、低音炮 `subwoofer`（一格高，LFE）；空手右键只在各自合法角色内循环。落地式下半格持有 block entity，上半格为无 block entity 的延伸；破坏任一半只掉一个物品。线材/遥控器物品已创建，行为尚未接入。
 
 ## 2. 必须遵守的架构约束
 
@@ -48,8 +48,10 @@
   - 镜头光晕、投影仪过热/通风（规划和文档中已移除）
 - 影院设备第一版物品：
   - `av_receiver` 方块 + block entity（媒体/播放/音量/视频输出字段）
-  - `speaker` 方块 + block entity（右键循环声道角色）
-  - `cable` / `remote_controller` 物品（线材/遥控器占位）
+  - `speaker` / `bookshelf_speaker` / `center_speaker` / `subwoofer` 四种扬声器方块 + 共享 block entity
+  - 落地式为真正的两格高方块（上半格 dummy，无 block entity）；书架式/中置/低音炮保持一格
+  - 每种箱体只允许合法声道角色（中置仅 FC，低音炮仅 LFE）
+  - `cable` / `remote_controller` 物品（线材/遥控器占位；遥控器使用自定义 16×16 图标）
   - 模型、blockstate、中英文语言、掉落表
 - 文档重组：
   - `docs/PLANNING.md`、`docs/TODO.md`、`docs/COMMANDS.md`
@@ -62,7 +64,7 @@
 - 4K60/HDR 已由用户验收通过；建议后续记录具体 codec/pix_fmt/hwaccel/丢帧数据，便于回归。
 - **BSL 下 ambient wash 某些值画面异常（待定位具体表现/数值）**；brightness 0.01..1 尚未验收；无音轨墙钟长播未测。
 - 8 分钟长播时出现过一次 `nvoglv64.dll` ACCESS_VIOLATION（NVIDIA OpenGL 驱动层），不是 Java 异常；阴影删除后尚未复现验证。
-- AV Receiver 未实现；投影仪/扬声器仍共用全局播放器。
+- AV Receiver 方块/状态骨架已实现，但播放管线尚未迁入；投影仪/扬声器仍共用全局播放器。
 - 多屏/多投影仪、LAN 同步、资源重载、两小时长片仍未完成。
 - 旧 Git 历史仍含旧提交作者信息；工作树已清理。若要彻底隐私，需要重写历史并 force-push，或把仓库设为 private。
 - 不要重新引入：test scene、visual spike、barrier 测试方块、阴影、镜头光晕、过热。

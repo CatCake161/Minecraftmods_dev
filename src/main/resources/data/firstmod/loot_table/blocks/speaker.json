@@ -6,7 +6,16 @@
 			"entries": [
 				{
 					"type": "minecraft:item",
-					"name": "firstmod:speaker"
+					"name": "firstmod:speaker",
+					"conditions": [
+						{
+							"condition": "minecraft:block_state_property",
+							"block": "firstmod:speaker",
+							"properties": {
+								"half": "lower"
+							}
+						}
+					]
 				}
 			],
 			"conditions": [

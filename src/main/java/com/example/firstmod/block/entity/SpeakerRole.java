@@ -26,11 +26,6 @@ public enum SpeakerRole {
 		return Component.literal(label);
 	}
 
-	public SpeakerRole next() {
-		SpeakerRole[] roles = values();
-		return roles[(ordinal() + 1) % roles.length];
-	}
-
 	public static SpeakerRole byName(String name) {
 		for (SpeakerRole role : values()) {
 			if (role.name().equals(name)) {

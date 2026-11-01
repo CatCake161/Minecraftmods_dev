@@ -1,0 +1,8 @@
+{
+	"variants": {
+		"facing=north": { "model": "firstmod:block/center_speaker" },
+		"facing=south": { "model": "firstmod:block/center_speaker", "y": 180 },
+		"facing=west": { "model": "firstmod:block/center_speaker", "y": 270 },
+		"facing=east": { "model": "firstmod:block/center_speaker", "y": 90 }
+	}
+}

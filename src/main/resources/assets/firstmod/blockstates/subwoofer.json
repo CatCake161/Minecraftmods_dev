@@ -1,0 +1,8 @@
+{
+	"variants": {
+		"facing=north": { "model": "firstmod:block/subwoofer" },
+		"facing=south": { "model": "firstmod:block/subwoofer", "y": 180 },
+		"facing=west": { "model": "firstmod:block/subwoofer", "y": 270 },
+		"facing=east": { "model": "firstmod:block/subwoofer", "y": 90 }
+	}
+}

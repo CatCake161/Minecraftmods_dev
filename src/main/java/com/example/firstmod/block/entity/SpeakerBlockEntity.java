@@ -1,6 +1,7 @@
 package com.example.firstmod.block.entity;
 
 import com.example.firstmod.FirstMod;
+import com.example.firstmod.block.SpeakerBlock;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
@@ -23,6 +24,13 @@ public class SpeakerBlockEntity extends BlockEntity {
 		super(FirstMod.SPEAKER_BLOCK_ENTITY, pos, blockState);
 	}
 
+	public SpeakerType type() {
+		if (getBlockState().getBlock() instanceof SpeakerBlock speakerBlock) {
+			return speakerBlock.type();
+		}
+		return SpeakerType.FLOORSTANDING;
+	}
+
 	public SpeakerRole role() {
 		return role;
 	}
@@ -32,13 +40,13 @@ public class SpeakerBlockEntity extends BlockEntity {
 	}
 
 	public SpeakerRole cycleRole() {
-		role = role.next();
+		role = type().nextRole(role);
 		markUpdated();
 		return role;
 	}
 
 	public void setRole(SpeakerRole value) {
-		role = value == null ? SpeakerRole.NONE : value;
+		role = type().sanitize(value);
 		markUpdated();
 	}
 
@@ -49,8 +57,8 @@ public class SpeakerBlockEntity extends BlockEntity {
 
 	public Component status() {
 		return Component.literal(String.format(Locale.ROOT,
-			"Speaker %s: role=%s gain=%.2f",
-			worldPosition.toShortString(), role.label(), gain));
+			"Speaker %s (%s): role=%s gain=%.2f",
+			worldPosition.toShortString(), type().id(), role.label(), gain));
 	}
 
 	private void markUpdated() {
@@ -70,7 +78,7 @@ public class SpeakerBlockEntity extends BlockEntity {
 	@Override
 	protected void loadAdditional(CompoundTag tag, HolderLookup.Provider registries) {
 		super.loadAdditional(tag, registries);
-		role = SpeakerRole.byName(tag.getString("role"));
+		role = type().sanitize(SpeakerRole.byName(tag.getString("role")));
 		gain = tag.contains("gain") ? tag.getFloat("gain") : 1.0f;
 	}
 

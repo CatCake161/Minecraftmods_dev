@@ -235,6 +235,7 @@ M1：
 M2+：
 
 - 接收器按角色把六个声道分配给已配对 Speaker 方块。
+- 箱体类型决定可用角色：落地式/书架式用于 FL/FR/BL/BR，中置用于 FC，低音炮用于 LFE；不合法角色回退 NONE。
 - 每个 Speaker 一个 mono source，位置/朝向来自方块；接收器只做路由。
 - Speaker 不做解码，不直接读文件。
 - 立体声 upmix / 5.1 downmix 写成纯函数并测试。

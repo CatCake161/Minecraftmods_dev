@@ -3,6 +3,7 @@ package com.example.firstmod.block;
 import com.example.firstmod.FirstMod;
 import com.example.firstmod.block.entity.SpeakerBlockEntity;
 import com.example.firstmod.block.entity.SpeakerRole;
+import com.example.firstmod.block.entity.SpeakerType;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
@@ -19,13 +20,20 @@ import net.minecraft.world.level.block.state.StateDefinition;
 import net.minecraft.world.level.block.state.properties.DirectionProperty;
 import net.minecraft.world.phys.BlockHitResult;
 
-/** One physical speaker. Right-click with an empty hand to cycle its channel role. */
+/** One physical speaker. Right-click with an empty hand to cycle its valid channel roles. */
 public class SpeakerBlock extends Block implements EntityBlock {
 	public static final DirectionProperty FACING = HorizontalDirectionalBlock.FACING;
 
-	public SpeakerBlock(Properties properties) {
+	private final SpeakerType type;
+
+	public SpeakerBlock(SpeakerType type, Properties properties) {
 		super(properties);
+		this.type = type;
 		registerDefaultState(stateDefinition.any().setValue(FACING, Direction.NORTH));
+	}
+
+	public SpeakerType type() {
+		return type;
 	}
 
 	@Override
@@ -50,7 +58,7 @@ public class SpeakerBlock extends Block implements EntityBlock {
 		if (!level.isClientSide && level.getBlockEntity(pos) instanceof SpeakerBlockEntity speaker) {
 			SpeakerRole role = speaker.cycleRole();
 			player.displayClientMessage(Component.translatable(
-				"message.firstmod.speaker_role", role.label()), true);
+				"message.firstmod.speaker_role", speaker.type().displayName(), role.displayName()), true);
 		}
 		return InteractionResult.sidedSuccess(level.isClientSide);
 	}
