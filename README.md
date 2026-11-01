@@ -65,6 +65,7 @@ $env:JAVA_HOME='<JDK-25+>'
 - [P0 技术验证报告](docs/design/P0-SPIKE-REPORT.md)
 - [P0.5 投影/扬声器设计](docs/design/P05-DESIGN.md)
 - [投影仪 GUI 开发大纲](docs/design/PROJECTOR-GUI.md)
+- [AV Receiver 设计与迁移](docs/design/AV-RECEIVER.md)
 
 ## 目录结构
 
