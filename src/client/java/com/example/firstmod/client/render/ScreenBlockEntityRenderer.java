@@ -75,8 +75,8 @@ public final class ScreenBlockEntityRenderer implements BlockEntityRenderer<Scre
 		if (optics.brightness() > 0.01f) {
 			player.setFocusBlur(optics.blurLod());
 			drawProjected(bufferSource, poseStack, geometry, optics);
+			drawAmbientWash(bufferSource, poseStack, geometry, optics.ambientWash());
 		}
-		drawAmbientWash(bufferSource, poseStack, geometry, optics.ambientWash());
 	}
 
 	private static void drawProjected(MultiBufferSource bufferSource, PoseStack poseStack,

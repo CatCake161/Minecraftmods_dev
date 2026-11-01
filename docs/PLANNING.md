@@ -115,6 +115,7 @@
 - `docs/PLANNING.md`：长期规划、架构、决策。
 - `docs/TODO.md`：可执行任务清单。
 - `docs/COMMANDS.md`：游戏内指令说明。
+- `docs/design/PROJECTOR-GUI.md`：投影仪 GUI 开发大纲。
 - `docs/design/`：历史设计与验证报告。
 - `docs/assets/`：文档截图。
 - `spike/`：独立 P0 基准工程，不参与主模组构建。

@@ -12,43 +12,50 @@ import net.minecraft.network.chat.Component;
 import java.util.Locale;
 
 /**
- * Minimal projector control screen. The first control is the manual ambient
- * wash strength; future versions can add focus/keystone/lamp controls here.
+ * Minimal projector control screen.
  *
- * <p>The slider updates the local block entity for immediate preview and sends
- * the matching server command when applied, so real (server-side) projectors
- * stay authoritative.
+ * <p>This is a temporary GUI slice: it exposes one control (ambient wash) so
+ * the setting can be tuned in-game. The full projector GUI is planned in
+ * {@code docs/design/PROJECTOR-GUI.md}; do not grow this screen piecemeal.
  */
 public final class ProjectorScreen extends Screen {
 	private final ProjectorBlockEntity projector;
+	private final double originalWash;
 	private double wash;
-	private WashSlider washSlider;
+	private boolean saved;
 
 	public ProjectorScreen(ProjectorBlockEntity projector) {
 		super(Component.literal("Cinema Projector"));
 		this.projector = projector;
-		this.wash = projector.ambientWash();
+		this.originalWash = projector.ambientWash();
+		this.wash = originalWash;
 	}
 
 	@Override
 	protected void init() {
 		int centerX = width / 2;
-		int top = height / 2 - 24;
-		washSlider = new WashSlider(centerX - 100, top, 200, 20, wash);
-		addRenderableWidget(washSlider);
-		addRenderableWidget(Button.builder(Component.literal("Apply"), button -> apply())
-			.bounds(centerX - 100, top + 30, 98, 20).build());
-		addRenderableWidget(Button.builder(CommonComponents.GUI_DONE, button -> onClose())
-			.bounds(centerX + 2, top + 30, 98, 20).build());
+		int top = height / 2 - 36;
+		addRenderableWidget(new WashSlider(centerX - 100, top, 200, 20, wash));
+		addRenderableWidget(Button.builder(Component.literal("Done"), button -> saveAndClose())
+			.bounds(centerX - 100, top + 48, 98, 20).build());
+		addRenderableWidget(Button.builder(CommonComponents.GUI_CANCEL, button -> onClose())
+			.bounds(centerX + 2, top + 48, 98, 20).build());
 	}
 
 	@Override
 	public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
 		renderBackground(graphics, mouseX, mouseY, partialTick);
 		super.render(graphics, mouseX, mouseY, partialTick);
-		graphics.drawCenteredString(font, title, width / 2, height / 2 - 52, 0xFFFFFF);
+		int top = height / 2 - 36;
+		graphics.drawCenteredString(font, title, width / 2, top - 24, 0xFFFFFF);
 		graphics.drawCenteredString(font, Component.literal("Ambient wash: 0% = off, 100% = fully washed"),
-			width / 2, height / 2 + 8, 0xA0A0A0);
+			width / 2, top + 26, 0xA0A0A0);
+	}
+
+	private void saveAndClose() {
+		apply();
+		saved = true;
+		onClose();
 	}
 
 	private void apply() {
@@ -62,7 +69,10 @@ public final class ProjectorScreen extends Screen {
 
 	@Override
 	public void onClose() {
-		apply();
+		if (!saved) {
+			// Cancel/Esc must not leave a locally modified block entity behind.
+			projector.setAmbientWash(originalWash);
+		}
 		super.onClose();
 	}
 
