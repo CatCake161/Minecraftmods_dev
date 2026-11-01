@@ -1,4 +1,4 @@
-package dev.catcake.cinema.spike;
+package dev.cinema.spike;
 
 import java.nio.file.Path;
 import java.util.ArrayList;

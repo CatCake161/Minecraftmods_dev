@@ -1,4 +1,4 @@
-package dev.catcake.cinema.spike;
+package dev.cinema.spike;
 
 import org.bytedeco.javacv.FFmpegFrameGrabber;
 import org.bytedeco.javacv.Frame;

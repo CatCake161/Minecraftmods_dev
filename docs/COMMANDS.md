@@ -40,7 +40,7 @@
 示例：
 
 ```text
-/cinema_play C:\Users\Whuch\Documents\我的文档\Minecraftmods_dev\spike\testmedia\test720p30_51.mp4
+/cinema_play <本地文件绝对路径>
 /cinema_seek 0
 ```
 

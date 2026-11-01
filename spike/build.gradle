@@ -36,6 +36,6 @@ dependencies {
 }
 
 application {
-	mainClass = 'dev.catcake.cinema.spike.Main'
+	mainClass = 'dev.cinema.spike.Main'
 	applicationDefaultJvmArgs = ['-Xmx2G']
 }

@@ -58,7 +58,7 @@
 世界空间屏幕，纹理由 `DynamicTexture` 每 3 帧上传一次；投影仪 UV 用真实的
 view/projection 矩阵计算。可见光束已按决定删除。
 
-![P0.5 screen](screenshots/p05-screen.png)
+![P0.5 screen](../assets/screenshots/p05-screen.png)
 
 关键结果：
 
@@ -90,7 +90,7 @@ view/projection 矩阵计算。可见光束已按决定删除。
 - **Sodium + Iris + BSL 10.1.8**：屏幕正常显示；因为可见光束已删除，
   不再有光束兼容性问题。
 
-![P0.5 screen under BSL](screenshots/p05-screen.png)
+![P0.5 screen under BSL](../assets/screenshots/p05-screen.png)
 
 屏幕使用 `entitySolid`，Iris 会按普通实体/方块渲染处理；这也是删除光束后
 渲染路径更稳的原因。
@@ -104,7 +104,7 @@ view/projection 矩阵计算。可见光束已按决定删除。
 - 六路 source 用同一设备时钟启动
 - 本次自动测试：**126 帧呈现、0 丢帧**；音频 5.1 六声道正常调度
 
-![P0.5 real video](screenshots/p05-video.png)
+![P0.5 real video](../assets/screenshots/p05-video.png)
 
 **JavaCV / Fabric 兼容坑**：`javacv` 的传递依赖（ASM/commons 等）会污染
 Fabric 开发环境 classpath，导致 Fabric Loader/Mixin 的

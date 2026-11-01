@@ -1,4 +1,4 @@
-package dev.catcake.cinema.spike;
+package dev.cinema.spike;
 
 record AudioChunk(double startPtsSeconds, short[] samples) {
 }

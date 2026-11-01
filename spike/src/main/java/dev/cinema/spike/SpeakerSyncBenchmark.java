@@ -1,4 +1,4 @@
-package dev.catcake.cinema.spike;
+package dev.cinema.spike;
 
 import org.lwjgl.BufferUtils;
 import org.lwjgl.openal.AL;
