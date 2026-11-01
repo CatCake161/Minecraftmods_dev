@@ -8,12 +8,16 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.phys.Vec3;
 
 import java.util.Locale;
+import java.util.Objects;
 
 /**
  * AV receiver state: media identity, playback position, volume and video output.
@@ -43,6 +47,8 @@ public class AvReceiverBlockEntity extends BlockEntity {
 	private boolean muted;
 	private BlockPos videoTarget;
 	private long stateGameTime;
+	/** Server-only: reset the playback clock on the first tick after loading. */
+	private transient boolean resyncClock;
 
 	public AvReceiverBlockEntity(BlockPos pos, BlockState blockState) {
 		super(FirstMod.AV_RECEIVER_BLOCK_ENTITY, pos, blockState);
@@ -52,16 +58,23 @@ public class AvReceiverBlockEntity extends BlockEntity {
 		if (level.isClientSide) {
 			return;
 		}
-		if (receiver.state != State.PLAYING) {
-			return;
-		}
-		double previous = receiver.positionSeconds;
-		receiver.positionSeconds += 1.0 / 20.0;
-		if (receiver.durationSeconds > 0.0) {
-			receiver.positionSeconds = Math.min(receiver.positionSeconds, receiver.durationSeconds);
-		}
-		if (receiver.positionSeconds != previous && level.getGameTime() % 20L == 0L) {
+		if (receiver.resyncClock) {
+			receiver.resyncClock = false;
+			receiver.stateGameTime = level.getGameTime();
 			receiver.markUpdated();
+		}
+		if (receiver.state == State.PLAYING) {
+			double previous = receiver.positionSeconds;
+			receiver.positionSeconds += 1.0 / 20.0;
+			if (receiver.durationSeconds > 0.0) {
+				receiver.positionSeconds = Math.min(receiver.positionSeconds, receiver.durationSeconds);
+			}
+			if (receiver.positionSeconds != previous && level.getGameTime() % 20L == 0L) {
+				receiver.markUpdated();
+			}
+		}
+		if (level.getGameTime() % 20L == 0L) {
+			receiver.refreshProjectorLink(level);
 		}
 	}
 
@@ -105,22 +118,33 @@ public class AvReceiverBlockEntity extends BlockEntity {
 		return stateGameTime;
 	}
 
-	public void selectMedia(String key, long size, String sha256, double duration) {
-		mediaKey = key == null ? "" : key;
+	public boolean selectMedia(String key, long size, String sha256, double duration) {
+		if (level == null || key == null || key.isEmpty() || isAnotherReceiverActive(level, worldPosition)) {
+			return false;
+		}
+		mediaKey = key;
 		mediaSize = Math.max(0L, size);
 		mediaSha256 = sha256 == null ? "" : sha256;
 		durationSeconds = Math.max(0.0, duration);
 		positionSeconds = 0.0;
 		state = State.PLAYING;
+		stateGameTime = level.getGameTime();
+		pairNearestProjector(level);
 		markUpdated();
+		return true;
 	}
 
-	public void play() {
-		if (mediaKey.isEmpty()) {
-			return;
+	public boolean play() {
+		if (mediaKey.isEmpty() || level == null || isAnotherReceiverActive(level, worldPosition)) {
+			return false;
+		}
+		if (videoTarget == null) {
+			pairNearestProjector(level);
 		}
 		state = State.PLAYING;
+		stateGameTime = level.getGameTime();
 		markUpdated();
+		return true;
 	}
 
 	public void pause() {
@@ -154,15 +178,122 @@ public class AvReceiverBlockEntity extends BlockEntity {
 	}
 
 	public void setVideoTarget(BlockPos target) {
+		if (Objects.equals(videoTarget, target)) {
+			return;
+		}
+		clearProjectorLink();
 		videoTarget = target;
+		if (target != null && level != null && !level.isClientSide
+			&& level.getBlockEntity(target) instanceof ProjectorBlockEntity projector) {
+			projector.setReceiverPos(worldPosition);
+		}
 		markUpdated();
+	}
+
+	/**
+	 * Chooses the nearest loaded projector within 48 blocks and links both block
+	 * entities. Returns the chosen position, or {@code null} when none exists.
+	 */
+	public BlockPos pairNearestProjector(Level level) {
+		if (level == null || level.isClientSide) {
+			return videoTarget;
+		}
+		ProjectorBlockEntity best = null;
+		double bestDistance = 48.0 * 48.0;
+		ChunkPos center = new ChunkPos(worldPosition);
+		int radiusChunks = (int) Math.ceil(48.0 / 16.0);
+		Vec3 origin = Vec3.atCenterOf(worldPosition);
+		for (int chunkX = center.x - radiusChunks; chunkX <= center.x + radiusChunks; chunkX++) {
+			for (int chunkZ = center.z - radiusChunks; chunkZ <= center.z + radiusChunks; chunkZ++) {
+				LevelChunk chunk = level.getChunkSource().getChunkNow(chunkX, chunkZ);
+				if (chunk == null) {
+					continue;
+				}
+				for (BlockEntity blockEntity : chunk.getBlockEntities().values()) {
+					if (!(blockEntity instanceof ProjectorBlockEntity projector)) {
+						continue;
+					}
+					double distance = Vec3.atCenterOf(projector.getBlockPos()).distanceToSqr(origin);
+					if (distance < bestDistance) {
+						bestDistance = distance;
+						best = projector;
+					}
+				}
+			}
+		}
+		BlockPos target = best == null ? null : best.getBlockPos();
+		if (!Objects.equals(videoTarget, target)) {
+			clearProjectorLink();
+			videoTarget = target;
+			if (best != null) {
+				best.setReceiverPos(worldPosition);
+			}
+			markUpdated();
+		} else if (best != null && !worldPosition.equals(best.receiverPos())) {
+			best.setReceiverPos(worldPosition);
+		}
+		return target;
+	}
+
+	private void refreshProjectorLink(Level level) {
+		if (videoTarget != null) {
+			BlockEntity blockEntity = level.getBlockEntity(videoTarget);
+			if (blockEntity instanceof ProjectorBlockEntity projector
+				&& worldPosition.equals(projector.receiverPos())) {
+				return;
+			}
+		}
+		pairNearestProjector(level);
+	}
+
+	private void clearProjectorLink() {
+		if (videoTarget == null || level == null || level.isClientSide) {
+			return;
+		}
+		if (level.getBlockEntity(videoTarget) instanceof ProjectorBlockEntity projector) {
+			projector.clearReceiver(worldPosition);
+		}
+	}
+
+	/**
+	 * M1 allows one audio engine, so only one nearby receiver may be active
+	 * (playing or paused with an open client player).
+	 */
+	public static boolean isAnotherReceiverActive(Level level, BlockPos self) {
+		if (level == null || level.isClientSide) {
+			return false;
+		}
+		ChunkPos center = new ChunkPos(self);
+		int radiusChunks = 4;
+		for (int chunkX = center.x - radiusChunks; chunkX <= center.x + radiusChunks; chunkX++) {
+			for (int chunkZ = center.z - radiusChunks; chunkZ <= center.z + radiusChunks; chunkZ++) {
+				LevelChunk chunk = level.getChunkSource().getChunkNow(chunkX, chunkZ);
+				if (chunk == null) {
+					continue;
+				}
+				for (BlockEntity blockEntity : chunk.getBlockEntities().values()) {
+					if (blockEntity instanceof AvReceiverBlockEntity other
+						&& !other.worldPosition.equals(self)
+						&& other.state != State.STOPPED) {
+						return true;
+					}
+				}
+			}
+		}
+		return false;
+	}
+
+	@Override
+	public void setRemoved() {
+		clearProjectorLink();
+		super.setRemoved();
 	}
 
 	public Component status() {
 		String media = mediaKey.isEmpty() ? "none" : mediaKey;
 		String target = videoTarget == null ? "none" : videoTarget.toShortString();
 		return Component.literal(String.format(Locale.ROOT,
-			"AV receiver %s: media=%s state=%s %.1f/%.1fs volume=%.2f%s video=%s",
+			"AV receiver %s: media=%s state=%s %.1f/%.1fs volume=%.2f%s projector=%s",
 			worldPosition.toShortString(), media, state.name().toLowerCase(Locale.ROOT),
 			positionSeconds, durationSeconds, volume, muted ? " muted" : "", target));
 	}
@@ -208,6 +339,7 @@ public class AvReceiverBlockEntity extends BlockEntity {
 		muted = tag.getBoolean("muted");
 		videoTarget = tag.contains("videoTarget") ? BlockPos.of(tag.getLong("videoTarget")) : null;
 		stateGameTime = tag.getLong("stateGameTime");
+		resyncClock = state == State.PLAYING;
 	}
 
 	@Override

@@ -12,12 +12,13 @@ import java.util.List;
 public final class CinemaHelpCommand {
 	private static final List<List<String>> PAGES = List.of(
 		List.of(
-			"§6Cinema 使用帮助 §7(1/7) §f播放控制",
-			"§e/cinema_play <本地文件绝对路径>§f  播放视频",
-			"§e/cinema_pause§f  暂停 / 继续",
-			"§e/cinema_seek <秒>§f  跳转（关键帧附近重启解码器）",
-			"§e/cinema_stop§f  停止播放并释放视频纹理",
-			"§7翻页：/cinema_help <页码>，或 /cinema help <页码>"
+			"§6Cinema 使用帮助 §7(1/7) §fAV 接收器与播放",
+			"§e/cinema_play <媒体库相对路径>§f  选片并播放，例如 movies/demo.mp4",
+			"§e/cinema_pause§f  暂停 / 继续；§e/cinema_stop§f  停止",
+			"§e/cinema_seek <秒>§f  跳转；§e/cinema_volume <0-1>§f  音量",
+			"§e/cinema_mute§f  静音切换；§e/cinema_link§f  重新配对投影仪",
+			"§e/cinema_receiver info§f  查看接收器状态",
+			"§7命令作用于 64 格内最近的 AV 接收器；媒体放在 cinema/media/。"
 		),
 		List.of(
 			"§6Cinema 使用帮助 §7(2/7) §f投影仪（客户端）",
@@ -38,12 +39,12 @@ public final class CinemaHelpCommand {
 			"§7修改会同步给 LAN 客户端；命令作用于 48 格内最近的投影仪。"
 		),
 		List.of(
-			"§6Cinema 使用帮助 §7(4/7) §f屏幕与配对",
+			"§6Cinema 使用帮助 §7(4/7) §f屏幕、投影仪与接收器",
 			"§7屏幕由同朝向、同平面的屏幕方块组成，最大 16×16。",
 			"§7投影仪会自动寻找前方 48 格内最近的屏幕；屏幕必须朝向投影仪。",
+			"§7接收器会自动配对 48 格内最近的投影仪；§e/cinema_link§f 可重新扫描。",
 			"§7右键投影仪可打开 GUI，直接调整环境光洗白强度。",
-			"§7",
-			"§7拆掉投影仪后屏幕保持黑屏；重新放回投影仪即可恢复。",
+			"§7拆掉投影仪后屏幕保持黑屏；重新放回后等待接收器自动重连，或执行 /cinema_link。",
 			"§e/time set midnight§f  测试夜间环境光；§e/time set noon§f  回到正午"
 		),
 		List.of(
@@ -57,7 +58,8 @@ public final class CinemaHelpCommand {
 		List.of(
 			"§6Cinema 使用帮助 §7(6/7) §f常见问题",
 			"§7视频停在最后一帧：/cinema_seek 0 重播。",
-			"§7屏幕没画面：确认屏幕正面朝向投影仪、48 格内、光路无遮挡。",
+			"§7屏幕没画面：确认接收器正在播放、投影仪已配对、屏幕朝向投影仪。",
+			"§7同一时间只允许一个接收器占用音频；先 /cinema_stop 再切换。",
 			"§7真实方块用 /cinema_projector；客户端调参用 /cinema_projector_client。",
 			"§e/cinema_audio_spike§f  运行 5.1/OpenAL 测试",
 			"§7找不到新命令时重启客户端；帮助命令本身不会修改世界。"

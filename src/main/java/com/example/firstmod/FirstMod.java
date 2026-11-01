@@ -13,9 +13,13 @@ import com.example.firstmod.block.entity.SpeakerType;
 import com.example.firstmod.command.ProjectorCommand;
 import com.example.firstmod.item.CableItem;
 import com.example.firstmod.item.RemoteControllerItem;
+import com.example.firstmod.network.ReceiverControlHandler;
+import com.example.firstmod.network.ReceiverControlPayload;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.itemgroup.v1.ItemGroupEvents;
+import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
@@ -89,6 +93,9 @@ public class FirstMod implements ModInitializer {
 		SPEAKER_BLOCK_ENTITY = Registry.register(BuiltInRegistries.BLOCK_ENTITY_TYPE, id("speaker"),
 			BlockEntityType.Builder.of(SpeakerBlockEntity::new,
 				SPEAKER_BLOCK, BOOKSHELF_SPEAKER_BLOCK, CENTER_SPEAKER_BLOCK, SUBWOOFER_BLOCK).build(null));
+
+		PayloadTypeRegistry.playC2S().register(ReceiverControlPayload.TYPE, ReceiverControlPayload.CODEC);
+		ServerPlayNetworking.registerGlobalReceiver(ReceiverControlPayload.TYPE, ReceiverControlHandler::handle);
 
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
 			ProjectorCommand.register(dispatcher));

@@ -38,6 +38,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	public static final int CHANNELS = 6;
 	private static final int SPEAKERS = 6;
 	private static final int BUFFER_COUNT = 4;
+	private static final float BASE_GAIN = 0.65f;
 	private static final String[] LABELS = {"FL", "FR", "FC", "LFE", "BL", "BR"};
 	private static final float[][] POSITIONS = {
 		{-3.0f, 0.0f, -4.0f},
@@ -68,6 +69,9 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	private volatile boolean started;
 	private volatile boolean paused;
 	private boolean appliedPaused;
+	private volatile float masterGain = 1.0f;
+	private volatile boolean masterMuted;
+	private float appliedGain = Float.NaN;
 	private volatile double audiblePts;
 	private volatile double latencySeconds;
 	private double lastEndPts;
@@ -133,6 +137,12 @@ public final class CinemaAudioEngine implements AutoCloseable {
 
 	public void setPaused(boolean value) {
 		paused = value;
+	}
+
+	/** Receiver volume, 0..1, applied on top of the fixed source gain. */
+	public void setMasterGain(float volume, boolean muted) {
+		masterGain = Math.max(0.0f, Math.min(1.0f, volume));
+		masterMuted = muted;
 	}
 
 	private void run() {
@@ -203,11 +213,24 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			monoBuffers[i] = BufferUtils.createShortBuffer(SAMPLE_RATE / 2);
 			alSourcei(sources[i], AL_SOURCE_RELATIVE, AL_TRUE);
 			alSource3f(sources[i], AL_POSITION, POSITIONS[i][0], POSITIONS[i][1], POSITIONS[i][2]);
-			alSourcef(sources[i], AL_GAIN, 0.65f);
+			float gain = masterMuted ? 0.0f : BASE_GAIN * masterGain;
+			alSourcef(sources[i], AL_GAIN, gain);
+			appliedGain = gain;
 			alSourcef(sources[i], AL_ROLLOFF_FACTOR, 1.0f);
 			alSourcef(sources[i], AL_MAX_DISTANCE, 64f);
 		}
 		checkError("setupSources");
+	}
+
+	private void applyMasterGain() {
+		float target = masterMuted ? 0.0f : BASE_GAIN * masterGain;
+		if (Math.abs(target - appliedGain) < 0.001f) {
+			return;
+		}
+		appliedGain = target;
+		for (int source : sources) {
+			alSourcef(source, AL_GAIN, target);
+		}
 	}
 
 	private void pump() {
@@ -215,6 +238,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			performReset();
 			return;
 		}
+		applyMasterGain();
 		reclaimProcessed();
 		if (pendingChunk == null) {
 			pendingChunk = input.poll();

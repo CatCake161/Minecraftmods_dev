@@ -7,11 +7,12 @@
 
 - Minecraft 1.21.1 + Fabric，Java 21；包名 `com.example.firstmod`，模组 id `firstmod`。
 - 主模组构建通过：`.\gradlew build`。
-- 最近一局游戏正常退出：1080p30 播放 3071 帧，仅 3 丢帧。
+- 最近一局 M1 验收：720p30 + 5.1 播放正常，丢帧 0；暂停/seek/音量/静音/设备拆除恢复通过。
 - 用户已验收通过：HDR10/HLG、4K60 VP9、4K60 HEVC/AV1、四角对齐/四个朝向、对焦/梯形、拆投影仪立即黑屏、相邻方块不透明。
 - 剩余验收：无音轨长播、亮度 0.01..1、wash 观感（BSL 下某些值画面异常，待定位）。
 - 投影仪光学、外部 FFmpeg、临时 wash GUI 已可运行。
-- **AV Receiver 方块/block entity 已创建**（媒体/播放状态字段、持久化、同步骨架）；播放管线尚未迁入，当前仍是全局 `CinemaPlayer` 直接驱动屏幕/OpenAL。设计见 `docs/design/AV-RECEIVER.md`。
+- **AV Receiver M1 已完成并验收**：媒体库固定 `<game>/cinema/media/`，使用相对 key + SHA-256/时长；新增 `ReceiverControlPayload`（C2S）与服务端校验；客户端 `AvReceiverPlaybackManager` 每 10 tick 同步接收器状态，视频经 `ProjectorOptics` 路由到屏幕，音频由接收器播放代理驱动共享 OpenAL 5.1。接收器每 20 tick 自动配对/重连 48 格内最近投影仪；M1 只允许一个接收器处于播放/暂停（单音频引擎）。设计见 `docs/design/AV-RECEIVER.md`。
+- 用户已验收通过：M1 选片/播放/暂停/seek/音量/静音、自动配对投影仪、拆接收器/投影仪/屏幕后的停止与恢复、缺文件提示。
 - 扬声器已拆分为四种箱体：落地式 `speaker`（两格高）、书架式 `bookshelf_speaker`（一格高，FL/FR/BL/BR）、中置 `center_speaker`（一格高，FC）、低音炮 `subwoofer`（一格高，LFE）；空手右键只在各自合法角色内循环。落地式下半格持有 block entity，上半格为无 block entity 的延伸；破坏任一半只掉一个物品。线材/遥控器物品已创建，行为尚未接入。
 - 用户已验收通过：四种扬声器外观与角色限制、两格落地式放置/破坏、书架式原落地模型、手持与放置均无闪烁。
 

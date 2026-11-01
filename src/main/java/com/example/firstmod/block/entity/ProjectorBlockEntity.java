@@ -15,6 +15,8 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 
+import java.util.Objects;
+
 /**
  * Cinema projector optics and lamp state.
  *
@@ -47,6 +49,7 @@ public class ProjectorBlockEntity extends BlockEntity {
 	private double brightness = 1.0;
 	private double ambientWash = 0.18;
 	private boolean powered = true;
+	private BlockPos receiverPos;
 
 	/** Client-local lamp output, 0..1. */
 	private float lampLevel;
@@ -57,6 +60,7 @@ public class ProjectorBlockEntity extends BlockEntity {
 
 	public static void tick(Level level, BlockPos pos, BlockState state, ProjectorBlockEntity projector) {
 		projector.tickLamp();
+		projector.tickReceiverLink(level);
 	}
 
 	private void tickLamp() {
@@ -66,6 +70,37 @@ public class ProjectorBlockEntity extends BlockEntity {
 			lampLevel = Math.min(target, lampLevel + step);
 		} else if (lampLevel > target) {
 			lampLevel = Math.max(target, lampLevel - step);
+		}
+	}
+
+	/** The receiver that currently feeds this projector, or {@code null}. */
+	public BlockPos receiverPos() {
+		return receiverPos;
+	}
+
+	public void setReceiverPos(BlockPos pos) {
+		if (Objects.equals(receiverPos, pos)) {
+			return;
+		}
+		receiverPos = pos;
+		markUpdated();
+	}
+
+	/** Clears the link only if it still belongs to the expected receiver. */
+	public void clearReceiver(BlockPos expected) {
+		if (receiverPos != null && receiverPos.equals(expected)) {
+			setReceiverPos(null);
+		}
+	}
+
+	private void tickReceiverLink(Level level) {
+		if (level.isClientSide || receiverPos == null || level.getGameTime() % 20L != 0L) {
+			return;
+		}
+		BlockEntity blockEntity = level.getBlockEntity(receiverPos);
+		if (!(blockEntity instanceof AvReceiverBlockEntity receiver)
+			|| !worldPosition.equals(receiver.videoTarget())) {
+			setReceiverPos(null);
 		}
 	}
 
@@ -168,6 +203,9 @@ public class ProjectorBlockEntity extends BlockEntity {
 		tag.putDouble("brightness", brightness);
 		tag.putDouble("ambientWash", ambientWash);
 		tag.putBoolean("powered", powered);
+		if (receiverPos != null) {
+			tag.putLong("receiverPos", receiverPos.asLong());
+		}
 	}
 
 	@Override
@@ -189,6 +227,7 @@ public class ProjectorBlockEntity extends BlockEntity {
 		ambientWash = clamp(tag.contains("ambientWash") ? tag.getDouble("ambientWash") : 0.18,
 			MIN_AMBIENT_WASH, MAX_AMBIENT_WASH);
 		powered = !tag.contains("powered") || tag.getBoolean("powered");
+		receiverPos = tag.contains("receiverPos") ? BlockPos.of(tag.getLong("receiverPos")) : null;
 	}
 
 	@Override

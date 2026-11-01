@@ -4,14 +4,14 @@ import com.example.firstmod.FirstMod;
 import com.example.firstmod.block.entity.ProjectorBlockEntity;
 import com.example.firstmod.client.audio.InGameAudioSpike;
 import com.example.firstmod.client.command.CinemaHelpCommand;
+import com.example.firstmod.client.command.ClientCinemaCommand;
 import com.example.firstmod.client.command.ClientProjectorCommand;
 import com.example.firstmod.client.gui.ProjectorScreen;
+import com.example.firstmod.client.media.AvReceiverPlaybackManager;
 import com.example.firstmod.client.media.CinemaPlayer;
 import com.example.firstmod.client.media.CinemaPrewarm;
 import com.example.firstmod.client.render.ProjectorOptics;
 import com.example.firstmod.client.render.ScreenBlockEntityRenderer;
-import com.mojang.brigadier.arguments.DoubleArgumentType;
-import com.mojang.brigadier.arguments.StringArgumentType;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -80,73 +80,27 @@ public class FirstModClient implements ClientModInitializer {
 			CinemaHelpCommand.register(dispatcher));
 
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
-			dispatcher.register(ClientCommandManager.literal("cinema_play")
-				.then(ClientCommandManager.argument("path", StringArgumentType.greedyString())
-					.executes(context -> {
-						String raw = StringArgumentType.getString(context, "path");
-						try {
-							CinemaPlayer player = CinemaPlayer.play(
-								context.getSource().getClient(), Path.of(raw));
-							context.getSource().sendFeedback(Component.literal(
-								"cinema playing: " + raw + " (" + player.width() + "x" + player.height() + ")"));
-							return 1;
-						} catch (Exception e) {
-							context.getSource().sendError(Component.literal(
-								"cinema play failed: " + e.getMessage()));
-							return 0;
-						}
-					}))));
-
-		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
-			dispatcher.register(ClientCommandManager.literal("cinema_stop").executes(context -> {
-				CinemaPlayer.stopActive(context.getSource().getClient());
-				context.getSource().sendFeedback(Component.literal("cinema stopped"));
-				return 1;
-			})));
-
-		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
-			dispatcher.register(ClientCommandManager.literal("cinema_pause").executes(context -> {
-				CinemaPlayer player = CinemaPlayer.active();
-				if (player == null) {
-					context.getSource().sendError(Component.literal("cinema is not playing"));
-					return 0;
-				}
-				player.togglePause();
-				context.getSource().sendFeedback(Component.literal(
-					"cinema " + (player.isPaused() ? "paused" : "resumed")));
-				return 1;
-			})));
-
-		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
-			dispatcher.register(ClientCommandManager.literal("cinema_seek")
-				.then(ClientCommandManager.argument("seconds", DoubleArgumentType.doubleArg(0.0))
-					.executes(context -> {
-						double seconds = DoubleArgumentType.getDouble(context, "seconds");
-						try {
-							CinemaPlayer.seekActive(context.getSource().getClient(), seconds);
-							context.getSource().sendFeedback(Component.literal(
-								"cinema seek: " + String.format("%.1f", seconds) + " s"));
-							return 1;
-						} catch (Exception e) {
-							context.getSource().sendError(Component.literal(
-								"cinema seek failed: " + e.getMessage()));
-							return 0;
-						}
-					}))));
+			ClientCinemaCommand.register(dispatcher));
 
 		ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
 			CinemaPlayer.stopActive(client);
+			AvReceiverPlaybackManager.shutdown();
 			ProjectorOptics.clearCache();
 		});
 		ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
 			CinemaPlayer.stopActive(client);
+			AvReceiverPlaybackManager.shutdown();
 			ProjectorOptics.clearCache();
 			spikeEnvironmentPrepared = false;
 			fixedPlayerPos = null;
 		});
 
 		BlockEntityRendererRegistry.register(FirstMod.SCREEN_BLOCK_ENTITY, ScreenBlockEntityRenderer::new);
-		WorldRenderEvents.AFTER_ENTITIES.register(context -> CinemaPlayer.presentActiveFrame());
+		WorldRenderEvents.AFTER_ENTITIES.register(context -> {
+			AvReceiverPlaybackManager.presentFrames();
+			CinemaPlayer.presentActiveFrame();
+		});
+		ClientTickEvents.END_CLIENT_TICK.register(AvReceiverPlaybackManager::tick);
 
 		if (System.getProperty("firstmod.spike.audio") != null
 			|| System.getProperty("firstmod.spike.video") != null

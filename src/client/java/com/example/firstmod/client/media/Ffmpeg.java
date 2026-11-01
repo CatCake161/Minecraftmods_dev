@@ -183,6 +183,20 @@ public final class Ffmpeg {
 		return new VideoInfo(width, height, frameRate, codec, pixelFormat, transfer, primaries, space);
 	}
 
+	public static double probeDuration(Path file) throws IOException {
+		String output = runCapture(List.of(
+			ffprobe().toString(),
+			"-v", "error",
+			"-show_entries", "format=duration",
+			"-of", "default=noprint_wrappers=1:nokey=1",
+			file.toString()), 30);
+		try {
+			return Math.max(0.0, Double.parseDouble(output.trim()));
+		} catch (NumberFormatException e) {
+			return 0.0;
+		}
+	}
+
 	private static int parseInt(String value, int fallback) {
 		try {
 			return Integer.parseInt(value.trim());

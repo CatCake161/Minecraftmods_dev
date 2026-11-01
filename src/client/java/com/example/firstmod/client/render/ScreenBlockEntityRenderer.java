@@ -1,6 +1,8 @@
 package com.example.firstmod.client.render;
 
 import com.example.firstmod.block.entity.ScreenBlockEntity;
+import com.example.firstmod.client.media.AvReceiverPlayback;
+import com.example.firstmod.client.media.AvReceiverPlaybackManager;
 import com.example.firstmod.client.media.CinemaPlayer;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
@@ -32,6 +34,8 @@ public final class ScreenBlockEntityRenderer implements BlockEntityRenderer<Scre
 		ResourceLocation.withDefaultNamespace("textures/misc/white.png");
 	private static final float VIDEO_SURFACE_OFFSET = 0.010f;
 	private static final float OVERLAY_SURFACE_OFFSET = 0.030f;
+	private static final float BASE_ASPECT = 16.0f / 9.0f;
+	private static final boolean LEGACY_SPIKE = System.getProperty("firstmod.spike.video") != null;
 	private static long lastDebugLog;
 
 	public ScreenBlockEntityRenderer(BlockEntityRendererProvider.Context context) {
@@ -40,10 +44,6 @@ public final class ScreenBlockEntityRenderer implements BlockEntityRenderer<Scre
 	@Override
 	public void render(ScreenBlockEntity blockEntity, float tickDelta, PoseStack poseStack,
 					   MultiBufferSource bufferSource, int light, int overlay) {
-		CinemaPlayer player = CinemaPlayer.active();
-		if (player == null || player.width() <= 0 || player.height() <= 0) {
-			return;
-		}
 		Level level = blockEntity.getLevel();
 		if (level == null) {
 			return;
@@ -54,12 +54,32 @@ public final class ScreenBlockEntityRenderer implements BlockEntityRenderer<Scre
 			return;
 		}
 
-		ProjectorOptics optics = ProjectorOptics.forScreen(level, geometry, player.aspect());
-		if (optics == null) {
+		// Pair the screen with its projector first. The final optics are
+		// re-resolved with the receiver player's real aspect once the routing
+		// lookup succeeds.
+		ProjectorOptics probe = ProjectorOptics.forScreen(level, geometry, BASE_ASPECT);
+		if (probe == null) {
 			// No paired projector means the screen is dark. Do not fall back to a
 			// flat video surface: that made the picture linger after the projector
 			// was broken and appeared on screens that were never being projected.
 			return;
+		}
+		AvReceiverPlayback playback = AvReceiverPlaybackManager.playbackAt(
+			probe.projector().receiverPos());
+		CinemaPlayer player = playback == null ? null : playback.player();
+		if (player == null && LEGACY_SPIKE && probe.projector().receiverPos() == null) {
+			player = CinemaPlayer.active();
+		}
+		if (player == null || player.width() <= 0 || player.height() <= 0) {
+			return;
+		}
+
+		ProjectorOptics optics = probe;
+		if (Math.abs(player.aspect() - BASE_ASPECT) > 0.001f) {
+			optics = ProjectorOptics.resolve(level, probe.projector(), player.aspect());
+			if (optics == null) {
+				return;
+			}
 		}
 		if (System.getProperty("firstmod.spike.projector.debug") != null) {
 			long now = System.nanoTime();
@@ -74,13 +94,14 @@ public final class ScreenBlockEntityRenderer implements BlockEntityRenderer<Scre
 
 		if (optics.brightness() > 0.01f) {
 			player.setFocusBlur(optics.blurLod());
-			drawProjected(bufferSource, poseStack, geometry, optics);
+			drawProjected(bufferSource, poseStack, geometry, optics, player.textureId());
 			drawAmbientWash(bufferSource, poseStack, geometry, optics.ambientWash());
 		}
 	}
 
 	private static void drawProjected(MultiBufferSource bufferSource, PoseStack poseStack,
-									  ScreenGeometry geometry, ProjectorOptics optics) {
+									  ScreenGeometry geometry, ProjectorOptics optics,
+									  ResourceLocation textureId) {
 		Vec3 right = geometry.right();
 		Vec3 up = geometry.up();
 		Vec3 normal = geometry.normal();
@@ -91,7 +112,7 @@ public final class ScreenBlockEntityRenderer implements BlockEntityRenderer<Scre
 		int brightness = Math.round(255.0f * Math.max(0.0f, Math.min(1.0f, gain)));
 		float nx = (float) normal.x;
 		float nz = (float) normal.z;
-		RenderType renderType = RenderType.entityCutoutNoCull(CinemaPlayer.TEXTURE_ID);
+		RenderType renderType = RenderType.entityCutoutNoCull(textureId);
 		VertexConsumer consumer = bufferSource.getBuffer(renderType);
 
 		for (int row = 0; row < geometry.height(); row++) {

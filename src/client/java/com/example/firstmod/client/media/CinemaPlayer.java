@@ -22,17 +22,18 @@ import java.util.concurrent.atomic.AtomicReference;
  * only receive its audio channels.
  */
 public final class CinemaPlayer implements AutoCloseable {
-	public static final ResourceLocation TEXTURE_ID = FirstMod.id("cinema_video");
+	public static final ResourceLocation LEGACY_TEXTURE_ID = FirstMod.id("cinema_video");
 	private static final double MAX_LATE_SECONDS = 0.100;
 	private static final double PRESENT_LEAD_SECONDS = 0.005;
 
 	private static CinemaPlayer active;
-	private static CinemaAudioEngine sharedAudio;
+	private static CinemaAudioEngine legacyAudio;
 
 	private final Minecraft client;
 	private final Path file;
 	private final double startSeconds;
-	private final CinemaVideoTexture texture = new CinemaVideoTexture();
+	private final ResourceLocation textureId;
+	private final CinemaVideoTexture texture;
 	private final CinemaAudioEngine audio;
 	private final StreamingAudioDecoder audioDecoder;
 	private final BlockingQueue<VideoFrame> frames = new ArrayBlockingQueue<>(8);
@@ -58,17 +59,17 @@ public final class CinemaPlayer implements AutoCloseable {
 	private long pausedAtNanos;
 	private long pausedTotalNanos;
 
-	private CinemaPlayer(Minecraft client, Path file, double startSeconds) throws IOException {
+	private CinemaPlayer(Minecraft client, Path file, double startSeconds, CinemaAudioEngine audio,
+						 ResourceLocation textureId) throws IOException {
 		Ffmpeg.ffmpeg();
 		this.client = client;
 		this.file = file;
 		this.startSeconds = startSeconds;
-		if (sharedAudio == null) {
-			sharedAudio = new CinemaAudioEngine();
-		}
-		this.audio = sharedAudio;
+		this.audio = audio;
+		this.textureId = textureId;
+		this.texture = new CinemaVideoTexture();
 		this.audioDecoder = new StreamingAudioDecoder(startSeconds, () -> !running.get());
-		client.getTextureManager().register(TEXTURE_ID, texture);
+		client.getTextureManager().register(textureId, texture);
 		videoThread = new Thread(this::decodeVideo, "cinema-video");
 		videoThread.setDaemon(true);
 		audioThread = new Thread(this::decodeAudio, "cinema-audio-decode");
@@ -81,11 +82,30 @@ public final class CinemaPlayer implements AutoCloseable {
 
 	public static CinemaPlayer play(Minecraft client, Path file, double startSeconds) throws IOException {
 		if (!Files.isRegularFile(file)) {
-			throw new IllegalArgumentException("not a local media file: " + file);
+			throw new IllegalArgumentException("not a local media file: " + file.getFileName());
 		}
 		stopActive(client);
-		CinemaPlayer player = new CinemaPlayer(client, file, Math.max(0.0, startSeconds));
+		if (legacyAudio == null) {
+			legacyAudio = new CinemaAudioEngine();
+		}
+		CinemaPlayer player = new CinemaPlayer(client, file, Math.max(0.0, startSeconds),
+			legacyAudio, LEGACY_TEXTURE_ID);
 		active = player;
+		player.start();
+		return player;
+	}
+
+	/**
+	 * Opens an independent player for an AV receiver. The caller owns the audio
+	 * engine and texture id, so several receivers can later get independent
+	 * pipelines without sharing static state.
+	 */
+	public static CinemaPlayer open(Minecraft client, Path file, double startSeconds,
+									CinemaAudioEngine audio, ResourceLocation textureId) throws IOException {
+		if (!Files.isRegularFile(file)) {
+			throw new IllegalArgumentException("not a local media file: " + file.getFileName());
+		}
+		CinemaPlayer player = new CinemaPlayer(client, file, Math.max(0.0, startSeconds), audio, textureId);
 		player.start();
 		return player;
 	}
@@ -119,7 +139,7 @@ public final class CinemaPlayer implements AutoCloseable {
 	}
 
 	public ResourceLocation textureId() {
-		return TEXTURE_ID;
+		return textureId;
 	}
 
 	public int width() {
@@ -151,11 +171,14 @@ public final class CinemaPlayer implements AutoCloseable {
 		audio.start();
 		videoThread.start();
 		audioThread.start();
-		FirstMod.LOGGER.info("cinema player: started {}", file);
+		FirstMod.LOGGER.info("cinema player: started {}", file.getFileName());
 	}
 
-	public void togglePause() {
-		paused = !paused;
+	public void setPaused(boolean value) {
+		if (paused == value) {
+			return;
+		}
+		paused = value;
 		audio.setPaused(paused);
 		if (audioUnavailable) {
 			long now = System.nanoTime();
@@ -167,6 +190,25 @@ public final class CinemaPlayer implements AutoCloseable {
 			}
 		}
 		FirstMod.LOGGER.info("cinema player: {}", paused ? "paused" : "resumed");
+	}
+
+	public void togglePause() {
+		setPaused(!paused);
+	}
+
+	/** Current media position in seconds, from the audio clock or the wall clock. */
+	public double positionSeconds() {
+		if (audioUnavailable) {
+			return wallClockTarget();
+		}
+		if (!audio.isStarted()) {
+			return startSeconds;
+		}
+		return audio.audiblePtsSeconds();
+	}
+
+	public void setVolume(float volume, boolean muted) {
+		audio.setMasterGain(volume, muted);
 	}
 
 	/**
@@ -317,7 +359,7 @@ public final class CinemaPlayer implements AutoCloseable {
 		while ((queued = frames.poll()) != null) {
 			queued.release();
 		}
-		client.getTextureManager().release(TEXTURE_ID);
+		client.getTextureManager().release(textureId);
 		FirstMod.LOGGER.info("cinema player: stopped (presented={}, dropped={})", presented, dropped);
 	}
 }
