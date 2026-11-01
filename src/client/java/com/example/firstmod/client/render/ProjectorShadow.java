@@ -14,6 +14,7 @@ import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.CollisionContext;
 import org.joml.Matrix4f;
 
 import java.util.HashMap;
@@ -77,7 +78,7 @@ public final class ProjectorShadow {
 					.add(right.scale(u * screen.width()))
 					.add(up.scale(v * screen.height()));
 				HitResult hit = level.clip(new ClipContext(lens, point,
-					ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, (net.minecraft.world.entity.Entity) null));
+					ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, CollisionContext.empty()));
 				boolean shadowed = hit.getType() != HitResult.Type.MISS
 					&& hit.getLocation().distanceToSqr(lens) < point.distanceToSqr(lens) - SHADOW_THRESHOLD;
 				cells[row * COLS + col] = shadowed;
