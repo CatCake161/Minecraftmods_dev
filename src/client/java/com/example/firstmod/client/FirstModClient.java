@@ -133,7 +133,8 @@ public class FirstModClient implements ClientModInitializer {
 		WorldRenderEvents.AFTER_ENTITIES.register(context -> CinemaPlayer.presentActiveFrame());
 
 		if (System.getProperty("firstmod.spike.audio") != null
-			|| System.getProperty("firstmod.spike.video") != null) {
+			|| System.getProperty("firstmod.spike.video") != null
+			|| isManualSpikeTest()) {
 			ClientTickEvents.END_CLIENT_TICK.register(client -> {
 				spikeFocusTicks++;
 				if (isManualSpikeTest() && spikeWindowFocused) {
@@ -164,7 +165,8 @@ public class FirstModClient implements ClientModInitializer {
 		}
 
 		if (System.getProperty("firstmod.spike.audio") != null
-			|| System.getProperty("firstmod.spike.video") != null) {
+			|| System.getProperty("firstmod.spike.video") != null
+			|| isManualSpikeTest()) {
 			ClientTickEvents.END_CLIENT_TICK.register(client -> {
 				if (client.level == null || client.player == null) {
 					return;
