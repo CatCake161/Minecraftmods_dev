@@ -20,13 +20,13 @@ public final class CinemaHelpCommand {
 			"§7翻页：/cinema_help <页码>，或 /cinema help <页码>"
 		),
 		List.of(
-			"§6Cinema 使用帮助 §7(2/7) §f投影仪（客户端测试）",
+			"§6Cinema 使用帮助 §7(2/7) §f投影仪（客户端）",
 			"§e/cinema_projector_client info§f  查看镜头/配对屏幕/灯泡",
 			"§e... throw <0.6-4.0>§f  设置投掷比；§e... throw auto§f 自动适配屏幕",
 			"§e... focus <0.25-64>§f  手动焦距（米）；§e... focus auto§f 对焦屏幕",
 			"§e... keystone <垂直角度> <水平角度>§f  梯形校正，范围 -30..30",
 			"§e... brightness <0.05-2.0>§f  亮度；>1 为高亮过驱；§e... power§f  开关灯泡",
-			"§7只改最近的客户端投影仪，适合 /cinema_test_scene 搭出来的场景。"
+			"§7只改最近的客户端投影仪。"
 		),
 		List.of(
 			"§6Cinema 使用帮助 §7(3/7) §f投影仪（服务端/真实方块）",
@@ -38,29 +38,26 @@ public final class CinemaHelpCommand {
 			"§7修改会同步给 LAN 客户端；命令作用于 48 格内最近的投影仪。"
 		),
 		List.of(
-			"§6Cinema 使用帮助 §7(4/7) §f测试场景",
-			"§e/cinema_test_scene§f  在当前视角前方搭 4×3 屏幕 + 后方投影仪",
-			"§e/cinema_test_scene clear§f  删除本局测试场景、投影仪和玻璃遮挡物",
-			"§e/time set midnight§f  测试夜间环境光洗白",
-			"§e/time set noon§f  回到正午",
-			"§e/gamerule doDaylightCycle true§f  恢复自动时间（测试环境默认关闭）"
+			"§6Cinema 使用帮助 §7(4/7) §f屏幕与配对",
+			"§7屏幕由同朝向、同平面的屏幕方块组成，最大 16×16。",
+			"§7投影仪会自动寻找前方 48 格内最近的屏幕；屏幕必须朝向投影仪。",
+			"§7光路被不透明方块挡住时会在屏幕上产生阴影。",
+			"§7拆掉投影仪后屏幕保持黑屏；重新放回投影仪即可恢复。",
+			"§e/time set midnight§f  测试夜间环境光；§e/time set noon§f  回到正午"
 		),
 		List.of(
 			"§6Cinema 使用帮助 §7(5/7) §f手动 / 自动测试",
-			"§7手动模式（不截图、不退出、不锁定玩家）：",
+			"§7手动模式（不退出、不锁定玩家）：",
 			"§f-Dfirstmod.spike.video=<绝对路径>",
-			"§f-Dfirstmod.spike.blocks=true -Dfirstmod.spike.manual=true",
-			"§7自动模式：把 manual=true 换成 exit=true，截图后退出。",
-			"§7投影仪测试附加属性：-Dfirstmod.spike.projector.shadow=true",
-			"§7测试环境固定出生点朝南、正午、晴天、无动物。"
+			"§f-Dfirstmod.spike.manual=true",
+			"§7自动模式：把 manual=true 换成 exit=true。",
+			"§7测试环境会固定时间、天气、玩家位置，并关闭动物生成。"
 		),
 		List.of(
-			"§6Cinema 使用帮助 §7(6/7) §f常见问题 / 旧测试命令",
+			"§6Cinema 使用帮助 §7(6/7) §f常见问题",
 			"§7视频停在最后一帧：/cinema_seek 0 重播。",
 			"§7屏幕没画面：确认屏幕正面朝向投影仪、48 格内、光路无遮挡。",
-			"§7真实方块用 /cinema_projector；测试场景用 /cinema_projector_client。",
-			"§e/cinema_visual_spike on|off|screenshot§f  独立的世界空间测试画面",
-			"§7注意：visual_spike 不依赖屏幕/投影仪，测方块投影时请先 /cinema_visual_spike off。",
+			"§7真实方块用 /cinema_projector；客户端调参用 /cinema_projector_client。",
 			"§e/cinema_audio_spike§f  运行 5.1/OpenAL 测试",
 			"§7找不到新命令时重启客户端；帮助命令本身不会修改世界。"
 		),
@@ -70,7 +67,7 @@ public final class CinemaHelpCommand {
 			"§f<game>/mods/ffmpeg/bin/ffmpeg.exe",
 			"§f<game>/mods/ffmpeg/bin/ffprobe.exe",
 			"§7也可以放 mods/ffmpeg.exe，或用 -Dfirstmod.ffmpeg.path=...",
-			"§74K 默认降到 1080p：-Dfirstmod.video.maxHeight=0 保留原生分辨率。",
+			"§7HDR 默认 720p、SDR 默认 1080p：-Dfirstmod.video.maxHeight=0 保留原生。",
 			"§7硬件解码默认 auto：-Dfirstmod.ffmpeg.hwaccel=none 可关闭。"
 		)
 	);

@@ -148,10 +148,11 @@ public final class ProjectorOptics {
 			: distance;
 		double focusError = Math.abs(distance - focusDistance);
 		float blurLod = (float) Math.min(3.0, Math.max(0.0, (focusError - 0.35) * 1.1));
-		float ambientWash = ambientWash(level, screen);
+		float brightness = projector.opticalBrightness();
+		float ambientWash = ambientWash(level, screen) / Math.max(1.0f, brightness);
 
 		return new ProjectorOptics(projector, screen, lens, center, view, projection, throwRatio,
-			focusDistance, focusError, blurLod, projector.opticalBrightness(), ambientWash);
+			focusDistance, focusError, blurLod, brightness, ambientWash);
 	}
 
 	private static ScreenGeometry findScreen(Level level, ProjectorBlockEntity projector) {
@@ -233,8 +234,8 @@ public final class ProjectorOptics {
 		double daylight = Math.max(0.0, Math.min(1.0, 1.0 - level.getSkyDarken() / 11.0));
 		double skyNorm = sky / 15.0;
 		double blockNorm = block / 15.0;
-		double wash = 0.03 + 0.23 * skyNorm * skyNorm * daylight + 0.12 * blockNorm * blockNorm;
-		return (float) Math.min(0.42, wash);
+		double wash = 0.02 + 0.16 * skyNorm * skyNorm * daylight + 0.08 * blockNorm * blockNorm;
+		return (float) Math.min(0.28, wash);
 	}
 
 	public ProjectorBlockEntity projector() {

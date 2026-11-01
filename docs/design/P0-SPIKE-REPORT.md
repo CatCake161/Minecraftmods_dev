@@ -2,6 +2,7 @@
 
 > 注意：**主模组已迁移到外部 FFmpeg 进程**（用户把 gyan.dev full build 放到 `mods/ffmpeg/bin/`）。
 > 本文的 JavaCV 数据是 P0 历史对比；spike 工程仍可单独用 JavaCV 运行。
+> 注意：`/cinema_visual_spike`、`/cinema_test_scene` 已在后续版本删除；本文保留历史命令用于复现 P0/P0.5。
 
 这是影院系统的独立技术验证工程，不参与模组构建，也不修改 `src/` 下的模组代码。
 扬声器/投影仪的完整设计取舍和 P0.5 验证矩阵见 [P05-DESIGN.md](P05-DESIGN.md)。

@@ -2,7 +2,6 @@ package com.example.firstmod.client.render;
 
 import com.example.firstmod.block.entity.ScreenBlockEntity;
 import com.example.firstmod.client.media.CinemaPlayer;
-import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.minecraft.client.renderer.MultiBufferSource;
@@ -31,8 +30,8 @@ import java.util.List;
 public final class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBlockEntity> {
 	private static final ResourceLocation WHITE =
 		ResourceLocation.withDefaultNamespace("textures/misc/white.png");
-	private static final float VIDEO_SURFACE_OFFSET = 0.002f;
-	private static final float OVERLAY_SURFACE_OFFSET = 0.004f;
+	private static final float VIDEO_SURFACE_OFFSET = 0.010f;
+	private static final float OVERLAY_SURFACE_OFFSET = 0.030f;
 	private static long lastDebugLog;
 
 	public ScreenBlockEntityRenderer(BlockEntityRendererProvider.Context context) {
@@ -91,45 +90,29 @@ public final class ScreenBlockEntityRenderer implements BlockEntityRenderer<Scre
 		Matrix4f pose = poseStack.last().pose();
 		float gain = optics.brightness();
 		int brightness = Math.round(255.0f * Math.max(0.0f, Math.min(1.0f, gain)));
-		boolean overdrive = gain > 1.001f;
 		float nx = (float) normal.x;
 		float nz = (float) normal.z;
 		RenderType renderType = RenderType.entityCutoutNoCull(CinemaPlayer.TEXTURE_ID);
 		VertexConsumer consumer = bufferSource.getBuffer(renderType);
-		if (overdrive) {
-			// Vertex colors are unsigned bytes and cannot exceed 1.0. Use the
-			// shader's float ColorModulator for the >1 "high lamp" range, then
-			// flush immediately so the multiplier does not leak to other draws.
-			RenderSystem.setShaderColor(gain, gain, gain, 1.0f);
-		}
 
-		try {
-			for (int row = 0; row < geometry.height(); row++) {
-				for (int col = 0; col < geometry.width(); col++) {
-					Vec3 p0 = base.add(right.scale(col)).add(up.scale(row));
-					Vec3 p1 = p0.add(right);
-					Vec3 p2 = p1.add(up);
-					Vec3 p3 = p0.add(up);
+		for (int row = 0; row < geometry.height(); row++) {
+			for (int col = 0; col < geometry.width(); col++) {
+				Vec3 p0 = base.add(right.scale(col)).add(up.scale(row));
+				Vec3 p1 = p0.add(right);
+				Vec3 p2 = p1.add(up);
+				Vec3 p3 = p0.add(up);
 
-					List<ProjectedPoint> polygon = new ArrayList<>(4);
-					addPoint(polygon, p0, master, optics);
-					addPoint(polygon, p1, master, optics);
-					addPoint(polygon, p2, master, optics);
-					addPoint(polygon, p3, master, optics);
+				List<ProjectedPoint> polygon = new ArrayList<>(4);
+				addPoint(polygon, p0, master, optics);
+				addPoint(polygon, p1, master, optics);
+				addPoint(polygon, p2, master, optics);
+				addPoint(polygon, p3, master, optics);
 
-					polygon = clip(polygon, false, true, 0.0f);
-					polygon = clip(polygon, false, false, 1.0f);
-					polygon = clip(polygon, true, true, 0.0f);
-					polygon = clip(polygon, true, false, 1.0f);
-					emitPolygon(consumer, pose, polygon, brightness, nx, nz);
-				}
-			}
-		} finally {
-			if (overdrive) {
-				if (bufferSource instanceof MultiBufferSource.BufferSource batch) {
-					batch.endBatch(renderType);
-				}
-				RenderSystem.setShaderColor(1.0f, 1.0f, 1.0f, 1.0f);
+				polygon = clip(polygon, false, true, 0.0f);
+				polygon = clip(polygon, false, false, 1.0f);
+				polygon = clip(polygon, true, true, 0.0f);
+				polygon = clip(polygon, true, false, 1.0f);
+				emitPolygon(consumer, pose, polygon, brightness, nx, nz);
 			}
 		}
 	}

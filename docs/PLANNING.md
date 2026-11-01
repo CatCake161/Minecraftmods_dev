@@ -49,10 +49,10 @@
 
 默认参数：
 
-- `-Dfirstmod.video.maxHeight=1080`
+- `-Dfirstmod.video.maxHeight=720`（HDR）/ `1080`（SDR）
 - `-Dfirstmod.ffmpeg.hwaccel=auto`
 - `-Dfirstmod.ffmpeg.path=...` 可覆盖 FFmpeg 位置
-- HDR10/HLG 自动 `zscale + tonemap` 到 BT.709
+- HDR10/HLG 自动 `zscale + tonemap` 到 BT.709；HDR 默认 720p
 
 ### 3.2 屏幕与投影仪
 
@@ -60,7 +60,7 @@
 - `ScreenGeometry`：扫描同朝向、同平面的连续矩形；master 是观众左/下角。
 - `ProjectorBlock` / `ProjectorBlockEntity`：投掷比、焦距、梯形、亮度、灯泡状态。
 - `ProjectorOptics`：自动找屏幕；镜头 view/projection；逐块 UV 投影与裁剪。
-- `ProjectorShadow`：32×18 镜头→屏幕 raycast shadow mask。
+- `ProjectorShadow`：48×27 镜头→屏幕 raycast，上传为遮罩纹理（线性过滤）。
 - 对焦：mipmap + `GL_TEXTURE_LOD_BIAS`；仅在需要模糊时生成 mipmap。
 - 环境光洗白：屏幕位置天空光/方块光 + 时间。
 - 屏幕没有配对投影仪时保持黑屏，不做 flat fallback。
@@ -70,10 +70,10 @@
 - 游戏内帮助：`/cinema_help [页码]` / `/cinema help [页码]`
 - 客户端投影仪调参：`/cinema_projector_client`
 - 服务端投影仪调参：`/cinema_projector`
-- 测试场景：`/cinema_test_scene`、`/cinema_test_scene clear`
-- 手动模式：`-Dfirstmod.spike.manual=true`，不截图、不退出、不锁定玩家
-- 自动模式：`-Dfirstmod.spike.exit=true`，截图后退出
+- 手动模式：`-Dfirstmod.spike.manual=true`，不退出、不锁定玩家
+- 自动模式：`-Dfirstmod.spike.exit=true`，测试结束后退出
 - 自动测试固定出生点/朝南、正午、晴天、无动物
+- 测试用屏幕/投影仪由玩家自行放置；不再提供自动测试场景命令
 
 ## 4. 里程碑
 
@@ -85,7 +85,7 @@
 | P0.5-C | 真实 720p30 + 5.1、有界队列、seek、预热 | ✅ |
 | P1-1 | 屏幕方块、多方块扫描、master 渲染 | ✅ |
 | P1-2 | 投影仪镜头、投掷比、对焦、梯形、阴影、环境光、灯泡 | ✅ 第一版 |
-| P1-3 | 投影仪 GUI、风扇声、镜头光晕、过热 | ⬜ |
+| P1-3 | 投影仪 GUI（物理模拟开关）、风扇声、镜头光晕 | ⬜ |
 | P1-4 | AV Receiver + Speaker + Seat | ⬜ |
 | P1-5 | 每屏独立播放器、LAN 同步 | ⬜ |
 | P2 | 任意投影面、真实光照、HRTF、自动校准 | ⬜ |
@@ -95,7 +95,7 @@
 1. **构建和单元级验证**可以自动跑；涉及动态画面、对焦、梯形、阴影、环境光、HDR 的最终效果，交给用户在游戏内检查。
 2. 自动测试必须固定时间、天气、玩家位置/朝向，并关闭动物生成。
 3. 手动测试使用 `firstmod.spike.manual=true`，让玩家自由移动和调参。
-4. 测试场景和障碍物必须是可清理的；不使用不可见的 barrier 作为长期遮挡物。
+4. 测试用屏幕/投影仪由玩家放置；不要留下自动生成的测试方块或不可见 barrier。
 5. 日志中记录 codec、源/输出分辨率、color metadata、解码 fps、丢帧数；但日志不提交到仓库。
 
 ## 6. 已知风险
@@ -104,7 +104,9 @@
 - HDR tone mapping 依赖 gyan.dev full build 的 `zscale`/`tonemap`；不同版本可能有差异。
 - 无音轨视频使用墙钟，长时间播放可能存在漂移。
 - 当前所有屏幕共用一个 `CinemaPlayer`；多屏/多投影仪需要重新设计。
-- 投影仪和屏幕配对依赖附近已加载区块，跨区块/远距离需要显式配对或控制器。
+- 投影仪和屏幕配对依赖附近已加载区块，跨区块/远距离需要显式配对工具（线材/配对器）。
+- 未来 GUI 必须提供物理模拟（对焦/梯形/阴影/环境光/灯泡）的独立开关。
+- 未来需要远程控制遥控器工具，用于在观众席调整投影仪/接收器。
 - 资源重载、设备切换、两小时长片内存尚未完整测试。
 - FFmpeg 是 GPL/LGPL 混合构建，发布前需要确认许可和分发方式。
 

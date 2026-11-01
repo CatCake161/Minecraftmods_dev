@@ -53,7 +53,7 @@ public final class VideoDecoder implements AutoCloseable {
 		frameRate = info.frameRate() > 1.0 ? info.frameRate() : 30.0;
 		this.startSeconds = Math.max(0.0, startSeconds);
 
-		int maxHeight = Integer.getInteger("firstmod.video.maxHeight", 1080);
+		int maxHeight = Integer.getInteger("firstmod.video.maxHeight", info.isHdr() ? 720 : 1080);
 		int outHeight = info.height();
 		int outWidth = info.width();
 		if (maxHeight > 0 && outHeight > maxHeight) {
