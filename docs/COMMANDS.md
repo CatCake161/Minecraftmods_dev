@@ -35,7 +35,7 @@
 | `/cinema_projector_client focus <0.25-64>` | 手动焦距（米） |
 | `/cinema_projector_client focus auto` | 自动对焦到配对屏幕 |
 | `/cinema_projector_client keystone <垂直角度> <水平角度>` | 梯形校正，-30..30 |
-| `/cinema_projector_client brightness <0.05-2.0>` | 亮度；>1 进入高亮过驱，会降低环境光洗白以提高对比度 |
+| `/cinema_projector_client brightness <0.01-1.0>` | 亮度 |
 | `/cinema_projector_client power` | 开关灯泡（走预热/冷却） |
 
 ## 3. 投影仪（服务端 / 真实方块）
@@ -49,14 +49,13 @@
 | `/cinema_projector focus auto` | 自动对焦 |
 | `/cinema_projector focus <0.25-64>` | 手动焦距（米） |
 | `/cinema_projector keystone <垂直角度> <水平角度>` | 梯形校正 |
-| `/cinema_projector brightness <0.05-2.0>` | 亮度/高亮过驱 |
+| `/cinema_projector brightness <0.01-1.0>` | 亮度 |
 | `/cinema_projector power` | 开关灯泡 |
 
 ## 4. 屏幕与配对
 
 - 屏幕由同朝向、同平面的屏幕方块组成，最大 16×16。
 - 投影仪自动寻找前方 48 格内最近的屏幕；屏幕正面必须朝向投影仪。
-- 镜头到屏幕的光路被不透明方块挡住时会产生阴影。
 - 拆掉投影仪后屏幕保持黑屏；重新放回投影仪后恢复。
 - `/time set midnight` / `/time set noon` 可测试环境光洗白。
 

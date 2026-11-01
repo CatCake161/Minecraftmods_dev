@@ -76,7 +76,6 @@ public final class ScreenBlockEntityRenderer implements BlockEntityRenderer<Scre
 			player.setFocusBlur(optics.blurLod());
 			drawProjected(bufferSource, poseStack, geometry, optics);
 		}
-		ProjectorShadow.render(level, poseStack, bufferSource, optics);
 		drawAmbientWash(bufferSource, poseStack, geometry, optics.ambientWash());
 	}
 

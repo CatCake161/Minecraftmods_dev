@@ -149,7 +149,7 @@ public final class ProjectorOptics {
 		double focusError = Math.abs(distance - focusDistance);
 		float blurLod = (float) Math.min(3.0, Math.max(0.0, (focusError - 0.35) * 1.1));
 		float brightness = projector.opticalBrightness();
-		float ambientWash = ambientWash(level, screen) / Math.max(1.0f, brightness);
+		float ambientWash = ambientWash(level, screen);
 
 		return new ProjectorOptics(projector, screen, lens, center, view, projection, throwRatio,
 			focusDistance, focusError, blurLod, brightness, ambientWash);

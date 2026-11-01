@@ -7,7 +7,6 @@ import com.example.firstmod.client.command.ClientProjectorCommand;
 import com.example.firstmod.client.media.CinemaPlayer;
 import com.example.firstmod.client.media.CinemaPrewarm;
 import com.example.firstmod.client.render.ProjectorOptics;
-import com.example.firstmod.client.render.ProjectorShadow;
 import com.example.firstmod.client.render.ScreenBlockEntityRenderer;
 import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
@@ -119,12 +118,10 @@ public class FirstModClient implements ClientModInitializer {
 		ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
 			CinemaPlayer.stopActive(client);
 			ProjectorOptics.clearCache();
-			ProjectorShadow.clearCache();
 		});
 		ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
 			CinemaPlayer.stopActive(client);
 			ProjectorOptics.clearCache();
-			ProjectorShadow.clearCache();
 			spikeEnvironmentPrepared = false;
 			fixedPlayerPos = null;
 		});

@@ -3,7 +3,6 @@ package com.example.firstmod.client.command;
 import com.example.firstmod.block.entity.ProjectorBlockEntity;
 import com.example.firstmod.client.media.CinemaPlayer;
 import com.example.firstmod.client.render.ProjectorOptics;
-import com.example.firstmod.client.render.ProjectorShadow;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.DoubleArgumentType;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
@@ -201,6 +200,5 @@ public final class ClientProjectorCommand {
 
 	private static void clearCaches() {
 		ProjectorOptics.clearCache();
-		ProjectorShadow.clearCache();
 	}
 }

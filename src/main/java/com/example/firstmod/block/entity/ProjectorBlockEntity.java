@@ -30,8 +30,8 @@ public class ProjectorBlockEntity extends BlockEntity {
 	public static final double MAX_FOCUS_DISTANCE = 64.0;
 	public static final double MIN_KEYSTONE_DEGREES = -30.0;
 	public static final double MAX_KEYSTONE_DEGREES = 30.0;
-	public static final double MIN_BRIGHTNESS = 0.05;
-	public static final double MAX_BRIGHTNESS = 2.0;
+	public static final double MIN_BRIGHTNESS = 0.01;
+	public static final double MAX_BRIGHTNESS = 1.0;
 
 	private static final double DEFAULT_THROW_RATIO = 1.75;
 	private static final float WARMUP_PER_TICK = 1.0f / 80.0f; // 4 s to full lamp
