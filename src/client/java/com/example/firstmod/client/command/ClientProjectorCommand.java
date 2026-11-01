@@ -38,7 +38,7 @@ public final class ClientProjectorCommand {
 						projector, videoAspect());
 					String paired = optics == null ? "none" : optics.screen().master().toShortString();
 					context.getSource().sendFeedback(Component.literal(String.format(
-						"client projector %s: throw=%.2f focus=%s keystone=%.1f/%.1f brightness=%.2f power=%s screen=%s",
+						"client projector %s: throw=%.2f focus=%s keystone=%.1f/%.1f brightness=%.2f wash=%.2f power=%s screen=%s",
 						projector.getBlockPos(),
 						projector.throwRatio(),
 						projector.focusDistance() < 0.0
@@ -47,6 +47,7 @@ public final class ClientProjectorCommand {
 						projector.keystoneVerticalDegrees(),
 						projector.keystoneHorizontalDegrees(),
 						projector.brightness(),
+						projector.ambientWash(),
 						projector.isPowered() ? "on" : "off",
 						paired)));
 					return 1;
@@ -142,6 +143,20 @@ public final class ClientProjectorCommand {
 						clearCaches();
 						context.getSource().sendFeedback(Component.literal(
 							String.format("client projector brightness = %.2f", projector.brightness())));
+						return 1;
+					})))
+			.then(ClientCommandManager.literal("wash")
+				.then(ClientCommandManager.argument("value", DoubleArgumentType.doubleArg(
+						ProjectorBlockEntity.MIN_AMBIENT_WASH, ProjectorBlockEntity.MAX_AMBIENT_WASH))
+					.executes(context -> {
+						ProjectorBlockEntity projector = nearest(context.getSource());
+						if (projector == null) {
+							return noProjector(context.getSource());
+						}
+						projector.setAmbientWash(DoubleArgumentType.getDouble(context, "value"));
+						clearCaches();
+						context.getSource().sendFeedback(Component.literal(
+							String.format("client projector ambient wash = %.2f", projector.ambientWash())));
 						return 1;
 					})))
 			.then(ClientCommandManager.literal("power")

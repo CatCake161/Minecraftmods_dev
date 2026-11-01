@@ -8,7 +8,6 @@ import net.minecraft.core.Direction;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.phys.Vec3;
@@ -149,7 +148,7 @@ public final class ProjectorOptics {
 		double focusError = Math.abs(distance - focusDistance);
 		float blurLod = (float) Math.min(3.0, Math.max(0.0, (focusError - 0.35) * 1.1));
 		float brightness = projector.opticalBrightness();
-		float ambientWash = ambientWash(level, screen);
+		float ambientWash = (float) projector.ambientWash();
 
 		return new ProjectorOptics(projector, screen, lens, center, view, projection, throwRatio,
 			focusDistance, focusError, blurLod, brightness, ambientWash);
@@ -225,17 +224,6 @@ public final class ProjectorOptics {
 		float warpedU = (float) (0.5 + (u - 0.5) * (1.0 + vertical * (v - 0.5) * 2.0));
 		float warpedV = (float) (0.5 + (v - 0.5) * (1.0 + horizontal * (u - 0.5) * 2.0));
 		return new float[]{warpedU, warpedV};
-	}
-
-	private static float ambientWash(Level level, ScreenGeometry screen) {
-		BlockPos pos = BlockPos.containing(screen.center());
-		int sky = level.getBrightness(LightLayer.SKY, pos);
-		int block = level.getBrightness(LightLayer.BLOCK, pos);
-		double daylight = Math.max(0.0, Math.min(1.0, 1.0 - level.getSkyDarken() / 11.0));
-		double skyNorm = sky / 15.0;
-		double blockNorm = block / 15.0;
-		double wash = 0.02 + 0.16 * skyNorm * skyNorm * daylight + 0.08 * blockNorm * blockNorm;
-		return (float) Math.min(0.28, wash);
 	}
 
 	public ProjectorBlockEntity projector() {

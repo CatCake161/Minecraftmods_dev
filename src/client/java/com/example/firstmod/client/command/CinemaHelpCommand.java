@@ -25,7 +25,7 @@ public final class CinemaHelpCommand {
 			"§e... throw <0.6-4.0>§f  设置投掷比；§e... throw auto§f 自动适配屏幕",
 			"§e... focus <0.25-64>§f  手动焦距（米）；§e... focus auto§f 对焦屏幕",
 			"§e... keystone <垂直角度> <水平角度>§f  梯形校正，范围 -30..30",
-			"§e... brightness <0.01-1.0>§f  亮度；§e... power§f  开关灯泡",
+			"§e... brightness <0.01-1.0>§f  亮度；§e... wash <0-1>§f  环境光洗白；§e... power§f  开关灯泡",
 			"§7只改最近的客户端投影仪。"
 		),
 		List.of(
@@ -34,13 +34,14 @@ public final class CinemaHelpCommand {
 			"§e/cinema_projector throw <投掷比>§f",
 			"§e/cinema_projector focus auto|<米>§f",
 			"§e/cinema_projector keystone <垂直角度> <水平角度>§f",
-			"§e/cinema_projector brightness <0.01-1.0>§f；§e... power§f",
+			"§e/cinema_projector brightness <0.01-1.0>§f；§e... wash <0-1>§f  洗白；§e... power§f",
 			"§7修改会同步给 LAN 客户端；命令作用于 48 格内最近的投影仪。"
 		),
 		List.of(
 			"§6Cinema 使用帮助 §7(4/7) §f屏幕与配对",
 			"§7屏幕由同朝向、同平面的屏幕方块组成，最大 16×16。",
 			"§7投影仪会自动寻找前方 48 格内最近的屏幕；屏幕必须朝向投影仪。",
+			"§7右键投影仪可打开 GUI，直接调整环境光洗白强度。",
 			"§7",
 			"§7拆掉投影仪后屏幕保持黑屏；重新放回投影仪即可恢复。",
 			"§e/time set midnight§f  测试夜间环境光；§e/time set noon§f  回到正午"

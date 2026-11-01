@@ -1,9 +1,11 @@
 package com.example.firstmod.client;
 
 import com.example.firstmod.FirstMod;
+import com.example.firstmod.block.entity.ProjectorBlockEntity;
 import com.example.firstmod.client.audio.InGameAudioSpike;
 import com.example.firstmod.client.command.CinemaHelpCommand;
 import com.example.firstmod.client.command.ClientProjectorCommand;
+import com.example.firstmod.client.gui.ProjectorScreen;
 import com.example.firstmod.client.media.CinemaPlayer;
 import com.example.firstmod.client.media.CinemaPrewarm;
 import com.example.firstmod.client.render.ProjectorOptics;
@@ -18,15 +20,18 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.BlockEntityRendererRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
+import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.level.GameRules;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.lwjgl.glfw.GLFW;
@@ -46,6 +51,20 @@ public class FirstModClient implements ClientModInitializer {
 	@Override
 	public void onInitializeClient() {
 		CinemaPrewarm.start();
+
+		UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
+			if (!world.getBlockState(hitResult.getBlockPos()).is(FirstMod.PROJECTOR_BLOCK)) {
+				return InteractionResult.PASS;
+			}
+			BlockEntity blockEntity = world.getBlockEntity(hitResult.getBlockPos());
+			if (!(blockEntity instanceof ProjectorBlockEntity projector)) {
+				return InteractionResult.PASS;
+			}
+			if (world.isClientSide) {
+				Minecraft.getInstance().setScreen(new ProjectorScreen(projector));
+			}
+			return InteractionResult.SUCCESS;
+		});
 
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
 			dispatcher.register(ClientCommandManager.literal("cinema_audio_spike")

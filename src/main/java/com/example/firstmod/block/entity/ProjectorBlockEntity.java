@@ -32,6 +32,8 @@ public class ProjectorBlockEntity extends BlockEntity {
 	public static final double MAX_KEYSTONE_DEGREES = 30.0;
 	public static final double MIN_BRIGHTNESS = 0.01;
 	public static final double MAX_BRIGHTNESS = 1.0;
+	public static final double MIN_AMBIENT_WASH = 0.0;
+	public static final double MAX_AMBIENT_WASH = 1.0;
 
 	private static final double DEFAULT_THROW_RATIO = 1.75;
 	private static final float WARMUP_PER_TICK = 1.0f / 80.0f; // 4 s to full lamp
@@ -43,6 +45,7 @@ public class ProjectorBlockEntity extends BlockEntity {
 	private double keystoneVerticalDegrees;
 	private double keystoneHorizontalDegrees;
 	private double brightness = 1.0;
+	private double ambientWash = 0.18;
 	private boolean powered = true;
 
 	/** Client-local lamp output, 0..1. */
@@ -95,6 +98,10 @@ public class ProjectorBlockEntity extends BlockEntity {
 		return brightness;
 	}
 
+	public double ambientWash() {
+		return ambientWash;
+	}
+
 	public boolean isPowered() {
 		return powered;
 	}
@@ -129,6 +136,11 @@ public class ProjectorBlockEntity extends BlockEntity {
 		markUpdated();
 	}
 
+	public void setAmbientWash(double value) {
+		ambientWash = clamp(value, MIN_AMBIENT_WASH, MAX_AMBIENT_WASH);
+		markUpdated();
+	}
+
 	public void setPowered(boolean value) {
 		powered = value;
 		markUpdated();
@@ -154,6 +166,7 @@ public class ProjectorBlockEntity extends BlockEntity {
 		tag.putDouble("keystoneVertical", keystoneVerticalDegrees);
 		tag.putDouble("keystoneHorizontal", keystoneHorizontalDegrees);
 		tag.putDouble("brightness", brightness);
+		tag.putDouble("ambientWash", ambientWash);
 		tag.putBoolean("powered", powered);
 	}
 
@@ -173,6 +186,8 @@ public class ProjectorBlockEntity extends BlockEntity {
 			MIN_KEYSTONE_DEGREES, MAX_KEYSTONE_DEGREES);
 		brightness = clamp(tag.contains("brightness") ? tag.getDouble("brightness") : 1.0,
 			MIN_BRIGHTNESS, MAX_BRIGHTNESS);
+		ambientWash = clamp(tag.contains("ambientWash") ? tag.getDouble("ambientWash") : 0.18,
+			MIN_AMBIENT_WASH, MAX_AMBIENT_WASH);
 		powered = !tag.contains("powered") || tag.getBoolean("powered");
 	}
 

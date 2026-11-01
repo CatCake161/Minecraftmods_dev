@@ -35,7 +35,7 @@ public final class ProjectorCommand {
 				.executes(context -> {
 					ProjectorBlockEntity projector = nearest(context.getSource());
 					context.getSource().sendSuccess(() -> Component.literal(String.format(
-						"projector %s: throw=%.2f focus=%s keystone=%.1f/%.1f brightness=%.2f power=%s lamp=%.2f",
+						"projector %s: throw=%.2f focus=%s keystone=%.1f/%.1f brightness=%.2f wash=%.2f power=%s lamp=%.2f",
 						projector.getBlockPos(),
 						projector.throwRatio(),
 						projector.focusDistance() < 0.0
@@ -44,6 +44,7 @@ public final class ProjectorCommand {
 						projector.keystoneVerticalDegrees(),
 						projector.keystoneHorizontalDegrees(),
 						projector.brightness(),
+						projector.ambientWash(),
 						projector.isPowered() ? "on" : "off",
 						projector.lampLevel())), false);
 					return 1;
@@ -101,6 +102,17 @@ public final class ProjectorCommand {
 						projector.setBrightness(value);
 						context.getSource().sendSuccess(() -> Component.literal(
 							String.format("projector brightness = %.2f", projector.brightness())), false);
+						return 1;
+					})))
+			.then(Commands.literal("wash")
+				.then(Commands.argument("value", DoubleArgumentType.doubleArg(
+						ProjectorBlockEntity.MIN_AMBIENT_WASH, ProjectorBlockEntity.MAX_AMBIENT_WASH))
+					.executes(context -> {
+						double value = DoubleArgumentType.getDouble(context, "value");
+						ProjectorBlockEntity projector = nearest(context.getSource());
+						projector.setAmbientWash(value);
+						context.getSource().sendSuccess(() -> Component.literal(
+							String.format("projector ambient wash = %.2f", projector.ambientWash())), false);
 						return 1;
 					})))
 			.then(Commands.literal("power")
