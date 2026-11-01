@@ -13,6 +13,7 @@
 - 投影仪光学、外部 FFmpeg、临时 wash GUI 已可运行。
 - **AV Receiver 方块/block entity 已创建**（媒体/播放状态字段、持久化、同步骨架）；播放管线尚未迁入，当前仍是全局 `CinemaPlayer` 直接驱动屏幕/OpenAL。设计见 `docs/design/AV-RECEIVER.md`。
 - 扬声器已拆分为四种箱体：落地式 `speaker`（两格高）、书架式 `bookshelf_speaker`（一格高，FL/FR/BL/BR）、中置 `center_speaker`（一格高，FC）、低音炮 `subwoofer`（一格高，LFE）；空手右键只在各自合法角色内循环。落地式下半格持有 block entity，上半格为无 block entity 的延伸；破坏任一半只掉一个物品。线材/遥控器物品已创建，行为尚未接入。
+- 用户已验收通过：四种扬声器外观与角色限制、两格落地式放置/破坏、书架式原落地模型、手持与放置均无闪烁。
 
 ## 2. 必须遵守的架构约束
 
