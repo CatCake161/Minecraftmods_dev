@@ -73,17 +73,30 @@
 
 ## 5. 下一步优先级
 
-1. **M3 每接收器独立播放**
+1. **正式投影仪 GUI（下一会话从这开始）**
+   - 按 `docs/design/PROJECTOR-GUI.md` 实现；当前 `ProjectorScreen` 只有临时 wash 滑块。
+   - 先做 M1 只读状态页，再做 M2 光学/wash 编辑，之后 M3 物理模拟开关、M4 配对/诊断。
+   - 投影仪 GUI 只放光学、灯泡、wash、配对、物理模拟开关；不出现文件、codec、丢帧、播放控制（这些属于 AV Receiver）。
+   - 设置走 C2S `UpdateProjectorSettings`（或等价 payload），服务端校验范围/距离/方块；Done 提交并关闭，Cancel 丢弃草稿。
+   - 可复用 M2 `AvReceiverScreen` 的成熟模式：`renderBackground` 中画面板/文字、tooltip 自动换行、滑块 pending、可滚动列表、紧凑布局。
+   - 关键文件：`ProjectorBlockEntity.java`、`ProjectorScreen.java`、`ProjectorOptics.java`、`ProjectorCommand.java`、`FirstModClient.java`、`AvReceiverScreen.java`。
+2. **M3 每接收器独立播放**
    - 独立播放器/纹理/音频引擎；第二接收器不再拒绝
    - 继续观察 NVIDIA 视频上传崩溃与音频设备切换恢复
-2. **正式投影仪 GUI**
-   - 按 `docs/design/PROJECTOR-GUI.md` 从 M1 只读状态开始
-   - 物理模拟开关独立于媒体控制
 3. **剩余验收与 wash 修复**
    - 定位 BSL 下 wash 异常；补测 brightness 0.01..1
    - 无音轨墙钟长播；记录 4K/HDR codec/hwaccel/丢帧回归数据
 4. **媒体能力扩展**：音轨/视频轨/字幕选择与渲染、AV Receiver Video Processing、拖放导入媒体库
 5. 之后：M4 扬声器 5.1 路由、LAN、资源重载、长片测试、GUI 进一步打磨
+
+### 5.1 新会话第一步（投影仪 GUI）
+
+1. 读 `docs/HANDOFF.md` → `docs/PLANNING.md` → `docs/TODO.md` → `docs/design/PROJECTOR-GUI.md`。
+2. 用 `git log -1` / `git status` 确认最新提交与工作区；当前最新 M2 提交 `008a864`。
+3. 先实现 M1 只读状态页：右键投影仪打开正式 GUI，显示屏幕配对、距离、灯泡、AV 输入状态；不影响现有 wash 临时入口。
+4. 再实现 M2 编辑：投掷比、焦距、梯形、亮度、wash；滑块只改草稿，Done 提交，Cancel 丢弃。
+5. 构建并在 `spike` 存档验收：GUI scale 1..4、边界值、Done/Cancel、拆投影仪/屏幕、Sodium/Iris 下不崩溃。
+6. BSL 下 wash 画面异常仍单独排查，不要和 GUI 布局混在一起。
 
 ## 6. 构建与运行
 

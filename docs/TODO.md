@@ -17,7 +17,7 @@
 
 ## P1：投影仪与交互
 
-- [ ] 投影仪 GUI（大纲见 [PROJECTOR-GUI.md](design/PROJECTOR-GUI.md)）
+- [ ] 投影仪 GUI（下一项；大纲见 [PROJECTOR-GUI.md](design/PROJECTOR-GUI.md)）
 - [ ] GUI 只放物理模拟/光学/灯泡/wash/配对；不放解码、播放、文件选择
 - [ ] GUI 内提供物理模拟独立开关：对焦、梯形、环境光洗白、灯泡预热、风扇（wash 已先做）
 - [ ] 修复 BSL 下 ambient wash 某些值导致画面异常：确认是白色 overlay 的 bloom/exposure 问题，还是 alpha 曲线问题
