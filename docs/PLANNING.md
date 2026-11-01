@@ -1,6 +1,6 @@
 # Cinema 项目规划
 
-> 本文是长期规划与架构记录。可执行任务见 [TODO.md](TODO.md)，指令说明见 [COMMANDS.md](COMMANDS.md)。
+> 本文是长期规划与架构记录。新会话先读 [HANDOFF.md](HANDOFF.md)。可执行任务见 [TODO.md](TODO.md)，指令说明见 [COMMANDS.md](COMMANDS.md)。
 
 ## 1. 项目范围
 
