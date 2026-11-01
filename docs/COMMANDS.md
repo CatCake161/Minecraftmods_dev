@@ -64,6 +64,17 @@
 - 拆掉投影仪后屏幕保持黑屏；重新放回投影仪后恢复。
 - `/time set midnight` / `/time set noon` 可测试环境光洗白。
 
+影院设备物品（第一版占位）：
+
+| 物品 | ID | 当前行为 |
+|---|---|---|
+| AV 接收器 | `firstmod:av_receiver` | 空手右键显示媒体/状态/音量/视频输出 |
+| 影院扬声器 | `firstmod:speaker` | 空手右键循环 `NONE/FL/FR/FC/LFE/BL/BR` |
+| 影院线材 | `firstmod:cable` | 仅物品与提示，连接行为未接 |
+| 影院遥控器 | `firstmod:remote_controller` | 仅物品与提示，遥控行为未接 |
+
+创造模式位置：接收器/扬声器在 Functional Blocks，线材/遥控器在 Tools & Utilities。
+
 ## 5. 手动 / 自动测试
 
 手动模式：不退出、不锁定玩家。

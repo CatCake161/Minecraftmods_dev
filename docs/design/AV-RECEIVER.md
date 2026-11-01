@@ -1,6 +1,6 @@
 # AV Receiver 设计与迁移
 
-> 状态：设计草案，尚未实现。当前仍是全局 `CinemaPlayer` 直接驱动屏幕/OpenAL 的过渡架构。
+> 状态：设计草案；AV Receiver / Speaker 方块、block entity 与线材/遥控器物品已创建，播放管线尚未迁移。当前仍是全局 `CinemaPlayer` 直接驱动屏幕/OpenAL 的过渡架构。
 > 相关文档：[项目规划](../PLANNING.md)、[待办](../TODO.md)、[投影仪 GUI](PROJECTOR-GUI.md)、[指令](../COMMANDS.md)。
 
 ## 1. 目标

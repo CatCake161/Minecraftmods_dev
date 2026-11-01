@@ -1,0 +1,11 @@
+{
+	"block.firstmod.screen": "影院屏幕",
+	"block.firstmod.projector": "影院投影仪",
+	"block.firstmod.av_receiver": "AV 接收器",
+	"block.firstmod.speaker": "影院扬声器",
+	"item.firstmod.cable": "影院线材",
+	"item.firstmod.remote_controller": "影院遥控器",
+	"item.firstmod.cable.tooltip": "用于连接影院设备的线材（尚未启用）",
+	"item.firstmod.remote_controller.tooltip": "用于远程控制影院设备（尚未启用）",
+	"message.firstmod.speaker_role": "扬声器角色：%s"
+}

@@ -32,7 +32,7 @@
 
 ## P1：AV Receiver / 媒体
 
-- [ ] AV Receiver 方块 + block entity
+- [x] AV Receiver 方块 + block entity（状态字段/持久化/同步骨架）
 - [ ] 把解码/播放状态/文件选择/音画时钟从全局 `CinemaPlayer` 迁入接收器
 - [ ] 接收器向投影仪输出视频信号（投影仪不再直接持有播放器）
 - [ ] 接收器向扬声器分配 5.1 声道（扬声器不做解码）
@@ -49,7 +49,7 @@
 
 ## P1：扬声器 / 座位
 
-- [ ] Speaker 方块 + 角色（FL/FR/FC/LFE/BL/BR）
+- [x] Speaker 方块 + 角色（FL/FR/FC/LFE/BL/BR，右键手动循环；接收器分配未接）
 - [ ] Seat 方块 + 皇帝位坐标
 - [ ] 接收器-扬声器配对与距离计算
 - [ ] 立体声 upmix / 5.1 downmix 纯函数 + 测试
@@ -77,6 +77,8 @@
 
 ## 最近完成
 
+- [x] AV Receiver / Speaker 方块、block entity、模型、掉落表
+- [x] 线材（Cable）/遥控器（Remote Controller）物品、模型、中英文名称
 - [x] 用户验收通过：HDR10/HLG、4K60 VP9、4K60 HEVC/AV1、四角对齐/四个朝向、对焦/梯形、拆投影仪立即黑屏、相邻方块不透明
 - [x] 投影仪方块/模型/光学第一版
 - [x] 屏幕自动配对、逐块投影/裁剪

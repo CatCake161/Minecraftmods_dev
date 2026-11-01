@@ -11,7 +11,8 @@
 - 用户已验收通过：HDR10/HLG、4K60 VP9、4K60 HEVC/AV1、四角对齐/四个朝向、对焦/梯形、拆投影仪立即黑屏、相邻方块不透明。
 - 剩余验收：无音轨长播、亮度 0.01..1、wash 观感（BSL 下某些值画面异常，待定位）。
 - 投影仪光学、外部 FFmpeg、临时 wash GUI 已可运行。
-- **AV Receiver 尚未实现**；设计已写入 `docs/design/AV-RECEIVER.md`，当前仍是全局 `CinemaPlayer` 直接驱动屏幕/OpenAL 的过渡架构。
+- **AV Receiver 方块/block entity 已创建**（媒体/播放状态字段、持久化、同步骨架）；播放管线尚未迁入，当前仍是全局 `CinemaPlayer` 直接驱动屏幕/OpenAL。设计见 `docs/design/AV-RECEIVER.md`。
+- Speaker 方块（右键循环 FL/FR/FC/LFE/BL/BR）、线材物品、遥控器物品已创建；线材/遥控器行为尚未接入。
 
 ## 2. 必须遵守的架构约束
 
@@ -45,10 +46,15 @@
   - `/cinema_visual_spike` 和 `CinemaVisualSpike` 类
   - 投影仪遮挡阴影 `ProjectorShadow`（暂时不做）
   - 镜头光晕、投影仪过热/通风（规划和文档中已移除）
+- 影院设备第一版物品：
+  - `av_receiver` 方块 + block entity（媒体/播放/音量/视频输出字段）
+  - `speaker` 方块 + block entity（右键循环声道角色）
+  - `cable` / `remote_controller` 物品（线材/遥控器占位）
+  - 模型、blockstate、中英文语言、掉落表
 - 文档重组：
   - `docs/PLANNING.md`、`docs/TODO.md`、`docs/COMMANDS.md`
   - `docs/design/P0-SPIKE-REPORT.md`、`docs/design/P05-DESIGN.md`
-  - `docs/design/PROJECTOR-GUI.md`
+  - `docs/design/PROJECTOR-GUI.md`、`docs/design/AV-RECEIVER.md`
   - 个人绝对路径/姓名/邮箱已从工作树移除
 
 ## 4. 已知问题 / 风险
@@ -63,9 +69,9 @@
 
 ## 5. 下一步优先级
 
-1. **AV Receiver 设计与实现**
-   - 设计已写入 `docs/design/AV-RECEIVER.md`；确认第 14 节决策后从 M1 开始
-   - 把 `CinemaPlayer` 从全局迁入接收器
+1. **AV Receiver 播放管线**
+   - 方块/block entity 已创建；设计见 `docs/design/AV-RECEIVER.md`
+   - 下一步：C2S 控制包、客户端播放代理、把 `CinemaPlayer` 从全局迁入接收器
    - 投影仪只订阅视频信号；扬声器只订阅音频
 2. **正式投影仪 GUI**
    - 按 `docs/design/PROJECTOR-GUI.md` 从 M1 只读状态开始
