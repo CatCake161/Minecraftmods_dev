@@ -8,8 +8,10 @@
 - Minecraft 1.21.1 + Fabric，Java 21；包名 `com.example.firstmod`，模组 id `firstmod`。
 - 主模组构建通过：`.\gradlew build`。
 - 最近一局游戏正常退出：1080p30 播放 3071 帧，仅 3 丢帧。
+- 用户已验收通过：HDR10/HLG、4K60 VP9、4K60 HEVC/AV1、四角对齐/四个朝向、对焦/梯形、拆投影仪立即黑屏、相邻方块不透明。
+- 剩余验收：无音轨长播、亮度 0.01..1、wash 观感（BSL 下某些值画面异常，待定位）。
 - 投影仪光学、外部 FFmpeg、临时 wash GUI 已可运行。
-- **AV Receiver 尚未实现**；当前仍是全局 `CinemaPlayer` 直接驱动屏幕/OpenAL 的过渡架构。
+- **AV Receiver 尚未实现**；设计已写入 `docs/design/AV-RECEIVER.md`，当前仍是全局 `CinemaPlayer` 直接驱动屏幕/OpenAL 的过渡架构。
 
 ## 2. 必须遵守的架构约束
 
@@ -51,8 +53,8 @@
 
 ## 4. 已知问题 / 风险
 
-- **4K60 HDR 性能仍未最终验收**；已经默认 HDR 720p、硬件解码 auto、去掉 showinfo 和每帧 mipmap，但仍需用户实测。
-- HDR 颜色/亮度需要用户游戏内验收；最后一次真实 HDR 文件测试尚未完成。
+- 4K60/HDR 已由用户验收通过；建议后续记录具体 codec/pix_fmt/hwaccel/丢帧数据，便于回归。
+- **BSL 下 ambient wash 某些值画面异常（待定位具体表现/数值）**；brightness 0.01..1 尚未验收；无音轨墙钟长播未测。
 - 8 分钟长播时出现过一次 `nvoglv64.dll` ACCESS_VIOLATION（NVIDIA OpenGL 驱动层），不是 Java 异常；阴影删除后尚未复现验证。
 - AV Receiver 未实现；投影仪/扬声器仍共用全局播放器。
 - 多屏/多投影仪、LAN 同步、资源重载、两小时长片仍未完成。
@@ -62,15 +64,15 @@
 ## 5. 下一步优先级
 
 1. **AV Receiver 设计与实现**
-   - 设计接收器方块、媒体所有权、视频信号输出、5.1 音频路由
+   - 设计已写入 `docs/design/AV-RECEIVER.md`；确认第 14 节决策后从 M1 开始
    - 把 `CinemaPlayer` 从全局迁入接收器
    - 投影仪只订阅视频信号；扬声器只订阅音频
 2. **正式投影仪 GUI**
    - 按 `docs/design/PROJECTOR-GUI.md` 从 M1 只读状态开始
    - 物理模拟开关独立于媒体控制
-3. **4K60/HDR 验收**
-   - 用真实 HDR10/HLG、4K60 VP9/HEVC/AV1 测试
-   - 记录 codec/pix_fmt/trc、硬件解码、丢帧
+3. **剩余验收与 wash 修复**
+   - 定位 BSL 下 wash 异常；补测 brightness 0.01..1
+   - 无音轨墙钟长播；记录 4K/HDR codec/hwaccel/丢帧回归数据
 4. 之后：每接收器独立播放器、LAN、资源重载、长片测试
 
 ## 6. 构建与运行
