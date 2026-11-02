@@ -44,7 +44,7 @@ public class ProjectorBlock extends Block implements EntityBlock {
 	@Override
 	public <T extends BlockEntity> BlockEntityTicker<T> getTicker(Level level, BlockState state,
 																  BlockEntityType<T> type) {
-		if (type != FirstMod.PROJECTOR_BLOCK_ENTITY) {
+		if (type != FirstMod.projectorBlockEntity) {
 			return null;
 		}
 		return (tickLevel, pos, tickState, blockEntity) -> {

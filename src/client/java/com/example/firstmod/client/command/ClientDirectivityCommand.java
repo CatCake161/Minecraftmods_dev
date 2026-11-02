@@ -3,7 +3,7 @@ package com.example.firstmod.client.command;
 import com.example.firstmod.block.entity.SpeakerType;
 import com.example.firstmod.client.audio.directivity.SpeakerDirectivityProfile;
 import com.example.firstmod.client.audio.directivity.SpeakerDirectivityRegistry;
-import com.example.firstmod.client.gui.SpeakerDirectivityScreen;
+import com.example.firstmod.client.gui.SpeakerDirectivityConfigScreen;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
@@ -15,14 +15,14 @@ import net.minecraft.network.chat.Component;
 import java.util.Locale;
 
 /** Client-only commands for the speaker directivity spike. */
-public final class DirectivityCommand {
-	private DirectivityCommand() {
+public final class ClientDirectivityCommand {
+	private ClientDirectivityCommand() {
 	}
 
 	public static void register(CommandDispatcher<FabricClientCommandSource> dispatcher) {
 		dispatcher.register(ClientCommandManager.literal("cinema_directivity")
 			.executes(context -> {
-				Minecraft.getInstance().setScreen(new SpeakerDirectivityScreen(null));
+				Minecraft.getInstance().setScreen(new SpeakerDirectivityConfigScreen(null));
 				return 1;
 			})
 			.then(ClientCommandManager.literal("reload")

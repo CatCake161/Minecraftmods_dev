@@ -21,7 +21,7 @@ public class SpeakerBlockEntity extends BlockEntity {
 	private float gain = 1.0f;
 
 	public SpeakerBlockEntity(BlockPos pos, BlockState blockState) {
-		super(FirstMod.SPEAKER_BLOCK_ENTITY, pos, blockState);
+		super(FirstMod.speakerBlockEntity, pos, blockState);
 	}
 
 	public SpeakerType type() {

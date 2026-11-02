@@ -42,7 +42,7 @@ public final class VideoDecoder implements AutoCloseable {
 	private final int frameBytes;
 
 	private double firstRawPts = Double.NaN;
-	private double lastPts;
+	private double lastPtsSeconds;
 	private int frameIndex;
 	private long decodedFrames;
 	private long lastStatsAtNanos = System.nanoTime();
@@ -202,7 +202,7 @@ public final class VideoDecoder implements AutoCloseable {
 		} else {
 			pts = startSeconds + frameIndex / frameRate;
 		}
-		lastPts = pts;
+		lastPtsSeconds = pts;
 		frameIndex++;
 		decodedFrames++;
 		logStatsIfNeeded();

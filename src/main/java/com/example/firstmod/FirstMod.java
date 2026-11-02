@@ -15,8 +15,8 @@ import com.example.firstmod.item.CableItem;
 import com.example.firstmod.item.RemoteControllerItem;
 import com.example.firstmod.network.ProjectorSettingsHandler;
 import com.example.firstmod.network.ProjectorSettingsPayload;
-import com.example.firstmod.network.ReceiverControlHandler;
-import com.example.firstmod.network.ReceiverControlPayload;
+import com.example.firstmod.network.AvReceiverControlHandler;
+import com.example.firstmod.network.AvReceiverControlPayload;
 import com.example.firstmod.network.SpeakerRoleHandler;
 import com.example.firstmod.network.SpeakerRolePayload;
 import net.fabricmc.api.ModInitializer;
@@ -65,10 +65,10 @@ public class FirstMod implements ModInitializer {
 	public static final Item SUBWOOFER_ITEM = new BlockItem(SUBWOOFER_BLOCK, new Item.Properties());
 	public static final Item CABLE_ITEM = new CableItem(new Item.Properties());
 	public static final Item REMOTE_CONTROLLER_ITEM = new RemoteControllerItem(new Item.Properties());
-	public static BlockEntityType<ScreenBlockEntity> SCREEN_BLOCK_ENTITY;
-	public static BlockEntityType<ProjectorBlockEntity> PROJECTOR_BLOCK_ENTITY;
-	public static BlockEntityType<AvReceiverBlockEntity> AV_RECEIVER_BLOCK_ENTITY;
-	public static BlockEntityType<SpeakerBlockEntity> SPEAKER_BLOCK_ENTITY;
+	public static BlockEntityType<ScreenBlockEntity> screenBlockEntity;
+	public static BlockEntityType<ProjectorBlockEntity> projectorBlockEntity;
+	public static BlockEntityType<AvReceiverBlockEntity> avReceiverBlockEntity;
+	public static BlockEntityType<SpeakerBlockEntity> speakerBlockEntity;
 
 	@Override
 	public void onInitialize() {
@@ -88,18 +88,18 @@ public class FirstMod implements ModInitializer {
 		Registry.register(BuiltInRegistries.ITEM, id("subwoofer"), SUBWOOFER_ITEM);
 		Registry.register(BuiltInRegistries.ITEM, id("cable"), CABLE_ITEM);
 		Registry.register(BuiltInRegistries.ITEM, id("remote_controller"), REMOTE_CONTROLLER_ITEM);
-		SCREEN_BLOCK_ENTITY = Registry.register(BuiltInRegistries.BLOCK_ENTITY_TYPE, id("screen"),
+		screenBlockEntity = Registry.register(BuiltInRegistries.BLOCK_ENTITY_TYPE, id("screen"),
 			BlockEntityType.Builder.of(ScreenBlockEntity::new, SCREEN_BLOCK).build(null));
-		PROJECTOR_BLOCK_ENTITY = Registry.register(BuiltInRegistries.BLOCK_ENTITY_TYPE, id("projector"),
+		projectorBlockEntity = Registry.register(BuiltInRegistries.BLOCK_ENTITY_TYPE, id("projector"),
 			BlockEntityType.Builder.of(ProjectorBlockEntity::new, PROJECTOR_BLOCK).build(null));
-		AV_RECEIVER_BLOCK_ENTITY = Registry.register(BuiltInRegistries.BLOCK_ENTITY_TYPE, id("av_receiver"),
+		avReceiverBlockEntity = Registry.register(BuiltInRegistries.BLOCK_ENTITY_TYPE, id("av_receiver"),
 			BlockEntityType.Builder.of(AvReceiverBlockEntity::new, AV_RECEIVER_BLOCK).build(null));
-		SPEAKER_BLOCK_ENTITY = Registry.register(BuiltInRegistries.BLOCK_ENTITY_TYPE, id("speaker"),
+		speakerBlockEntity = Registry.register(BuiltInRegistries.BLOCK_ENTITY_TYPE, id("speaker"),
 			BlockEntityType.Builder.of(SpeakerBlockEntity::new,
 				SPEAKER_BLOCK, BOOKSHELF_SPEAKER_BLOCK, CENTER_SPEAKER_BLOCK, SUBWOOFER_BLOCK).build(null));
 
-		PayloadTypeRegistry.playC2S().register(ReceiverControlPayload.TYPE, ReceiverControlPayload.CODEC);
-		ServerPlayNetworking.registerGlobalReceiver(ReceiverControlPayload.TYPE, ReceiverControlHandler::handle);
+		PayloadTypeRegistry.playC2S().register(AvReceiverControlPayload.TYPE, AvReceiverControlPayload.CODEC);
+		ServerPlayNetworking.registerGlobalReceiver(AvReceiverControlPayload.TYPE, AvReceiverControlHandler::handle);
 		PayloadTypeRegistry.playC2S().register(SpeakerRolePayload.TYPE, SpeakerRolePayload.CODEC);
 		ServerPlayNetworking.registerGlobalReceiver(SpeakerRolePayload.TYPE, SpeakerRoleHandler::handle);
 		PayloadTypeRegistry.playC2S().register(ProjectorSettingsPayload.TYPE, ProjectorSettingsPayload.CODEC);

@@ -8,6 +8,6 @@ import net.minecraft.world.level.block.state.BlockState;
 /** Marker block entity for the screen; the live texture is shared globally. */
 public class ScreenBlockEntity extends BlockEntity {
 	public ScreenBlockEntity(BlockPos pos, BlockState state) {
-		super(FirstMod.SCREEN_BLOCK_ENTITY, pos, state);
+		super(FirstMod.screenBlockEntity, pos, state);
 	}
 }

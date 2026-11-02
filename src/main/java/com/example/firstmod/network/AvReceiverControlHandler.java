@@ -12,24 +12,24 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 /**
  * Validates and applies receiver control payloads on the logical server.
  */
-public final class ReceiverControlHandler {
+public final class AvReceiverControlHandler {
 	private static final double MAX_CONTROL_DISTANCE = 16.0;
 
-	private ReceiverControlHandler() {
+	private AvReceiverControlHandler() {
 	}
 
-	public static void handle(ReceiverControlPayload payload, ServerPlayNetworking.Context context) {
+	public static void handle(AvReceiverControlPayload payload, ServerPlayNetworking.Context context) {
 		ServerPlayer player = context.player();
 		ServerLevel level = player.serverLevel();
-		BlockPos receiverPos = payload.receiverPos();
-		if (!level.isLoaded(receiverPos)
-			|| player.blockPosition().distSqr(receiverPos) > MAX_CONTROL_DISTANCE * MAX_CONTROL_DISTANCE) {
+		BlockPos avReceiverPos = payload.avReceiverPos();
+		if (!level.isLoaded(avReceiverPos)
+			|| player.blockPosition().distSqr(avReceiverPos) > MAX_CONTROL_DISTANCE * MAX_CONTROL_DISTANCE) {
 			error(player, "AV receiver is out of range");
 			return;
 		}
-		BlockEntity blockEntity = level.getBlockEntity(receiverPos);
+		BlockEntity blockEntity = level.getBlockEntity(avReceiverPos);
 		if (!(blockEntity instanceof AvReceiverBlockEntity receiver)) {
-			error(player, "No AV receiver at " + receiverPos.toShortString());
+			error(player, "No AV receiver at " + avReceiverPos.toShortString());
 			return;
 		}
 		if (payload.action() == null) {
@@ -39,7 +39,7 @@ public final class ReceiverControlHandler {
 		switch (payload.action()) {
 			case SELECT_MEDIA -> selectMedia(player, receiver, payload);
 			case PLAY -> {
-				if (AvReceiverBlockEntity.isAnotherReceiverActive(level, receiverPos)) {
+				if (AvReceiverBlockEntity.isAnotherReceiverActive(level, avReceiverPos)) {
 					error(player, "Another AV receiver is already active; stop it first");
 					return;
 				}
@@ -65,7 +65,7 @@ public final class ReceiverControlHandler {
 	}
 
 	private static void selectMedia(ServerPlayer player, AvReceiverBlockEntity receiver,
-									ReceiverControlPayload payload) {
+									AvReceiverControlPayload payload) {
 		String key = MediaKey.normalize(payload.mediaKey());
 		if (key == null) {
 			error(player, "Invalid media key");

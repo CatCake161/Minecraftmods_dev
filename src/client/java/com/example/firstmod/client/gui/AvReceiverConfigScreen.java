@@ -9,8 +9,8 @@ import com.example.firstmod.client.media.AvReceiverPlaybackManager;
 import com.example.firstmod.client.media.CinemaPlayer;
 import com.example.firstmod.client.media.LibraryRegistry;
 import com.example.firstmod.client.media.MediaLibrary;
-import com.example.firstmod.client.network.ReceiverControlClient;
-import com.example.firstmod.network.ReceiverControlPayload;
+import com.example.firstmod.client.network.AvReceiverControlClient;
+import com.example.firstmod.network.AvReceiverControlPayload;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.AbstractSliderButton;
@@ -37,11 +37,11 @@ import java.util.Locale;
  * and the future speaker setup page.
  *
  * <p>The screen reads the synced receiver block entity directly and sends all
- * changes through {@code ReceiverControlPayload}. It never pauses the game:
+ * changes through {@code AvReceiverControlPayload}. It never pauses the game:
  * opening the panel while a movie is playing must not stop the integrated
  * server.
  */
-public final class AvReceiverScreen extends Screen {
+public final class AvReceiverConfigScreen extends Screen {
 	private static final int TAB_HEIGHT = 18;
 	private static final int ROW_HEIGHT = 11;
 	private static final int PROBE_LIMIT = 30;
@@ -103,7 +103,7 @@ public final class AvReceiverScreen extends Screen {
 	private float pendingVolume = Float.NaN;
 	private long pendingVolumeUntilMillis;
 
-	public AvReceiverScreen(AvReceiverBlockEntity receiver) {
+	public AvReceiverConfigScreen(AvReceiverBlockEntity receiver) {
 		super(Component.literal("Cinema AV Receiver"));
 		this.receiver = receiver;
 		if (LibraryRegistry.findById(libraryId) == null) {
@@ -778,7 +778,7 @@ public final class AvReceiverScreen extends Screen {
 			try {
 				MediaLibrary.Metadata metadata = MediaLibrary.describe(MediaLibrary.resolve(key), key);
 				Minecraft.getInstance().execute(() -> {
-					ReceiverControlClient.selectMedia(receiver.getBlockPos(), metadata);
+					AvReceiverControlClient.selectMedia(receiver.getBlockPos(), metadata);
 					receiverProbe = knownProbe;
 					receiverProbeKey = knownProbe != null ? metadata.key() : "";
 					pendingPlay = false;
@@ -803,14 +803,14 @@ public final class AvReceiverScreen extends Screen {
 			return;
 		}
 		if (receiver.state() == AvReceiverBlockEntity.State.PLAYING) {
-			ReceiverControlClient.sendSimple(receiver.getBlockPos(), ReceiverControlPayload.Action.PAUSE);
+			AvReceiverControlClient.sendSimple(receiver.getBlockPos(), AvReceiverControlPayload.Action.PAUSE);
 		} else {
-			ReceiverControlClient.sendSimple(receiver.getBlockPos(), ReceiverControlPayload.Action.PLAY);
+			AvReceiverControlClient.sendSimple(receiver.getBlockPos(), AvReceiverControlPayload.Action.PLAY);
 		}
 	}
 
 	private void sendStop() {
-		ReceiverControlClient.sendSimple(receiver.getBlockPos(), ReceiverControlPayload.Action.STOP);
+		AvReceiverControlClient.sendSimple(receiver.getBlockPos(), AvReceiverControlPayload.Action.STOP);
 	}
 
 	private void seekRelative(double delta) {
@@ -818,8 +818,8 @@ public final class AvReceiverScreen extends Screen {
 		if (receiver.durationSeconds() > 0.0) {
 			target = Math.min(target, receiver.durationSeconds());
 		}
-		ReceiverControlClient.sendValue(receiver.getBlockPos(),
-			ReceiverControlPayload.Action.SEEK, target);
+		AvReceiverControlClient.sendValue(receiver.getBlockPos(),
+			AvReceiverControlPayload.Action.SEEK, target);
 		setStatus("Seek requested: " + formatTime(target));
 	}
 
@@ -827,25 +827,25 @@ public final class AvReceiverScreen extends Screen {
 		if (receiver.durationSeconds() <= 0.0) {
 			return;
 		}
-		ReceiverControlClient.sendValue(receiver.getBlockPos(),
-			ReceiverControlPayload.Action.SEEK, seconds);
+		AvReceiverControlClient.sendValue(receiver.getBlockPos(),
+			AvReceiverControlPayload.Action.SEEK, seconds);
 		setStatus("Seek requested: " + formatTime(seconds));
 	}
 
 	private void sendVolume(double value) {
-		ReceiverControlClient.sendValue(receiver.getBlockPos(),
-			ReceiverControlPayload.Action.SET_VOLUME, value);
+		AvReceiverControlClient.sendValue(receiver.getBlockPos(),
+			AvReceiverControlPayload.Action.SET_VOLUME, value);
 	}
 
 	private void toggleMute() {
-		ReceiverControlClient.sendValue(receiver.getBlockPos(),
-			ReceiverControlPayload.Action.SET_MUTED,
+		AvReceiverControlClient.sendValue(receiver.getBlockPos(),
+			AvReceiverControlPayload.Action.SET_MUTED,
 			receiver.isMuted() ? 0.0 : 1.0);
 	}
 
 	private void requestLink() {
-		ReceiverControlClient.sendSimple(receiver.getBlockPos(),
-			ReceiverControlPayload.Action.LINK_PROJECTOR);
+		AvReceiverControlClient.sendSimple(receiver.getBlockPos(),
+			AvReceiverControlPayload.Action.LINK_PROJECTOR);
 		setStatus("Projector link requested");
 	}
 
@@ -931,7 +931,7 @@ public final class AvReceiverScreen extends Screen {
 	private double currentPosition() {
 		double position = receiver.positionSeconds();
 		if (receiver.state() == AvReceiverBlockEntity.State.PLAYING && receiver.getLevel() != null) {
-			position += Math.max(0L, receiver.getLevel().getGameTime() - receiver.stateGameTime()) / 20.0;
+			position += Math.max(0L, receiver.getLevel().getGameTime() - receiver.stateChangedGameTime()) / 20.0;
 		}
 		if (receiver.durationSeconds() > 0.0) {
 			position = Math.min(position, receiver.durationSeconds());

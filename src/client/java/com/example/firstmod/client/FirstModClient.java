@@ -8,13 +8,13 @@ import com.example.firstmod.block.entity.SpeakerBlockEntity;
 import com.example.firstmod.client.audio.InGameAudioSpike;
 import com.example.firstmod.client.audio.directivity.SpeakerDirectivityAssignments;
 import com.example.firstmod.client.audio.directivity.SpeakerDirectivityRegistry;
-import com.example.firstmod.client.command.CinemaHelpCommand;
-import com.example.firstmod.client.command.ClientCinemaCommand;
+import com.example.firstmod.client.command.ClientHelpCommand;
+import com.example.firstmod.client.command.ClientReceiverCommand;
 import com.example.firstmod.client.command.ClientProjectorCommand;
-import com.example.firstmod.client.command.DirectivityCommand;
-import com.example.firstmod.client.gui.AvReceiverScreen;
-import com.example.firstmod.client.gui.ProjectorScreen;
-import com.example.firstmod.client.gui.SpeakerDirectivityScreen;
+import com.example.firstmod.client.command.ClientDirectivityCommand;
+import com.example.firstmod.client.gui.AvReceiverConfigScreen;
+import com.example.firstmod.client.gui.ProjectorConfigScreen;
+import com.example.firstmod.client.gui.SpeakerDirectivityConfigScreen;
 import com.example.firstmod.client.media.AvReceiverPlaybackManager;
 import com.example.firstmod.client.media.CinemaPlayer;
 import com.example.firstmod.client.media.CinemaPrewarm;
@@ -68,14 +68,14 @@ public class FirstModClient implements ClientModInitializer {
 			if (world.getBlockState(hitResult.getBlockPos()).is(FirstMod.PROJECTOR_BLOCK)
 				&& blockEntity instanceof ProjectorBlockEntity projector) {
 				if (world.isClientSide) {
-					Minecraft.getInstance().setScreen(new ProjectorScreen(projector));
+					Minecraft.getInstance().setScreen(new ProjectorConfigScreen(projector));
 				}
 				return InteractionResult.SUCCESS;
 			}
 			if (world.getBlockState(hitResult.getBlockPos()).is(FirstMod.AV_RECEIVER_BLOCK)
 				&& blockEntity instanceof AvReceiverBlockEntity receiver) {
 				if (world.isClientSide) {
-					Minecraft.getInstance().setScreen(new AvReceiverScreen(receiver));
+					Minecraft.getInstance().setScreen(new AvReceiverConfigScreen(receiver));
 				}
 				return InteractionResult.SUCCESS;
 			}
@@ -86,7 +86,7 @@ public class FirstModClient implements ClientModInitializer {
 				if (world.isClientSide) {
 					SpeakerBlockEntity speaker = findSpeaker(world, hitResult.getBlockPos());
 					if (speaker != null) {
-						Minecraft.getInstance().setScreen(new SpeakerDirectivityScreen(null, speaker));
+						Minecraft.getInstance().setScreen(new SpeakerDirectivityConfigScreen(null, speaker));
 						return InteractionResult.SUCCESS;
 					}
 				}
@@ -106,13 +106,13 @@ public class FirstModClient implements ClientModInitializer {
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
 			ClientProjectorCommand.register(dispatcher));
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
-			CinemaHelpCommand.register(dispatcher));
+			ClientHelpCommand.register(dispatcher));
 
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
-			DirectivityCommand.register(dispatcher));
+			ClientDirectivityCommand.register(dispatcher));
 
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
-			ClientCinemaCommand.register(dispatcher));
+			ClientReceiverCommand.register(dispatcher));
 
 		ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
 			CinemaPlayer.stopActive(client);
@@ -127,7 +127,7 @@ public class FirstModClient implements ClientModInitializer {
 			fixedPlayerPos = null;
 		});
 
-		BlockEntityRendererRegistry.register(FirstMod.SCREEN_BLOCK_ENTITY, ScreenBlockEntityRenderer::new);
+		BlockEntityRendererRegistry.register(FirstMod.screenBlockEntity, ScreenBlockEntityRenderer::new);
 		WorldRenderEvents.AFTER_ENTITIES.register(context -> {
 			AvReceiverPlaybackManager.presentFrames();
 			CinemaPlayer.presentActiveFrame();

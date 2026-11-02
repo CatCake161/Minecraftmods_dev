@@ -2,7 +2,7 @@ package com.example.firstmod.client.command;
 
 import com.example.firstmod.block.entity.AvReceiverBlockEntity;
 import com.example.firstmod.client.media.MediaLibrary;
-import com.example.firstmod.network.ReceiverControlPayload;
+import com.example.firstmod.network.AvReceiverControlPayload;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
@@ -24,10 +24,10 @@ import java.nio.file.Path;
  * M1 command front-end for the receiver pipeline. Commands resolve the nearest
  * receiver on the client, then send the same C2S payload the M2 GUI will use.
  */
-public final class ClientCinemaCommand {
+public final class ClientReceiverCommand {
 	private static final int SEARCH_RADIUS_CHUNKS = 4;
 
-	private ClientCinemaCommand() {
+	private ClientReceiverCommand() {
 	}
 
 	public static void register(CommandDispatcher<FabricClientCommandSource> dispatcher) {
@@ -40,30 +40,30 @@ public final class ClientCinemaCommand {
 			.executes(context -> togglePause(context.getSource())));
 
 		dispatcher.register(ClientCommandManager.literal("cinema_stop")
-			.executes(context -> sendSimple(context.getSource(), ReceiverControlPayload.Action.STOP,
+			.executes(context -> sendSimple(context.getSource(), AvReceiverControlPayload.Action.STOP,
 				"cinema: stop requested")));
 
 		dispatcher.register(ClientCommandManager.literal("cinema_seek")
 			.then(ClientCommandManager.argument("seconds", DoubleArgumentType.doubleArg(0.0))
-				.executes(context -> sendValue(context.getSource(), ReceiverControlPayload.Action.SEEK,
+				.executes(context -> sendValue(context.getSource(), AvReceiverControlPayload.Action.SEEK,
 					DoubleArgumentType.getDouble(context, "seconds"),
 					"cinema: seek requested"))));
 
 		dispatcher.register(ClientCommandManager.literal("cinema_volume")
 			.then(ClientCommandManager.argument("value", DoubleArgumentType.doubleArg(0.0, 1.0))
-				.executes(context -> sendValue(context.getSource(), ReceiverControlPayload.Action.SET_VOLUME,
+				.executes(context -> sendValue(context.getSource(), AvReceiverControlPayload.Action.SET_VOLUME,
 					DoubleArgumentType.getDouble(context, "value"),
 					"cinema: volume requested"))));
 
 		dispatcher.register(ClientCommandManager.literal("cinema_mute")
 			.executes(context -> {
-				AvReceiverBlockEntity receiver = nearestReceiver(context.getSource().getClient());
+				AvReceiverBlockEntity receiver = nearestAvReceiver(context.getSource().getClient());
 				if (receiver == null) {
 					return noReceiver(context.getSource());
 				}
 				double value = receiver.isMuted() ? 0.0 : 1.0;
 				send(context.getSource(), receiver,
-					new ReceiverControlPayload(receiver.getBlockPos(), ReceiverControlPayload.Action.SET_MUTED,
+					new AvReceiverControlPayload(receiver.getBlockPos(), AvReceiverControlPayload.Action.SET_MUTED,
 						"", 0L, "", 0.0, value),
 					"cinema: mute toggled");
 				return 1;
@@ -71,7 +71,7 @@ public final class ClientCinemaCommand {
 
 		dispatcher.register(ClientCommandManager.literal("cinema_link")
 			.executes(context -> sendSimple(context.getSource(),
-				ReceiverControlPayload.Action.LINK_PROJECTOR,
+				AvReceiverControlPayload.Action.LINK_PROJECTOR,
 				"cinema: projector link requested")));
 
 		dispatcher.register(ClientCommandManager.literal("cinema_receiver")
@@ -84,7 +84,7 @@ public final class ClientCinemaCommand {
 
 	private static int play(FabricClientCommandSource source, String raw) {
 		Minecraft client = source.getClient();
-		AvReceiverBlockEntity receiver = nearestReceiver(client);
+		AvReceiverBlockEntity receiver = nearestAvReceiver(client);
 		if (receiver == null) {
 			return noReceiver(source);
 		}
@@ -97,14 +97,14 @@ public final class ClientCinemaCommand {
 			source.sendError(Component.literal("cinema play failed: " + e.getMessage()));
 			return 0;
 		}
-		BlockPos receiverPos = receiver.getBlockPos();
+		BlockPos avReceiverPos = receiver.getBlockPos();
 		source.sendFeedback(Component.literal("cinema: preparing " + key + " ..."));
 		Thread probe = new Thread(() -> {
 			try {
 				MediaLibrary.Metadata metadata = MediaLibrary.describe(file, key);
 				client.execute(() -> {
-					ClientPlayNetworking.send(new ReceiverControlPayload(receiverPos,
-						ReceiverControlPayload.Action.SELECT_MEDIA, metadata.key(), metadata.size(),
+					ClientPlayNetworking.send(new AvReceiverControlPayload(avReceiverPos,
+						AvReceiverControlPayload.Action.SELECT_MEDIA, metadata.key(), metadata.size(),
 						metadata.sha256(), metadata.durationSeconds(), 0.0));
 					source.sendFeedback(Component.literal("cinema: play requested: " + metadata.key()));
 				});
@@ -119,49 +119,49 @@ public final class ClientCinemaCommand {
 	}
 
 	private static int togglePause(FabricClientCommandSource source) {
-		AvReceiverBlockEntity receiver = nearestReceiver(source.getClient());
+		AvReceiverBlockEntity receiver = nearestAvReceiver(source.getClient());
 		if (receiver == null) {
 			return noReceiver(source);
 		}
 		boolean playing = receiver.state() == AvReceiverBlockEntity.State.PLAYING;
-		ReceiverControlPayload.Action action = playing
-			? ReceiverControlPayload.Action.PAUSE
-			: ReceiverControlPayload.Action.PLAY;
-		return send(source, receiver, new ReceiverControlPayload(receiver.getBlockPos(), action,
+		AvReceiverControlPayload.Action action = playing
+			? AvReceiverControlPayload.Action.PAUSE
+			: AvReceiverControlPayload.Action.PLAY;
+		return send(source, receiver, new AvReceiverControlPayload(receiver.getBlockPos(), action,
 			"", 0L, "", 0.0, 0.0), playing
 			? "cinema: pause requested"
 			: "cinema: play requested");
 	}
 
 	private static int sendSimple(FabricClientCommandSource source,
-								  ReceiverControlPayload.Action action, String message) {
-		AvReceiverBlockEntity receiver = nearestReceiver(source.getClient());
+								  AvReceiverControlPayload.Action action, String message) {
+		AvReceiverBlockEntity receiver = nearestAvReceiver(source.getClient());
 		if (receiver == null) {
 			return noReceiver(source);
 		}
-		return send(source, receiver, new ReceiverControlPayload(receiver.getBlockPos(), action,
+		return send(source, receiver, new AvReceiverControlPayload(receiver.getBlockPos(), action,
 			"", 0L, "", 0.0, 0.0), message);
 	}
 
-	private static int sendValue(FabricClientCommandSource source, ReceiverControlPayload.Action action,
+	private static int sendValue(FabricClientCommandSource source, AvReceiverControlPayload.Action action,
 								 double value, String message) {
-		AvReceiverBlockEntity receiver = nearestReceiver(source.getClient());
+		AvReceiverBlockEntity receiver = nearestAvReceiver(source.getClient());
 		if (receiver == null) {
 			return noReceiver(source);
 		}
-		return send(source, receiver, new ReceiverControlPayload(receiver.getBlockPos(), action,
+		return send(source, receiver, new AvReceiverControlPayload(receiver.getBlockPos(), action,
 			"", 0L, "", 0.0, value), message);
 	}
 
 	private static int send(FabricClientCommandSource source, AvReceiverBlockEntity receiver,
-							ReceiverControlPayload payload, String message) {
+							AvReceiverControlPayload payload, String message) {
 		ClientPlayNetworking.send(payload);
 		source.sendFeedback(Component.literal(message));
 		return 1;
 	}
 
 	private static int info(FabricClientCommandSource source) {
-		AvReceiverBlockEntity receiver = nearestReceiver(source.getClient());
+		AvReceiverBlockEntity receiver = nearestAvReceiver(source.getClient());
 		if (receiver == null) {
 			return noReceiver(source);
 		}
@@ -169,7 +169,7 @@ public final class ClientCinemaCommand {
 		return 1;
 	}
 
-	private static AvReceiverBlockEntity nearestReceiver(Minecraft client) {
+	private static AvReceiverBlockEntity nearestAvReceiver(Minecraft client) {
 		if (client.player == null || client.level == null) {
 			return null;
 		}

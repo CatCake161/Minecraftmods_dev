@@ -234,7 +234,7 @@ public final class AvReceiverPlayback {
 	private static double expectedPosition(ClientLevel level, AvReceiverBlockEntity receiver) {
 		double expected = receiver.positionSeconds();
 		if (receiver.state() == AvReceiverBlockEntity.State.PLAYING) {
-			long elapsed = Math.max(0L, level.getGameTime() - receiver.stateGameTime());
+			long elapsed = Math.max(0L, level.getGameTime() - receiver.stateChangedGameTime());
 			expected += elapsed / 20.0;
 		}
 		if (receiver.durationSeconds() > 0.0) {

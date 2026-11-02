@@ -11,7 +11,7 @@ import java.util.concurrent.TimeUnit;
  * error visible in the log before the user tries to play a file.
  */
 public final class CinemaPrewarm {
-	private static final CompletableFuture<Void> LOADED = new CompletableFuture<>();
+	private static final CompletableFuture<Void> loaded = new CompletableFuture<>();
 
 	static {
 		Thread thread = new Thread(CinemaPrewarm::load, "cinema-prewarm");
@@ -28,7 +28,7 @@ public final class CinemaPrewarm {
 
 	public static boolean await() {
 		try {
-			LOADED.get(30, TimeUnit.SECONDS);
+			loaded.get(30, TimeUnit.SECONDS);
 			return true;
 		} catch (Exception e) {
 			FirstMod.LOGGER.warn("cinema prewarm did not finish", e);
@@ -40,11 +40,11 @@ public final class CinemaPrewarm {
 		long started = System.nanoTime();
 		try {
 			String version = Ffmpeg.version();
-			LOADED.complete(null);
+			loaded.complete(null);
 			FirstMod.LOGGER.info("cinema prewarm: external FFmpeg ready in {} ms: {}",
 				String.format("%.0f", (System.nanoTime() - started) / 1e6), version);
 		} catch (Throwable t) {
-			LOADED.completeExceptionally(t);
+			loaded.completeExceptionally(t);
 			FirstMod.LOGGER.error("cinema prewarm failed: {}", t.getMessage());
 			FirstMod.LOGGER.error(Ffmpeg.INSTALL_HINT);
 		}

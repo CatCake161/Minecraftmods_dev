@@ -46,12 +46,12 @@ public class AvReceiverBlockEntity extends BlockEntity {
 	private float volume = 0.8f;
 	private boolean muted;
 	private BlockPos videoTarget;
-	private long stateGameTime;
+	private long stateChangedGameTime;
 	/** Server-only: reset the playback clock on the first tick after loading. */
 	private transient boolean resyncClock;
 
 	public AvReceiverBlockEntity(BlockPos pos, BlockState blockState) {
-		super(FirstMod.AV_RECEIVER_BLOCK_ENTITY, pos, blockState);
+		super(FirstMod.avReceiverBlockEntity, pos, blockState);
 	}
 
 	public static void tick(Level level, BlockPos pos, BlockState blockState, AvReceiverBlockEntity receiver) {
@@ -60,7 +60,7 @@ public class AvReceiverBlockEntity extends BlockEntity {
 		}
 		if (receiver.resyncClock) {
 			receiver.resyncClock = false;
-			receiver.stateGameTime = level.getGameTime();
+			receiver.stateChangedGameTime = level.getGameTime();
 			receiver.markUpdated();
 		}
 		if (receiver.state == State.PLAYING) {
@@ -114,8 +114,8 @@ public class AvReceiverBlockEntity extends BlockEntity {
 		return videoTarget;
 	}
 
-	public long stateGameTime() {
-		return stateGameTime;
+	public long stateChangedGameTime() {
+		return stateChangedGameTime;
 	}
 
 	public boolean selectMedia(String key, long size, String sha256, double duration) {
@@ -128,7 +128,7 @@ public class AvReceiverBlockEntity extends BlockEntity {
 		durationSeconds = Math.max(0.0, duration);
 		positionSeconds = 0.0;
 		state = State.PLAYING;
-		stateGameTime = level.getGameTime();
+		stateChangedGameTime = level.getGameTime();
 		pairNearestProjector(level);
 		markUpdated();
 		return true;
@@ -142,7 +142,7 @@ public class AvReceiverBlockEntity extends BlockEntity {
 			pairNearestProjector(level);
 		}
 		state = State.PLAYING;
-		stateGameTime = level.getGameTime();
+		stateChangedGameTime = level.getGameTime();
 		markUpdated();
 		return true;
 	}
@@ -300,7 +300,7 @@ public class AvReceiverBlockEntity extends BlockEntity {
 
 	private void markUpdated() {
 		if (level != null) {
-			stateGameTime = level.getGameTime();
+			stateChangedGameTime = level.getGameTime();
 		}
 		setChanged();
 		if (level != null && !level.isClientSide) {
@@ -322,7 +322,7 @@ public class AvReceiverBlockEntity extends BlockEntity {
 		if (videoTarget != null) {
 			tag.putLong("videoTarget", videoTarget.asLong());
 		}
-		tag.putLong("stateGameTime", stateGameTime);
+		tag.putLong("stateGameTime", stateChangedGameTime);
 	}
 
 	@Override
@@ -338,7 +338,7 @@ public class AvReceiverBlockEntity extends BlockEntity {
 			tag.contains("volume") ? tag.getDouble("volume") : 0.8));
 		muted = tag.getBoolean("muted");
 		videoTarget = tag.contains("videoTarget") ? BlockPos.of(tag.getLong("videoTarget")) : null;
-		stateGameTime = tag.getLong("stateGameTime");
+		stateChangedGameTime = tag.getLong("stateGameTime");
 		resyncClock = state == State.PLAYING;
 	}
 

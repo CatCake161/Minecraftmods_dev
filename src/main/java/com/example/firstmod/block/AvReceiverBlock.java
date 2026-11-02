@@ -47,7 +47,7 @@ public class AvReceiverBlock extends Block implements EntityBlock {
 	@Override
 	public <T extends BlockEntity> BlockEntityTicker<T> getTicker(Level level, BlockState state,
 																  BlockEntityType<T> type) {
-		if (type != FirstMod.AV_RECEIVER_BLOCK_ENTITY) {
+		if (type != FirstMod.avReceiverBlockEntity) {
 			return null;
 		}
 		return (tickLevel, pos, tickState, blockEntity) -> {

@@ -32,7 +32,7 @@ public final class ProjectorOptics {
 	private static final float MIN_FACING_DOT = 0.20f;
 	private static final float BASE_IMAGE_ASPECT = 16.0f / 9.0f;
 
-	private static final Map<PairingKey, PairingCache> PAIRING_CACHE = new HashMap<>();
+	private static final Map<PairingKey, PairingCache> pairingCache = new HashMap<>();
 
 	private final ProjectorBlockEntity projector;
 	private final ScreenGeometry screen;
@@ -74,7 +74,7 @@ public final class ProjectorOptics {
 		PairingKey key = new PairingKey(level.dimension(), screen.master(),
 			Float.floatToIntBits(videoAspect));
 		long now = System.nanoTime() / 1_000_000L;
-		PairingCache cached = PAIRING_CACHE.get(key);
+		PairingCache cached = pairingCache.get(key);
 		if (cached != null && now - cached.atMs <= PAIRING_CACHE_MS) {
 			return cached.optics;
 		}
@@ -108,7 +108,7 @@ public final class ProjectorOptics {
 			}
 		}
 
-		PAIRING_CACHE.put(key, new PairingCache(now, best));
+		pairingCache.put(key, new PairingCache(now, best));
 		return best;
 	}
 
@@ -149,11 +149,11 @@ public final class ProjectorOptics {
 			? projector.focusDistance()
 			: distance;
 		double focusError = Math.abs(distance - focusDistance);
-		float blurLod = projector.simFocus()
+		float blurLod = projector.isSimFocus()
 			? (float) Math.min(3.0, Math.max(0.0, (focusError - 0.35) * 1.1))
 			: 0.0f;
 		float brightness = projector.opticalBrightness();
-		float ambientWash = projector.simWash() ? (float) projector.ambientWash() : 0.0f;
+		float ambientWash = projector.isSimWash() ? (float) projector.ambientWash() : 0.0f;
 
 		return new ProjectorOptics(projector, screen, lens, center, view, projection, throwRatio,
 			focusDistance, focusError, blurLod, brightness, ambientWash);
@@ -223,7 +223,7 @@ public final class ProjectorOptics {
 		float invW = 1.0f / clip.w;
 		float u = (clip.x * invW + 1.0f) * 0.5f;
 		float v = 1.0f - (clip.y * invW + 1.0f) * 0.5f;
-		if (!projector.simKeystone()) {
+		if (!projector.isSimKeystone()) {
 			return new float[]{u, v};
 		}
 
@@ -281,7 +281,7 @@ public final class ProjectorOptics {
 	}
 
 	public static void clearCache() {
-		PAIRING_CACHE.clear();
+		pairingCache.clear();
 	}
 
 	private static double clamp(double value, double min, double max) {

@@ -9,7 +9,7 @@ import net.minecraft.network.chat.Component;
 import java.util.List;
 
 /** In-game command reference. Invoked with {@code /cinema_help} or {@code /cinema help}. */
-public final class CinemaHelpCommand {
+public final class ClientHelpCommand {
 	private static final List<List<String>> PAGES = List.of(
 		List.of(
 			"§6Cinema 使用帮助 §7(1/7) §fAV 接收器与播放",
@@ -77,7 +77,7 @@ public final class CinemaHelpCommand {
 		)
 	);
 
-	private CinemaHelpCommand() {
+	private ClientHelpCommand() {
 	}
 
 	public static void register(CommandDispatcher<FabricClientCommandSource> dispatcher) {

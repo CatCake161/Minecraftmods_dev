@@ -27,8 +27,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class AvReceiverPlaybackManager {
 	private static final int SCAN_RADIUS_BLOCKS = 64;
 	private static final int SYNC_INTERVAL_TICKS = 10;
-	private static final Map<BlockPos, AvReceiverPlayback> PLAYBACKS = new HashMap<>();
-	private static final AtomicInteger TEXTURE_SEQUENCE = new AtomicInteger();
+	private static final Map<BlockPos, AvReceiverPlayback> playbacks = new HashMap<>();
+	private static final AtomicInteger textureSequence = new AtomicInteger();
 	private static CinemaAudioEngine audioEngine;
 	private static ClientLevel lastLevel;
 	private static int tickCounter;
@@ -54,11 +54,11 @@ public final class AvReceiverPlaybackManager {
 	}
 
 	public static AvReceiverPlayback playbackAt(BlockPos receiverPos) {
-		return receiverPos == null ? null : PLAYBACKS.get(receiverPos);
+		return receiverPos == null ? null : playbacks.get(receiverPos);
 	}
 
 	public static void presentFrames() {
-		for (AvReceiverPlayback playback : PLAYBACKS.values()) {
+		for (AvReceiverPlayback playback : playbacks.values()) {
 			playback.presentFrame();
 		}
 	}
@@ -77,7 +77,7 @@ public final class AvReceiverPlaybackManager {
 	}
 
 	static ResourceLocation nextTextureId() {
-		return FirstMod.id("cinema_video_receiver_" + TEXTURE_SEQUENCE.incrementAndGet());
+		return FirstMod.id("cinema_video_receiver_" + textureSequence.incrementAndGet());
 	}
 
 	private static void scan(ClientLevel level, BlockPos center) {
@@ -98,7 +98,7 @@ public final class AvReceiverPlaybackManager {
 				}
 			}
 		}
-		Iterator<Map.Entry<BlockPos, AvReceiverPlayback>> iterator = PLAYBACKS.entrySet().iterator();
+		Iterator<Map.Entry<BlockPos, AvReceiverPlayback>> iterator = playbacks.entrySet().iterator();
 		while (iterator.hasNext()) {
 			Map.Entry<BlockPos, AvReceiverPlayback> entry = iterator.next();
 			if (seen.contains(entry.getKey())) {
@@ -116,18 +116,18 @@ public final class AvReceiverPlaybackManager {
 
 	private static void sync(ClientLevel level, AvReceiverBlockEntity receiver) {
 		BlockPos pos = receiver.getBlockPos();
-		AvReceiverPlayback playback = PLAYBACKS.computeIfAbsent(pos, AvReceiverPlayback::new);
+		AvReceiverPlayback playback = playbacks.computeIfAbsent(pos, AvReceiverPlayback::new);
 		if (!playback.sync(level, receiver)) {
 			playback.close();
-			PLAYBACKS.remove(pos);
+			playbacks.remove(pos);
 		}
 	}
 
 	private static void closeAll() {
-		for (AvReceiverPlayback playback : PLAYBACKS.values()) {
+		for (AvReceiverPlayback playback : playbacks.values()) {
 			playback.close();
 		}
-		PLAYBACKS.clear();
+		playbacks.clear();
 		// Keep the shared OpenAL context alive across worlds; players reset the
 		// sources when they close, and recreating devices on every reconnect
 		// would leak contexts.

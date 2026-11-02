@@ -8,10 +8,10 @@
 - Minecraft 1.21.1 + Fabric，Java 21；包名 `com.example.firstmod`，模组 id `firstmod`。
 - 主模组构建通过：`.\gradlew build`。
 - 最近一局 M2 验收：接收器 GUI、外部媒体库、4K HEVC 播放稳定；不再 1 秒一次重启。
-- 用户已验收通过：HDR10/HLG、4K60 VP9、4K60 HEVC/AV1、四角对齐/四个朝向、对焦/梯形、拆投影仪立即黑屏、相邻方块不透明。
-- 剩余验收：无音轨长播、亮度 0.01..1、wash 观感（BSL 下某些值画面异常，待定位）。
+- 用户已验收通过：HDR10/HLG、4K60 VP9、4K60 HEVC/AV1、四角对齐/四个朝向、对焦/梯形、亮度 0.01..1、拆投影仪立即黑屏、相邻方块不透明。
+- 剩余验收：无音轨长播、wash 观感（BSL 下某些值画面异常，待定位）。
 - 投影仪光学、外部 FFmpeg、临时 wash GUI 已可运行。
-- **AV Receiver M1/M2 已完成并验收**：M1 把媒体/播放状态/音画时钟迁入接收器，新增 `ReceiverControlPayload`（C2S）与服务端校验；客户端 `AvReceiverPlaybackManager` 每 10 tick 同步接收器状态，视频经 `ProjectorOptics` 路由到屏幕，音频由接收器播放代理驱动共享 OpenAL 5.1。M2 新增接收器 GUI（Media/Speakers/Signal/Settings）、默认库 + 外部媒体库、`lib/<id>/...` key、添加/移除/切换库、记住上次库/文件夹，以及长文本截断、tooltip 换行、滑块 pending、ESC 暂停同步、文字图层修复。接收器每 20 tick 自动配对/重连 48 格内最近投影仪；M1 只允许一个接收器处于播放/暂停（单音频引擎）。设计见 `docs/design/AV-RECEIVER.md`。
+- **AV Receiver M1/M2 已完成并验收**：M1 把媒体/播放状态/音画时钟迁入接收器，新增 `AvReceiverControlPayload`（C2S）与服务端校验；客户端 `AvReceiverPlaybackManager` 每 10 tick 同步接收器状态，视频经 `ProjectorOptics` 路由到屏幕，音频由接收器播放代理驱动共享 OpenAL 5.1。M2 新增接收器 GUI（Media/Speakers/Signal/Settings）、默认库 + 外部媒体库、`lib/<id>/...` key、添加/移除/切换库、记住上次库/文件夹，以及长文本截断、tooltip 换行、滑块 pending、ESC 暂停同步、文字图层修复。接收器每 20 tick 自动配对/重连 48 格内最近投影仪；M1 只允许一个接收器处于播放/暂停（单音频引擎）。设计见 `docs/design/AV-RECEIVER.md`。
 - 用户已验收通过：M1 选片/播放/暂停/seek/音量/静音、自动配对投影仪、拆接收器/投影仪/屏幕后的停止与恢复、缺文件提示；M2 界面无溢出、截断/tooltip 正常、4K HEVC 不再 1 秒重启、关闭 GUI 后记住库/文件夹。
 - 扬声器已拆分为四种箱体：落地式 `speaker`（两格高）、书架式 `bookshelf_speaker`（一格高，FL/FR/BL/BR）、中置 `center_speaker`（一格高，FC）、低音炮 `subwoofer`（一格高，LFE）；空手右键打开该扬声器的 directivity GUI，角色选择也在 GUI 内（Done 提交服务端）。落地式下半格持有 block entity，上半格为无 block entity 的延伸；破坏任一半只掉一个物品。线材/遥控器物品已创建，行为尚未接入。
 - 用户已验收通过：四种扬声器外观与角色限制、两格落地式放置/破坏、书架式原落地模型、手持与放置均无闪烁。
@@ -27,14 +27,14 @@
    - GUI 不出现文件选择、codec、解码 FPS、丢帧、播放控制。
 3. **扬声器只做回放**
    - 只接收接收器分配的声道，不直接读文件、不解码。
-4. **投影仪 GUI 的正式设计见 `docs/design/PROJECTOR-GUI.md`**；当前 `ProjectorScreen` 只是临时 wash 滑块。
+4. **投影仪 GUI 的正式设计见 `docs/design/PROJECTOR-GUI.md`**；当前 `ProjectorConfigScreen` 只是临时 wash 滑块。
 5. 投影仪右键打开 GUI；Done 保存并关闭，Cancel/Esc 丢弃。
 
 ## 3. 本会话已完成
 
 - 用户已验收通过投影仪 GUI M1/M2/M3：状态区、光学/wash、Throw/Focus Auto、Power、四个模拟开关、改动即保存；对焦模糊观感一般，列为后续改进。
 - 投影仪 GUI M1/M2/M3：
-  - `ProjectorScreen` 替换临时 wash 滑块；状态区显示屏幕、灯泡、AV 输入；光学/wash 滑块只改草稿。
+  - `ProjectorConfigScreen` 替换临时 wash 滑块；状态区显示屏幕、灯泡、AV 输入；光学/wash 滑块只改草稿。
   - 新增 C2S `ProjectorSettingsPayload` + `ProjectorSettingsHandler`；服务端校验距离/方块/范围后 `ProjectorBlockEntity.applySettings` 一次写入。
   - 自动/手动投掷比与焦距、Power ON/OFF、Defaults、改动即保存（按钮立即/滑块 debounce）、GUI 不暂停；2 列紧凑布局。
   - M3 物理模拟开关 Focus/Keystone/Wash/Warmup：切换即发送，`ProjectorOptics` 和灯泡 ramp 按开关跳过对应计算，NBT/网络同步。
@@ -76,7 +76,7 @@
 ## 4. 已知问题 / 风险
 
 - 4K60/HDR 已由用户验收通过；建议后续记录具体 codec/pix_fmt/hwaccel/丢帧数据，便于回归。
-- **BSL 下 ambient wash 某些值画面异常（待定位具体表现/数值）**；brightness 0.01..1 尚未验收；无音轨墙钟长播未测。
+- **BSL 下 ambient wash 某些值画面异常（待定位具体表现/数值）**；无音轨墙钟长播未测。
 - M2 GUI 测试期间再次出现 `nvoglv64.dll` ACCESS_VIOLATION（NVIDIA OpenGL 驱动层），栈为 `CinemaVideoTexture.upload → glTexSubImage2D`；不是 Java 异常。已改为每个接收器跨 seek 复用视频纹理，并提供 `-Dfirstmod.video.glFinish=true` 诊断开关，待复测。
 - AV Receiver M1 已完成；M2 接收器 GUI 已实现，等待游戏内验收。投影仪/扬声器仍使用接收器的共享播放代理。
 - **音频声学仍是规划**：见 `docs/design/AUDIO-ACOUSTICS.md`。EAXReverb 只计划用于晚期尾音；早期反射用一阶镜像源 + **Spinorama 实测扬声器指向性**。依赖 M4 扬声器路由/Seat；EFX 可用性、材质吸收、型号映射都需 spike/校准。
@@ -91,18 +91,18 @@
 ## 5. 下一步优先级
 
 1. **投影仪 GUI M1/M2/M3（已通过游戏内验收）**
-   - `ProjectorScreen` 已替换临时 wash 滑块：M1 状态区显示屏幕尺寸/坐标/距离、灯泡 warming/on/cooling、AV 链接/状态/分辨率；不显示媒体、codec、丢帧或播放控制。
+   - `ProjectorConfigScreen` 已替换临时 wash 滑块：M1 状态区显示屏幕尺寸/坐标/距离、灯泡 warming/on/cooling、AV 链接/状态/分辨率；不显示媒体、codec、丢帧或播放控制。
    - M2 编辑自动/手动投掷比、自动/手动焦距、垂直/水平梯形、亮度、wash、Power ON/OFF；**改动即保存**：按钮/Defaults 立即发送，滑块约 200 ms debounce，Close/Esc 前 flush；没有 Cancel/Done。
    - M3 四个物理模拟开关（Focus/Keystone/Wash/Warmup）保存在 block entity，切换即发送，关闭后 `ProjectorOptics`/灯泡路径跳过对应计算。
    - 已知观感问题：对焦模糊当前基于 mipmap/LOD，物理效果一般；后续可评估多级采样/卷积/景深，暂不阻塞。
    - 服务端 `ProjectorSettingsHandler` 校验距离/方块/有限值/范围，`ProjectorBlockEntity.applySettings` 一次性写入并同步；GUI `isPauseScreen=false`。
-   - 关键文件：`ProjectorScreen.java`、`ProjectorBlockEntity.java`、`ProjectorSettingsPayload.java`、`ProjectorSettingsHandler.java`、`ProjectorSettingsClient.java`、`ProjectorOptics.java`。
+   - 关键文件：`ProjectorConfigScreen.java`、`ProjectorBlockEntity.java`、`ProjectorSettingsPayload.java`、`ProjectorSettingsHandler.java`、`ProjectorSettingsClient.java`、`ProjectorOptics.java`。
    - 下一步：游戏内验收 M1/M2/M3，然后 M4 配对/诊断。
 2. **M3 每接收器独立播放**
    - 独立播放器/纹理/音频引擎；第二接收器不再拒绝
    - 继续观察 NVIDIA 视频上传崩溃与音频设备切换恢复
 3. **剩余验收与 wash 修复**
-   - 定位 BSL 下 wash 异常；补测 brightness 0.01..1
+   - 定位 BSL 下 wash 异常
    - 无音轨墙钟长播；记录 4K/HDR codec/hwaccel/丢帧回归数据
 4. **媒体能力扩展**：音轨/视频轨/字幕选择与渲染、AV Receiver Video Processing、拖放导入媒体库
 5. **M4 扬声器 5.1 路由、Seat、LAN、资源重载、长片测试、GUI 进一步打磨**
@@ -171,8 +171,8 @@ src/main/java/com/example/firstmod/block/entity/ScreenBlockEntity.java
 src/main/java/com/example/firstmod/command/ProjectorCommand.java
 
 src/client/java/com/example/firstmod/client/FirstModClient.java
-src/client/java/com/example/firstmod/client/gui/ProjectorScreen.java
-src/client/java/com/example/firstmod/client/command/CinemaHelpCommand.java
+src/client/java/com/example/firstmod/client/gui/ProjectorConfigScreen.java
+src/client/java/com/example/firstmod/client/command/ClientHelpCommand.java
 src/client/java/com/example/firstmod/client/command/ClientProjectorCommand.java
 src/client/java/com/example/firstmod/client/media/          # FFmpeg/播放/音频/纹理
 src/client/java/com/example/firstmod/client/render/ProjectorOptics.java

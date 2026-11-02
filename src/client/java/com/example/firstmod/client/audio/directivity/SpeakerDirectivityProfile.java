@@ -113,11 +113,11 @@ public final class SpeakerDirectivityProfile {
 		return onAxisSpl.length;
 	}
 
-	public boolean measured() {
+	public boolean isMeasured() {
 		return pattern == Pattern.MEASURED;
 	}
 
-	public boolean unmeasured() {
+	public boolean isUnmeasured() {
 		return pattern == Pattern.UNMEASURED;
 	}
 

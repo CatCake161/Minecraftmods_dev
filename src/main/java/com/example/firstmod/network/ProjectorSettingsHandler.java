@@ -34,7 +34,7 @@ public final class ProjectorSettingsHandler {
 			return;
 		}
 		projector.applySettings(payload.throwRatio(), payload.focusDistance(),
-			payload.keystoneVertical(), payload.keystoneHorizontal(),
+			payload.keystoneVerticalDegrees(), payload.keystoneHorizontalDegrees(),
 			payload.brightness(), payload.ambientWash(), payload.powered(),
 			payload.simFocus(), payload.simKeystone(),
 			payload.simWash(), payload.simWarmup());
@@ -47,9 +47,9 @@ public final class ProjectorSettingsHandler {
 			&& (payload.focusDistance() == -1.0
 				|| (finite(payload.focusDistance()) && inRange(payload.focusDistance(),
 					ProjectorBlockEntity.MIN_FOCUS_DISTANCE, ProjectorBlockEntity.MAX_FOCUS_DISTANCE)))
-			&& finite(payload.keystoneVertical()) && inRange(payload.keystoneVertical(),
+			&& finite(payload.keystoneVerticalDegrees()) && inRange(payload.keystoneVerticalDegrees(),
 				ProjectorBlockEntity.MIN_KEYSTONE_DEGREES, ProjectorBlockEntity.MAX_KEYSTONE_DEGREES)
-			&& finite(payload.keystoneHorizontal()) && inRange(payload.keystoneHorizontal(),
+			&& finite(payload.keystoneHorizontalDegrees()) && inRange(payload.keystoneHorizontalDegrees(),
 				ProjectorBlockEntity.MIN_KEYSTONE_DEGREES, ProjectorBlockEntity.MAX_KEYSTONE_DEGREES)
 			&& finite(payload.brightness()) && inRange(payload.brightness(),
 				ProjectorBlockEntity.MIN_BRIGHTNESS, ProjectorBlockEntity.MAX_BRIGHTNESS)

@@ -15,36 +15,36 @@ import java.util.Set;
  */
 final class FrameBufferPool {
 	private static final int MAX_FREE = 12;
-	private static final ArrayDeque<ByteBuffer> FREE = new ArrayDeque<>();
-	private static final Set<ByteBuffer> FREE_IDS =
+	private static final ArrayDeque<ByteBuffer> freeBuffers = new ArrayDeque<>();
+	private static final Set<ByteBuffer> freeBufferIds =
 		Collections.newSetFromMap(new IdentityHashMap<>());
 
 	private FrameBufferPool() {
 	}
 
 	static synchronized ByteBuffer acquire(int bytes) {
-		ByteBuffer buffer = FREE.pollFirst();
+		ByteBuffer buffer = freeBuffers.pollFirst();
 		while (buffer != null) {
-			FREE_IDS.remove(buffer);
+			freeBufferIds.remove(buffer);
 			if (buffer.capacity() >= bytes) {
 				buffer.clear();
 				buffer.limit(bytes);
 				return buffer;
 			}
-			buffer = FREE.pollFirst();
+			buffer = freeBuffers.pollFirst();
 		}
 		return ByteBuffer.allocateDirect(bytes);
 	}
 
 	static synchronized void release(ByteBuffer buffer) {
-		if (buffer == null || !FREE_IDS.add(buffer)) {
+		if (buffer == null || !freeBufferIds.add(buffer)) {
 			return;
 		}
 		buffer.clear();
-		if (FREE.size() >= MAX_FREE) {
-			FREE_IDS.remove(buffer);
+		if (freeBuffers.size() >= MAX_FREE) {
+			freeBufferIds.remove(buffer);
 			return;
 		}
-		FREE.addFirst(buffer);
+		freeBuffers.addFirst(buffer);
 	}
 }

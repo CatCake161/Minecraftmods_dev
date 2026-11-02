@@ -10,12 +10,12 @@ public final class ProjectorSettingsClient {
 	}
 
 	public static void send(BlockPos projectorPos, double throwRatio, double focusDistance,
-							double keystoneVertical, double keystoneHorizontal,
+							double keystoneVerticalDegrees, double keystoneHorizontalDegrees,
 							double brightness, double ambientWash, boolean powered,
 							boolean simFocus, boolean simKeystone,
 							boolean simWash, boolean simWarmup) {
 		ClientPlayNetworking.send(new ProjectorSettingsPayload(projectorPos, throwRatio,
-			focusDistance, keystoneVertical, keystoneHorizontal, brightness, ambientWash,
+			focusDistance, keystoneVerticalDegrees, keystoneHorizontalDegrees, brightness, ambientWash,
 			powered, simFocus, simKeystone, simWash, simWarmup));
 	}
 }

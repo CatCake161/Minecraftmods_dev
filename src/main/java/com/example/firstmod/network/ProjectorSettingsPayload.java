@@ -12,8 +12,8 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
  * values and the block before applying them.
  */
 public record ProjectorSettingsPayload(BlockPos projectorPos, double throwRatio,
-									   double focusDistance, double keystoneVertical,
-									   double keystoneHorizontal, double brightness,
+									   double focusDistance, double keystoneVerticalDegrees,
+									   double keystoneHorizontalDegrees, double brightness,
 									   double ambientWash, boolean powered,
 									   boolean simFocus, boolean simKeystone,
 									   boolean simWash, boolean simWarmup)
@@ -37,8 +37,8 @@ public record ProjectorSettingsPayload(BlockPos projectorPos, double throwRatio,
 				buffer.writeBlockPos(payload.projectorPos());
 				buffer.writeDouble(payload.throwRatio());
 				buffer.writeDouble(payload.focusDistance());
-				buffer.writeDouble(payload.keystoneVertical());
-				buffer.writeDouble(payload.keystoneHorizontal());
+				buffer.writeDouble(payload.keystoneVerticalDegrees());
+				buffer.writeDouble(payload.keystoneHorizontalDegrees());
 				buffer.writeDouble(payload.brightness());
 				buffer.writeDouble(payload.ambientWash());
 				buffer.writeBoolean(payload.powered());

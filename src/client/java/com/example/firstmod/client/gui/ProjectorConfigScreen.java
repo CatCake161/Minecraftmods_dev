@@ -32,7 +32,7 @@ import java.util.function.DoubleFunction;
  * debounced, button changes are sent at once, and the screen does not pause the
  * game.
  */
-public final class ProjectorScreen extends Screen {
+public final class ProjectorConfigScreen extends Screen {
 	private static final double DEFAULT_THROW_RATIO = 1.75;
 	private static final double DEFAULT_FOCUS_DISTANCE = 8.0;
 	private static final double DEFAULT_BRIGHTNESS = 1.0;
@@ -43,8 +43,8 @@ public final class ProjectorScreen extends Screen {
 	private boolean focusAuto;
 	private double draftThrowRatio;
 	private double draftFocusDistance;
-	private double draftKeystoneVertical;
-	private double draftKeystoneHorizontal;
+	private double draftKeystoneVerticalDegrees;
+	private double draftKeystoneHorizontalDegrees;
 	private double draftBrightness;
 	private double draftAmbientWash;
 	private boolean draftPowered;
@@ -70,10 +70,10 @@ public final class ProjectorScreen extends Screen {
 	private final List<String> statusLines = new ArrayList<>();
 	private ProjectorSlider throwSlider;
 	private ProjectorSlider focusSlider;
-	private ProjectorSlider keystoneVerticalSlider;
-	private ProjectorSlider keystoneHorizontalSlider;
+	private ProjectorSlider keystoneVerticalDegreesSlider;
+	private ProjectorSlider keystoneHorizontalDegreesSlider;
 	private ProjectorSlider brightnessSlider;
-	private ProjectorSlider washSlider;
+	private ProjectorSlider ambientWashSlider;
 	private Button powerButton;
 	private Button throwAutoButton;
 	private Button focusAutoButton;
@@ -82,7 +82,7 @@ public final class ProjectorScreen extends Screen {
 	private Button simWashButton;
 	private Button simWarmupButton;
 
-	public ProjectorScreen(ProjectorBlockEntity projector) {
+	public ProjectorConfigScreen(ProjectorBlockEntity projector) {
 		super(Component.literal("Cinema Projector"));
 		this.projector = projector;
 		loadDraft();
@@ -94,15 +94,15 @@ public final class ProjectorScreen extends Screen {
 		focusAuto = projector.focusDistance() < 0.0;
 		draftFocusDistance = focusAuto ? DEFAULT_FOCUS_DISTANCE : projector.focusDistance();
 		lastManualFocus = draftFocusDistance;
-		draftKeystoneVertical = projector.keystoneVerticalDegrees();
-		draftKeystoneHorizontal = projector.keystoneHorizontalDegrees();
+		draftKeystoneVerticalDegrees = projector.keystoneVerticalDegrees();
+		draftKeystoneHorizontalDegrees = projector.keystoneHorizontalDegrees();
 		draftBrightness = projector.brightness();
 		draftAmbientWash = projector.ambientWash();
 		draftPowered = projector.isPowered();
-		draftSimFocus = projector.simFocus();
-		draftSimKeystone = projector.simKeystone();
-		draftSimWash = projector.simWash();
-		draftSimWarmup = projector.simWarmup();
+		draftSimFocus = projector.isSimFocus();
+		draftSimKeystone = projector.isSimKeystone();
+		draftSimWash = projector.isSimWash();
+		draftSimWarmup = projector.isSimWarmup();
 	}
 
 	@Override
@@ -148,11 +148,11 @@ public final class ProjectorScreen extends Screen {
 					? String.format(Locale.ROOT, "Throw: auto · %.2f", resolvedThrowRatio)
 					: "Throw: auto")
 				: String.format(Locale.ROOT, "Throw ratio %.2f", value));
-		keystoneVerticalSlider = addSlider(rightX, row1, half,
+		keystoneVerticalDegreesSlider = addSlider(rightX, row1, half,
 			ProjectorBlockEntity.MIN_KEYSTONE_DEGREES, ProjectorBlockEntity.MAX_KEYSTONE_DEGREES,
-			draftKeystoneVertical, 1.0,
+			draftKeystoneVerticalDegrees, 1.0,
 			value -> {
-				draftKeystoneVertical = value;
+				draftKeystoneVerticalDegrees = value;
 				markDirty();
 			},
 			value -> String.format(Locale.ROOT, "Keystone V %+.1f°", value));
@@ -177,11 +177,11 @@ public final class ProjectorScreen extends Screen {
 					? String.format(Locale.ROOT, "Focus: auto · %.2f m", screenDistance)
 					: "Focus: auto")
 				: String.format(Locale.ROOT, "Focus %.2f m", value));
-		keystoneHorizontalSlider = addSlider(rightX, row2, half,
+		keystoneHorizontalDegreesSlider = addSlider(rightX, row2, half,
 			ProjectorBlockEntity.MIN_KEYSTONE_DEGREES, ProjectorBlockEntity.MAX_KEYSTONE_DEGREES,
-			draftKeystoneHorizontal, 1.0,
+			draftKeystoneHorizontalDegrees, 1.0,
 			value -> {
-				draftKeystoneHorizontal = value;
+				draftKeystoneHorizontalDegrees = value;
 				markDirty();
 			},
 			value -> String.format(Locale.ROOT, "Keystone H %+.1f°", value));
@@ -194,7 +194,7 @@ public final class ProjectorScreen extends Screen {
 				markDirty();
 			},
 			value -> String.format(Locale.ROOT, "Brightness %.0f%%", value * 100.0));
-		washSlider = addSlider(rightX, row3, half,
+		ambientWashSlider = addSlider(rightX, row3, half,
 			ProjectorBlockEntity.MIN_AMBIENT_WASH, ProjectorBlockEntity.MAX_AMBIENT_WASH,
 			draftAmbientWash, 0.01,
 			value -> {
@@ -241,10 +241,10 @@ public final class ProjectorScreen extends Screen {
 		throwSlider.active = !throwAuto;
 		focusSlider.setActual(draftFocusDistance);
 		focusSlider.active = !focusAuto;
-		keystoneVerticalSlider.setActual(draftKeystoneVertical);
-		keystoneHorizontalSlider.setActual(draftKeystoneHorizontal);
+		keystoneVerticalDegreesSlider.setActual(draftKeystoneVerticalDegrees);
+		keystoneHorizontalDegreesSlider.setActual(draftKeystoneHorizontalDegrees);
 		brightnessSlider.setActual(draftBrightness);
-		washSlider.setActual(draftAmbientWash);
+		ambientWashSlider.setActual(draftAmbientWash);
 		powerButton.setMessage(powerLabel());
 		throwAutoButton.setMessage(throwAutoLabel());
 		focusAutoButton.setMessage(focusAutoLabel());
@@ -307,8 +307,8 @@ public final class ProjectorScreen extends Screen {
 		draftFocusDistance = screenDistance > 0.5 ? screenDistance : DEFAULT_FOCUS_DISTANCE;
 		lastManualFocus = draftFocusDistance;
 		focusAuto = true;
-		draftKeystoneVertical = 0.0;
-		draftKeystoneHorizontal = 0.0;
+		draftKeystoneVerticalDegrees = 0.0;
+		draftKeystoneHorizontalDegrees = 0.0;
 		draftBrightness = DEFAULT_BRIGHTNESS;
 		draftAmbientWash = DEFAULT_AMBIENT_WASH;
 		draftPowered = true;
@@ -503,8 +503,8 @@ public final class ProjectorScreen extends Screen {
 		dirty = false;
 		ProjectorSettingsClient.send(projector.getBlockPos(),
 			throwAuto ? -1.0 : draftThrowRatio,
-			focusAuto ? -1.0 : draftFocusDistance, draftKeystoneVertical,
-			draftKeystoneHorizontal, draftBrightness, draftAmbientWash,
+			focusAuto ? -1.0 : draftFocusDistance, draftKeystoneVerticalDegrees,
+			draftKeystoneHorizontalDegrees, draftBrightness, draftAmbientWash,
 			draftPowered, draftSimFocus, draftSimKeystone, draftSimWash, draftSimWarmup);
 	}
 

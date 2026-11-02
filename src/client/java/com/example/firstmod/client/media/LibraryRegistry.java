@@ -26,7 +26,7 @@ import java.util.Locale;
 public final class LibraryRegistry {
 	public static final String DEFAULT_ID = "default";
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-	private static final List<StoredLibrary> EXTERNAL = new ArrayList<>();
+	private static final List<StoredLibrary> externalLibraries = new ArrayList<>();
 	private static boolean loaded;
 
 	private LibraryRegistry() {
@@ -52,7 +52,7 @@ public final class LibraryRegistry {
 		load();
 		List<Library> result = new ArrayList<>();
 		result.add(new Library(DEFAULT_ID, "Cinema Media", defaultRoot()));
-		for (StoredLibrary stored : EXTERNAL) {
+		for (StoredLibrary stored : externalLibraries) {
 			try {
 				result.add(new Library(stored.id, stored.name,
 					Path.of(stored.path).toAbsolutePath().normalize()));
@@ -110,7 +110,7 @@ public final class LibraryRegistry {
 		stored.id = id;
 		stored.name = name;
 		stored.path = root.toString();
-		EXTERNAL.add(stored);
+		externalLibraries.add(stored);
 		save();
 		FirstMod.LOGGER.info("cinema media: added external library {} ({})", name, id);
 		return new Library(id, name, root);
@@ -121,7 +121,7 @@ public final class LibraryRegistry {
 		if (DEFAULT_ID.equals(id)) {
 			return false;
 		}
-		boolean removed = EXTERNAL.removeIf(stored -> stored.id.equals(id));
+		boolean removed = externalLibraries.removeIf(stored -> stored.id.equals(id));
 		if (removed) {
 			save();
 			FirstMod.LOGGER.info("cinema media: removed external library {}", id);
@@ -159,7 +159,7 @@ public final class LibraryRegistry {
 			if (data != null && data.libraries != null) {
 				for (StoredLibrary stored : data.libraries) {
 					if (stored.id != null && stored.name != null && stored.path != null) {
-						EXTERNAL.add(stored);
+						externalLibraries.add(stored);
 					}
 				}
 			}
@@ -171,7 +171,7 @@ public final class LibraryRegistry {
 	private static void save() {
 		Path file = configFile();
 		StoredLibraries data = new StoredLibraries();
-		data.libraries = new ArrayList<>(EXTERNAL);
+		data.libraries = new ArrayList<>(externalLibraries);
 		try {
 			Files.createDirectories(file.getParent());
 			try (Writer writer = Files.newBufferedWriter(file, StandardCharsets.UTF_8)) {

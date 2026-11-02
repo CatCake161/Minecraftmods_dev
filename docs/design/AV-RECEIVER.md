@@ -71,7 +71,7 @@ positionSeconds   double      服务端权威播放位置
 volume            float       0..1
 muted             boolean
 videoTarget       BlockPos    配对的投影仪；空 = 无视频输出
-stateGameTime     long        服务端写入状态时的 game time
+stateChangedGameTime     long        服务端写入状态时的 game time（NBT key 仍为 stateGameTime）
 ```
 
 服务端 tick：
@@ -150,11 +150,11 @@ STOPPED ──select/play──→ PLAYING ──pause──→ PAUSED
 ### 5.2 服务端时钟
 
 - 服务端只维护一个粗粒度权威位置，精度 1 tick。
-- `stateGameTime` 用于客户端估算当前应有位置：
+- `stateChangedGameTime` 用于客户端估算当前应有位置：
 
 ```text
 expected = positionSeconds
-         + (state == PLAYING ? (nowGameTime - stateGameTime) / 20.0 : 0)
+         + (state == PLAYING ? (nowGameTime - stateChangedGameTime) / 20.0 : 0)
 ```
 
 - 服务端不参与音画同步；每个客户端的音频设备时钟仍是本机 A/V 主时钟。
@@ -181,10 +181,10 @@ M1 不新增 S2C 包：
 
 ### 6.2 C2S：控制包
 
-新增 `ReceiverControlPayload`（Fabric `CustomPacketPayload`）：
+新增 `AvReceiverControlPayload`（Fabric `CustomPacketPayload`）：
 
 ```text
-BlockPos receiverPos
+BlockPos avReceiverPos
 Action action        SELECT_MEDIA / PLAY / PAUSE / STOP / SEEK / SET_VOLUME / LINK_PROJECTOR
 String mediaKey
 long mediaSize
@@ -203,7 +203,7 @@ double value         seek 秒 / 音量 0..1
 
 ### 6.3 为什么 M1 不用聊天命令做 GUI 后端
 
-正式 GUI 不应依赖 `sendCommand`。M1 的临时命令只是调试入口，底层仍走同一个 `ReceiverControlPayload` 和服务端 setter；M2 GUI 直接复用。
+正式 GUI 不应依赖 `sendCommand`。M1 的临时命令只是调试入口，底层仍走同一个 `AvReceiverControlPayload` 和服务端 setter；M2 GUI 直接复用。
 
 ## 7. 视频路由
 
@@ -369,7 +369,7 @@ duration, volume, muted, missing, CinemaPlayer player
 ### 10.8 实现约束
 
 - 媒体库由客户端扫描；服务端不读客户端文件。默认库 key 为相对路径，外部库 key 为 `lib/<id>/<相对路径>`；绝对路径只留在客户端 `cinema/libraries.json`。选片时客户端上传 key、大小、SHA-256、时长；接收器只存元数据。
-- GUI 控件走 `ReceiverControlPayload` C2S；服务端校验距离/方块/路径/数值。
+- GUI 控件走 `AvReceiverControlPayload` C2S；服务端校验距离/方块/路径/数值。
 - 媒体列表、哈希、时长不得在渲染线程同步执行。
 - 支持 GUI scale 1..4、键盘操作、tooltip、禁用态；文本走 lang。
 - Done 保存并关闭，Cancel/Esc 丢弃未提交的媒体/音量草稿。
@@ -388,7 +388,7 @@ duration, volume, muted, missing, CinemaPlayer player
 M1 已完成并通过游戏内验收：
 
 - 固定媒体库 `<game>/cinema/media/` + 相对 key；客户端异步计算 SHA-256/时长。
-- `ReceiverControlPayload`（C2S）统一处理选片/播放/暂停/停止/seek/音量/静音/重连投影仪。
+- `AvReceiverControlPayload`（C2S）统一处理选片/播放/暂停/停止/seek/音量/静音/重连投影仪。
 - 客户端 `AvReceiverPlaybackManager` 每 10 tick 同步附近接收器；视频经 `ProjectorOptics` 路由到屏幕，音频进入共享 OpenAL 5.1 引擎。
 - 接收器每 20 tick 自动配对/重连 48 格内最近投影仪；`/cinema_link` 仅用于强制重扫。
 - 单接收器占用音频引擎；第二个接收器在播放/暂停状态下会被拒绝，需先 `/cinema_stop`。
@@ -406,7 +406,7 @@ M2 已完成并通过游戏内验收：
 
 1. 注册 `av_receiver` 方块/物品/block entity，加入创造模式物品栏。
 2. `ProjectorBlockEntity` 增加 `receiverPos` 持久化/同步/清理。
-3. 新增 `ReceiverControlPayload`（C2S）及服务端 handler；服务端 setter 统一做范围/路径校验。
+3. 新增 `AvReceiverControlPayload`（C2S）及服务端 handler；服务端 setter 统一做范围/路径校验。
 4. `CinemaPlayer` 纹理 ID 实例化、音量/静音接口、音频引擎注入。
 5. 新增客户端 `AvReceiverPlaybackManager` / `AvReceiverPlayback`，每 10 tick 扫描附近接收器。
 6. `ScreenBlockEntityRenderer` 改为从播放管理器取对应接收器的播放实例。

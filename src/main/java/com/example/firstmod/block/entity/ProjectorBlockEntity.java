@@ -59,7 +59,7 @@ public class ProjectorBlockEntity extends BlockEntity {
 	private float lampLevel;
 
 	public ProjectorBlockEntity(BlockPos pos, BlockState state) {
-		super(FirstMod.PROJECTOR_BLOCK_ENTITY, pos, state);
+		super(FirstMod.projectorBlockEntity, pos, state);
 	}
 
 	public static void tick(Level level, BlockPos pos, BlockState state, ProjectorBlockEntity projector) {
@@ -149,19 +149,19 @@ public class ProjectorBlockEntity extends BlockEntity {
 		return powered;
 	}
 
-	public boolean simFocus() {
+	public boolean isSimFocus() {
 		return simFocus;
 	}
 
-	public boolean simKeystone() {
+	public boolean isSimKeystone() {
 		return simKeystone;
 	}
 
-	public boolean simWash() {
+	public boolean isSimWash() {
 		return simWash;
 	}
 
-	public boolean simWarmup() {
+	public boolean isSimWarmup() {
 		return simWarmup;
 	}
 

@@ -29,7 +29,7 @@ import java.util.Locale;
  * Drop a JSON profile onto this screen to import it. Done saves the selected
  * profile and simple parameters; Cancel discards the draft.
  */
-public final class SpeakerDirectivityScreen extends Screen {
+public final class SpeakerDirectivityConfigScreen extends Screen {
 	private static final int ROW_HEIGHT = 16;
 	private static final int TYPE_ROW_HEIGHT = 18;
 
@@ -68,11 +68,11 @@ public final class SpeakerDirectivityScreen extends Screen {
 	private long statusUntil;
 	private boolean closing;
 
-	public SpeakerDirectivityScreen(Screen parent) {
+	public SpeakerDirectivityConfigScreen(Screen parent) {
 		this(parent, null);
 	}
 
-	public SpeakerDirectivityScreen(Screen parent, SpeakerBlockEntity speaker) {
+	public SpeakerDirectivityConfigScreen(Screen parent, SpeakerBlockEntity speaker) {
 		super(Component.literal("Speaker Directivity (Spike)"));
 		this.parent = parent;
 		this.speaker = speaker;

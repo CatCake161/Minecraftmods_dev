@@ -26,7 +26,7 @@ import java.util.Map;
  */
 public final class SpeakerDirectivityAssignments {
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-	private static final Map<String, Assignment> ASSIGNMENTS = new HashMap<>();
+	private static final Map<String, Assignment> assignmentsByKey = new HashMap<>();
 	private static boolean loaded;
 
 	private SpeakerDirectivityAssignments() {
@@ -71,11 +71,11 @@ public final class SpeakerDirectivityAssignments {
 				double low = getDouble(value, "lowHz", 20.0);
 				double high = getDouble(value, "highHz", 20_000.0);
 				double gain = getDouble(value, "gainDb", 0.0);
-				ASSIGNMENTS.put(entry.getKey(), new Assignment(type,
+				assignmentsByKey.put(entry.getKey(), new Assignment(type,
 					clampSettings(new SpeakerDirectivityRegistry.SpeakerSettings(
 						profileId, low, high, gain))));
 			}
-			FirstMod.LOGGER.info("cinema directivity: {} speaker assignment(s)", ASSIGNMENTS.size());
+			FirstMod.LOGGER.info("cinema directivity: {} speaker assignment(s)", assignmentsByKey.size());
 		} catch (Exception e) {
 			FirstMod.LOGGER.warn("cinema directivity: could not load speaker assignments: {}",
 				e.getMessage());
@@ -86,7 +86,7 @@ public final class SpeakerDirectivityAssignments {
 		if (speaker == null || speaker.getLevel() == null) {
 			return null;
 		}
-		return ASSIGNMENTS.get(key(speaker));
+		return assignmentsByKey.get(key(speaker));
 	}
 
 	public static synchronized SpeakerDirectivityRegistry.SpeakerSettings settingsFor(
@@ -112,14 +112,14 @@ public final class SpeakerDirectivityAssignments {
 		if (SpeakerDirectivityRegistry.find(speaker.type(), settings.profileId()) == null) {
 			return;
 		}
-		ASSIGNMENTS.put(key(speaker), new Assignment(speaker.type(), clampSettings(settings)));
+		assignmentsByKey.put(key(speaker), new Assignment(speaker.type(), clampSettings(settings)));
 		save();
 	}
 
 	public static synchronized void save() {
 		JsonObject root = new JsonObject();
 		JsonObject assignments = new JsonObject();
-		for (Map.Entry<String, Assignment> entry : ASSIGNMENTS.entrySet()) {
+		for (Map.Entry<String, Assignment> entry : assignmentsByKey.entrySet()) {
 			Assignment assignment = entry.getValue();
 			JsonObject value = new JsonObject();
 			value.addProperty("type", assignment.type().id());

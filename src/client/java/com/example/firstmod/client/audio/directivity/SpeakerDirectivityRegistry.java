@@ -36,13 +36,13 @@ public final class SpeakerDirectivityRegistry {
 
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 	private static final long MAX_IMPORT_BYTES = 1_000_000L;
-	private static final Map<SpeakerType, List<SpeakerDirectivityProfile>> PROFILES =
+	private static final Map<SpeakerType, List<SpeakerDirectivityProfile>> profilesByType =
 		new EnumMap<>(SpeakerType.class);
 	/** Selected profile per cabinet type. */
-	private static final Map<SpeakerType, String> SELECTED = new EnumMap<>(SpeakerType.class);
+	private static final Map<SpeakerType, String> selectedByType = new EnumMap<>(SpeakerType.class);
 	/** Simple parameter overrides keyed by {@code TYPE/profileId}. */
-	private static final Map<String, SpeakerSettings> OVERRIDES = new HashMap<>();
-	private static final List<String> PROFILE_ERRORS = new ArrayList<>();
+	private static final Map<String, SpeakerSettings> settingsOverrides = new HashMap<>();
+	private static final List<String> profileErrors = new ArrayList<>();
 	private static boolean loaded;
 
 	private SpeakerDirectivityRegistry() {
@@ -70,12 +70,12 @@ public final class SpeakerDirectivityRegistry {
 		loadSettings();
 		ensureSettingsValid();
 		FirstMod.LOGGER.info("cinema directivity: {} profile(s), {} load error(s)",
-			profileCount(), PROFILE_ERRORS.size());
+			profileCount(), profileErrors.size());
 	}
 
 	public static synchronized ReloadResult reloadProfiles() {
-		PROFILES.clear();
-		PROFILE_ERRORS.clear();
+		profilesByType.clear();
+		profileErrors.clear();
 		installBuiltins();
 		int imported = 0;
 		try {
@@ -94,17 +94,17 @@ public final class SpeakerDirectivityRegistry {
 						imported++;
 					} catch (Exception e) {
 						String message = path.getFileName() + ": " + e.getMessage();
-						PROFILE_ERRORS.add(message);
+						profileErrors.add(message);
 						FirstMod.LOGGER.warn("cinema directivity: {}", message);
 					}
 				}
 			}
 		} catch (IOException e) {
-			PROFILE_ERRORS.add("profiles folder: " + e.getMessage());
+			profileErrors.add("profiles folder: " + e.getMessage());
 			FirstMod.LOGGER.warn("cinema directivity: could not scan profiles: {}", e.getMessage());
 		}
 		ensureSettingsValid();
-		return new ReloadResult(imported, List.copyOf(PROFILE_ERRORS));
+		return new ReloadResult(imported, List.copyOf(profileErrors));
 	}
 
 	public static synchronized SpeakerDirectivityProfile importProfile(Path source) throws IOException {
@@ -132,14 +132,14 @@ public final class SpeakerDirectivityRegistry {
 	}
 
 	public static synchronized List<SpeakerDirectivityProfile> profilesFor(SpeakerType type) {
-		return List.copyOf(PROFILES.getOrDefault(type, List.of()));
+		return List.copyOf(profilesByType.getOrDefault(type, List.of()));
 	}
 
 	public static synchronized SpeakerDirectivityProfile find(SpeakerType type, String id) {
 		if (type == null || id == null || id.isBlank()) {
 			return null;
 		}
-		for (SpeakerDirectivityProfile profile : PROFILES.getOrDefault(type, List.of())) {
+		for (SpeakerDirectivityProfile profile : profilesByType.getOrDefault(type, List.of())) {
 			if (profile.id().equals(id)) {
 				return profile;
 			}
@@ -150,7 +150,7 @@ public final class SpeakerDirectivityRegistry {
 	/** Settings for the currently selected profile of this type. */
 	public static synchronized SpeakerSettings settings(SpeakerType type) {
 		ensureSettingsValid();
-		String selected = SELECTED.get(type);
+		String selected = selectedByType.get(type);
 		return profileSettings(type, selected);
 	}
 
@@ -164,7 +164,7 @@ public final class SpeakerDirectivityRegistry {
 		if (profile == null) {
 			return defaultSettings(type);
 		}
-		SpeakerSettings saved = OVERRIDES.get(key(type, profileId));
+		SpeakerSettings saved = settingsOverrides.get(key(type, profileId));
 		if (saved != null) {
 			return saved;
 		}
@@ -176,7 +176,7 @@ public final class SpeakerDirectivityRegistry {
 			return;
 		}
 		putOverride(type, settings);
-		SELECTED.put(type, settings.profileId());
+		selectedByType.put(type, settings.profileId());
 	}
 
 	public static synchronized void saveSettings() {
@@ -184,7 +184,7 @@ public final class SpeakerDirectivityRegistry {
 		JsonObject root = new JsonObject();
 		JsonObject selected = new JsonObject();
 		for (SpeakerType type : SpeakerType.values()) {
-			String profileId = SELECTED.get(type);
+			String profileId = selectedByType.get(type);
 			if (profileId != null) {
 				selected.addProperty(type.name(), profileId);
 			}
@@ -192,7 +192,7 @@ public final class SpeakerDirectivityRegistry {
 		root.add("selected", selected);
 
 		JsonObject profiles = new JsonObject();
-		for (Map.Entry<String, SpeakerSettings> entry : OVERRIDES.entrySet()) {
+		for (Map.Entry<String, SpeakerSettings> entry : settingsOverrides.entrySet()) {
 			String key = entry.getKey();
 			int slash = key.indexOf('/');
 			if (slash <= 0 || slash == key.length() - 1) {
@@ -226,14 +226,14 @@ public final class SpeakerDirectivityRegistry {
 
 	public static synchronized int profileCount() {
 		int count = 0;
-		for (List<SpeakerDirectivityProfile> list : PROFILES.values()) {
+		for (List<SpeakerDirectivityProfile> list : profilesByType.values()) {
 			count += list.size();
 		}
 		return count;
 	}
 
 	public static synchronized List<String> errors() {
-		return List.copyOf(PROFILE_ERRORS);
+		return List.copyOf(profileErrors);
 	}
 
 	public static Path rootDir() {
@@ -304,7 +304,7 @@ public final class SpeakerDirectivityRegistry {
 	}
 
 	private static void register(SpeakerDirectivityProfile profile) {
-		List<SpeakerDirectivityProfile> list = PROFILES.computeIfAbsent(
+		List<SpeakerDirectivityProfile> list = profilesByType.computeIfAbsent(
 			profile.type(), type -> new ArrayList<>());
 		list.removeIf(existing -> existing.id().equals(profile.id()));
 		list.add(profile);
@@ -313,10 +313,10 @@ public final class SpeakerDirectivityRegistry {
 
 	private static void ensureSettingsValid() {
 		for (SpeakerType type : SpeakerType.values()) {
-			String selected = SELECTED.get(type);
+			String selected = selectedByType.get(type);
 			if (selected == null || find(type, selected) == null) {
 				SpeakerDirectivityProfile profile = defaultProfile(type);
-				SELECTED.put(type, profile == null ? "" : profile.id());
+				selectedByType.put(type, profile == null ? "" : profile.id());
 			}
 		}
 	}
@@ -340,7 +340,7 @@ public final class SpeakerDirectivityRegistry {
 		if (profile != null) {
 			return profile;
 		}
-		List<SpeakerDirectivityProfile> list = PROFILES.getOrDefault(type, List.of());
+		List<SpeakerDirectivityProfile> list = profilesByType.getOrDefault(type, List.of());
 		return list.isEmpty() ? null : list.get(0);
 	}
 
@@ -363,7 +363,7 @@ public final class SpeakerDirectivityRegistry {
 					if (value != null && value.isJsonPrimitive()) {
 						String id = value.getAsString();
 						if (find(type, id) != null) {
-							SELECTED.put(type, id);
+							selectedByType.put(type, id);
 						}
 					}
 				}
@@ -415,7 +415,7 @@ public final class SpeakerDirectivityRegistry {
 				if (profile == null) {
 					continue;
 				}
-				SELECTED.put(type, profileId);
+				selectedByType.put(type, profileId);
 				putOverride(type, new SpeakerSettings(profileId,
 					getDouble(entry, "lowHz", profile.lowHz()),
 					getDouble(entry, "highHz", profile.highHz()),
@@ -433,7 +433,7 @@ public final class SpeakerDirectivityRegistry {
 		double low = clamp(settings.lowHz(), 1.0, 23_999.0);
 		double high = clamp(settings.highHz(), low + 1.0, 24_000.0);
 		double gain = clamp(settings.gainDb(), -60.0, 60.0);
-		OVERRIDES.put(key(type, settings.profileId()),
+		settingsOverrides.put(key(type, settings.profileId()),
 			new SpeakerSettings(settings.profileId(), low, high, gain));
 	}
 

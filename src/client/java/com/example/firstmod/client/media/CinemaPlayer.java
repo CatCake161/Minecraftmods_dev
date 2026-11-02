@@ -54,7 +54,7 @@ public final class CinemaPlayer implements AutoCloseable {
 	private VideoFrame pendingFrame;
 	private int presented;
 	private int dropped;
-	private double lastPts;
+	private double lastPtsSeconds;
 	private double lastStatsAt;
 	private long playbackStartNanos = -1;
 	private long pausedAtNanos;
@@ -168,8 +168,8 @@ public final class CinemaPlayer implements AutoCloseable {
 		return dropped;
 	}
 
-	public double lastPtsSeconds() {
-		return lastPts;
+	public double lastPtsSecondsSeconds() {
+		return lastPtsSeconds;
 	}
 
 	/** Applies projector focus blur to the shared video texture for this draw. */
@@ -278,7 +278,7 @@ public final class CinemaPlayer implements AutoCloseable {
 			texture.upload(frame.rgba(), frame.width(), frame.height());
 			width = frame.width();
 			height = frame.height();
-			lastPts = frame.ptsSeconds();
+			lastPtsSeconds = frame.ptsSeconds();
 			presented++;
 			pendingFrame = null;
 			frame.release();
