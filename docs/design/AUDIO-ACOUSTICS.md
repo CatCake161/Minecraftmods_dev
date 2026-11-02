@@ -60,7 +60,7 @@
 | 低频房间模态 / 多低音炮 | 中 | 高：小型影院低频模态明显，单低音炮会有峰谷 | 首版不建模；记为后续（模态 EQ、多低音炮、测量） |
 | HRTF | 中 | 高（耳机场景） | 5.1 音箱回放首版不做；耳机空间化后续评估 |
 | 数据驱动材质吸收 | 中高 | 中：Minecraft 方块没有真实吸声系数，只能近似 | **采用**，但明确是近似值，可调试/覆盖 |
-| Spinorama 实测扬声器指向性 | 高：公开 REST API/JSON，含水平/垂直 SPL、CEA2034、3D 变体 | 高：真实测量、频率相关；比手写指向性模型可靠 | **采用为扬声器指向性数据源**；需处理型号映射、测量轴、2D 近似和 CC BY-NC-SA 许可 |
+| Spinorama 实测扬声器指向性 | 高：REST API 需人工申请 Bearer key；站点 JSON 可公开读取，含水平/垂直 SPL、轴上响应、3D 变体 | 高：真实测量、频率相关；比手写指向性模型可靠 | **采用为扬声器指向性数据源**；需处理 API key、型号映射、测量轴、2D 近似和 CC BY-NC-SA 许可 |
 
 ### 3.1 关键声学判断
 
@@ -297,7 +297,7 @@ R_p = sqrt(1 - α_p)
 
 **数据源与格式**
 
-- Spinorama 提供站点/API/测量 JSON；可用测量名包括 `SPL Horizontal`、`SPL Vertical`、`SPL Horizontal Contour`、`SPL Vertical Contour`、3D 变体、`CEA2034`、`Early Reflections` 等。API 不可用时用站点导出或仓库数据。
+- Spinorama 提供站点/API/测量 JSON（API 需人工申请 Bearer key，见 7.4.2）；可用测量名包括 `SPL Horizontal`、`SPL Vertical`、`SPL Horizontal Contour`、`SPL Vertical Contour`、3D 变体、`CEA2034`、`Early Reflections` 等。API 不可用时用站点导出或仓库数据。
 - 从 Spinorama 取三组数据：**水平指向性**（`SPL Horizontal`）、**垂直指向性**（`SPL Vertical`）、**轴上响应**（on-axis SPL）。
   归一化时用轴上响应作为每个频带的 0 dB 参考；如果有 3D/球面数据，优先用 3D，否则用 H/V 两切面做 separable 近似。
 - 选 High 质量（Klippel NFS/消声室）、尽量同一测量来源/版本；记录 measurement source、版本、日期和质量。
@@ -365,6 +365,104 @@ R_p = sqrt(1 - α_p)
 - **边界**：这个 spike 不把 directivity 应用到 `CinemaAudioEngine` 的实际音频；A2d 才做反射/离轴渲染。`SPL gain dB` 目前只是保存/显示，尚未进入增益分配。
 - **暂停**：GUI 的 `isPauseScreen()` 为 false，单机打开面板不会暂停集成服务器/播放。
 - **许可**：内置 profile 和 synthetic 示例是项目自带/CC0；用户导入的真实 Spinorama 数据仍受其原始 license 约束，GUI 会显示 source/license。
+
+#### 7.4.2 Spinorama API 使用（2026-11 核对）
+
+**访问方式**
+
+- Base URL：`https://api.spinorama.org`
+- API 不是匿名公开读取：缺少 key 返回 `401 Unauthorized`（`www-authenticate: Bearer`）。
+- 需要向 `pierre@spinorama.org` 发邮件人工申请，主题建议：
+  `[AUTH]: API access request - <你的名字/项目>`；说明身份、用途、是否发布/再分发、是否商业、预计请求量。
+- 请求头：`Authorization: Bearer <API_KEY>`。key 不能放 URL、公开仓库、浏览器端应用或模组发布包。
+- key 有有效期；丢失/泄露要申请吊销和替换。key 数据库不可用时返回 `503`。
+
+**端点**
+
+```text
+GET /v1/brands
+GET /v1/speakers
+GET /v1/speaker/{speaker_name}/metadata
+GET /v1/speaker/{speaker_name}/versions
+GET /v1/speaker/{speaker_name}/version/{version}/measurements
+GET /v1/speaker/{speaker_name}/version/{version}/measurements/{measurement_name}
+    ?measurement_format=json   # 默认 json；png/jpg/webp 仅在图存在时
+```
+
+- 名称要 URL 编码：`Genelec%208341A`、`SPL%20Horizontal`、`On%20Axis`。
+- 先查 `measurements` 列表，不要假设每个测量名都存在；部分测量有 `_unmelted` 变体。
+- API 不提供 Erin's Audio Corner 的测量；EAC 数据需要另找来源并遵守其许可。
+
+**返回格式**
+
+站点实际加载的测量 JSON 是 Plotly 格式：
+
+```json
+{
+  "data": [
+    {
+      "name": "-170°",
+      "x": {"dtype": "f8", "bdata": "..."},
+      "y": {"dtype": "f8", "bdata": "..."}
+    }
+  ],
+  "layout": {}
+}
+```
+
+- `bdata` 是 base64 编码的 little-endian `float64` 数组；`x` 是频率 Hz，`y` 是 SPL dB。Python 解码：
+
+```python
+import base64
+import numpy as np
+
+def decode_bdata(obj):
+    return np.frombuffer(base64.b64decode(obj["bdata"]), dtype="<f8")
+```
+- `SPL Horizontal` / `SPL Vertical` 的 `data` 包含角度 trace（名字如 `-170°`、`90°`、`180°`）、一个 `ON`（轴上）trace，以及 `Band` / `Trend line` / `Midrange` 辅助 trace。
+  - 构建 H/V 行时：角度 trace 用名字去掉 `°`；`ON` 作为 0°；其他名字忽略。
+  - 实测 `ON` 与 `On Axis` 在 1 kHz 的值一致，说明两者同一 SPL 尺度。
+- `On Axis` 里也有 Band/Midrange 辅助 trace；筛选 `name == "On Axis"` 的 trace。
+
+```python
+# H/V 行
+rows = []
+for t in data:
+    name = t["name"]
+    if name == "ON":
+        angle = 0.0
+    elif name.endswith("°"):
+        angle = float(name[:-1])
+    else:
+        continue  # Band / Trend line / Midrange 等
+    rows.append((angle, decode_bdata(t["y"]), decode_bdata(t["x"])))
+```
+- `SPL Horizontal Contour` / `SPL Vertical Contour` 是 `x`/`y`/`z` 网格，`z.shape = [angles, frequencies]`；数据更密但解析更复杂，首版用线切面即可。
+- API 的 JSON 结构需要拿到 key 后实际验证；上面的结构来自站点同源静态 JSON。
+
+**转换到本模组格式**
+
+1. 读取 `On Axis`：`frequencies = x`，`onAxis = y`。
+2. 读取 `SPL Horizontal` / `SPL Vertical`：每个 trace → `{angle, spl}`。
+3. 重采样到同一 1/3 octave 频率网格。
+4. 用 `onAxis` 归一化 H/V（H/V 与 onAxis 必须是同一 SPL 尺度）。
+5. 写出本模组的 measured profile：
+   `frequencies`、`onAxis`、`horizontal`、`vertical`、`source`、`license`、`quality`。
+6. 当前模组的本地导入器**不接受原始 Plotly JSON**，只接受转换后的 `speaker_specs` JSON；A1d 需要提供转换脚本/工具。
+
+**静态站点 JSON（API 不可用时的备选）**
+
+- 站点页面本身会加载同目录 JSON，例如：
+  `https://www.spinorama.org/speakers/Genelec%208341A/ASR/asr-horizontal/SPL%20Horizontal.json`
+  `.../On%20Axis.json`
+- 这些文件可公开访问，但仍是测量数据，受 CC BY-NC-SA 4.0 约束；不是官方 API 的稳定接口，页面结构可能变。
+- 如果只是本地生成 profile，可以用它们做 A1d 转换测试；正式工具优先用 API + key。
+
+**key 使用建议**
+
+- 只在本地转换工具/脚本中读取环境变量，例如 `SPINORAMA_API_KEY`；不要写进仓库、日志或 GUI。
+- 模组运行时不需要 Spinorama key；它只读取本地 `speaker_specs` JSON。
+- 申请和再分发前确认测量 license；API key 不授予商业使用权，也不覆盖测量许可。
 
 ### 7.5 晚期混响
 

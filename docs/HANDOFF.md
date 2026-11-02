@@ -32,6 +32,12 @@
 
 ## 3. 本会话已完成
 
+- 用户已验收通过投影仪 GUI M1/M2/M3：状态区、光学/wash、Throw/Focus Auto、Power、四个模拟开关、改动即保存；对焦模糊观感一般，列为后续改进。
+- 投影仪 GUI M1/M2/M3：
+  - `ProjectorScreen` 替换临时 wash 滑块；状态区显示屏幕、灯泡、AV 输入；光学/wash 滑块只改草稿。
+  - 新增 C2S `ProjectorSettingsPayload` + `ProjectorSettingsHandler`；服务端校验距离/方块/范围后 `ProjectorBlockEntity.applySettings` 一次写入。
+  - 自动/手动投掷比与焦距、Power ON/OFF、Defaults、改动即保存（按钮立即/滑块 debounce）、GUI 不暂停；2 列紧凑布局。
+  - M3 物理模拟开关 Focus/Keystone/Wash/Warmup：切换即发送，`ProjectorOptics` 和灯泡 ramp 按开关跳过对应计算，NBT/网络同步。
 - 投影仪光学第一版：
   - 投掷比、自动/手动焦距、垂直/水平梯形、亮度、灯泡预热/冷却
   - 屏幕自动配对、逐块镜头 UV/裁剪
@@ -76,6 +82,7 @@
 - **音频声学仍是规划**：见 `docs/design/AUDIO-ACOUSTICS.md`。EAXReverb 只计划用于晚期尾音；早期反射用一阶镜像源 + **Spinorama 实测扬声器指向性**。依赖 M4 扬声器路由/Seat；EFX 可用性、材质吸收、型号映射都需 spike/校准。
 - 当前 5.1 是 6 个固定相对位置的虚拟 source，尚未绑定实体扬声器方块；M4 之前不能验收真实房间声学/指向性。
 - Spinorama 测量数据默认 CC BY-NC-SA 4.0（非商业/相同方式共享），与项目 CC0 不同；发布前必须做许可/attribution 决策。
+- Spinorama REST API 现在需要人工申请 Bearer key（无匿名访问）；key 只能放本地环境变量/转换工具，不能进仓库、模组发布包或日志。API 不提供 Erin's Audio Corner 测量。
 - 一阶声学模型不覆盖衍射、散射、高阶反射和低频房间模态；LFE 低频峰谷/驻波不会正确重现。
 - 多屏/多投影仪、LAN 同步、资源重载、两小时长片仍未完成。
 - 旧 Git 历史仍含旧提交作者信息；工作树已清理。若要彻底隐私，需要重写历史并 force-push，或把仓库设为 private。
@@ -83,13 +90,14 @@
 
 ## 5. 下一步优先级
 
-1. **正式投影仪 GUI（下一会话从这开始）**
-   - 按 `docs/design/PROJECTOR-GUI.md` 实现；当前 `ProjectorScreen` 只有临时 wash 滑块。
-   - 先做 M1 只读状态页，再做 M2 光学/wash 编辑，之后 M3 物理模拟开关、M4 配对/诊断。
-   - 投影仪 GUI 只放光学、灯泡、wash、配对、物理模拟开关；不出现文件、codec、丢帧、播放控制（这些属于 AV Receiver）。
-   - 设置走 C2S `UpdateProjectorSettings`（或等价 payload），服务端校验范围/距离/方块；Done 提交并关闭，Cancel 丢弃草稿。
-   - 可复用 M2 `AvReceiverScreen` 的成熟模式：`renderBackground` 中画面板/文字、tooltip 自动换行、滑块 pending、可滚动列表、紧凑布局。
-   - 关键文件：`ProjectorBlockEntity.java`、`ProjectorScreen.java`、`ProjectorOptics.java`、`ProjectorCommand.java`、`FirstModClient.java`、`AvReceiverScreen.java`。
+1. **投影仪 GUI M1/M2/M3（已通过游戏内验收）**
+   - `ProjectorScreen` 已替换临时 wash 滑块：M1 状态区显示屏幕尺寸/坐标/距离、灯泡 warming/on/cooling、AV 链接/状态/分辨率；不显示媒体、codec、丢帧或播放控制。
+   - M2 编辑自动/手动投掷比、自动/手动焦距、垂直/水平梯形、亮度、wash、Power ON/OFF；**改动即保存**：按钮/Defaults 立即发送，滑块约 200 ms debounce，Close/Esc 前 flush；没有 Cancel/Done。
+   - M3 四个物理模拟开关（Focus/Keystone/Wash/Warmup）保存在 block entity，切换即发送，关闭后 `ProjectorOptics`/灯泡路径跳过对应计算。
+   - 已知观感问题：对焦模糊当前基于 mipmap/LOD，物理效果一般；后续可评估多级采样/卷积/景深，暂不阻塞。
+   - 服务端 `ProjectorSettingsHandler` 校验距离/方块/有限值/范围，`ProjectorBlockEntity.applySettings` 一次性写入并同步；GUI `isPauseScreen=false`。
+   - 关键文件：`ProjectorScreen.java`、`ProjectorBlockEntity.java`、`ProjectorSettingsPayload.java`、`ProjectorSettingsHandler.java`、`ProjectorSettingsClient.java`、`ProjectorOptics.java`。
+   - 下一步：游戏内验收 M1/M2/M3，然后 M4 配对/诊断。
 2. **M3 每接收器独立播放**
    - 独立播放器/纹理/音频引擎；第二接收器不再拒绝
    - 继续观察 NVIDIA 视频上传崩溃与音频设备切换恢复
@@ -100,19 +108,18 @@
 5. **M4 扬声器 5.1 路由、Seat、LAN、资源重载、长片测试、GUI 进一步打磨**
 6. **音频计算/房间声学（M4 后）**
    - 见 `docs/design/AUDIO-ACOUSTICS.md`；A1d Spinorama 数据 spike、A0 EFX/EAXReverb spike 可在 M2/M3 之后提前做。
-   - 只做扬声器指向性，不做原始声源指向性；指向性用 Spinorama 实测 H/V SPL，映射到四类箱体。
+   - 只做扬声器指向性，不做原始声源指向性；指向性用 Spinorama 实测水平/垂直指向性 + 轴上响应，映射到四类箱体；API 需要人工申请 key，转换工具只在本地使用。
    - 早期反射用一阶镜像源 + Spinorama 指向性；EAXReverb 只取晚期尾音，关闭其固定 5 m 早期反射。
    - 先做 Spinorama 许可决策（CC BY-NC-SA 4.0 vs 宽松数据/用户本地导入），再决定是否打包数据。
    - 不要为了声学阻塞 M4；EFX 不可用时回退到无混响或小型 FDN。
 
-### 5.1 新会话第一步（投影仪 GUI）
+### 5.1 当前交接状态
 
 1. 读 `docs/HANDOFF.md` → `docs/PLANNING.md` → `docs/TODO.md` → `docs/design/PROJECTOR-GUI.md`。
-2. 用 `git log -1` / `git status` 确认最新提交与工作区；当前最新 M2 提交 `008a864`。
-3. 先实现 M1 只读状态页：右键投影仪打开正式 GUI，显示屏幕配对、距离、灯泡、AV 输入状态；不影响现有 wash 临时入口。
-4. 再实现 M2 编辑：投掷比、焦距、梯形、亮度、wash；滑块只改草稿，Done 提交，Cancel 丢弃。
-5. 构建并在 `spike` 存档验收：GUI scale 1..4、边界值、Done/Cancel、拆投影仪/屏幕、Sodium/Iris 下不崩溃。
-6. BSL 下 wash 画面异常仍单独排查，不要和 GUI 布局混在一起。
+2. 用 `git log -1` / `git status` 确认最新提交与工作区；当前最新提交以 `git log -1` 为准。
+3. 投影仪 GUI M1/M2 已实现，等待游戏内验收：右键投影仪打开，状态区 + 光学/wash 滑块；Done 提交，Cancel 丢弃；GUI 不暂停。
+4. 验收重点：GUI scale 1..4、边界值、自动/手动焦距、Done/Cancel、拆投影仪/屏幕、Sodium/Iris 下不崩溃。
+5. 验收通过后再做 M3 物理模拟开关（对焦/梯形/wash/预热），不要和 BSL wash 异常排查混在一起。
 
 ## 6. 构建与运行
 

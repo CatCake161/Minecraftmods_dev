@@ -13,6 +13,8 @@ import com.example.firstmod.block.entity.SpeakerType;
 import com.example.firstmod.command.ProjectorCommand;
 import com.example.firstmod.item.CableItem;
 import com.example.firstmod.item.RemoteControllerItem;
+import com.example.firstmod.network.ProjectorSettingsHandler;
+import com.example.firstmod.network.ProjectorSettingsPayload;
 import com.example.firstmod.network.ReceiverControlHandler;
 import com.example.firstmod.network.ReceiverControlPayload;
 import com.example.firstmod.network.SpeakerRoleHandler;
@@ -100,6 +102,8 @@ public class FirstMod implements ModInitializer {
 		ServerPlayNetworking.registerGlobalReceiver(ReceiverControlPayload.TYPE, ReceiverControlHandler::handle);
 		PayloadTypeRegistry.playC2S().register(SpeakerRolePayload.TYPE, SpeakerRolePayload.CODEC);
 		ServerPlayNetworking.registerGlobalReceiver(SpeakerRolePayload.TYPE, SpeakerRoleHandler::handle);
+		PayloadTypeRegistry.playC2S().register(ProjectorSettingsPayload.TYPE, ProjectorSettingsPayload.CODEC);
+		ServerPlayNetworking.registerGlobalReceiver(ProjectorSettingsPayload.TYPE, ProjectorSettingsHandler::handle);
 
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
 			ProjectorCommand.register(dispatcher));

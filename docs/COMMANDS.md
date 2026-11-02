@@ -48,7 +48,7 @@
 |---|---|
 | `/cinema_projector_client info` | 查看投掷比、焦距、梯形、亮度、开关、配对屏幕 |
 | `/cinema_projector_client throw <0.6-4.0>` | 设置投掷比 |
-| `/cinema_projector_client throw auto` | 按当前屏幕自动适配投掷比 |
+| `/cinema_projector_client throw auto` | 自动投掷比模式（按配对屏幕） |
 | `/cinema_projector_client focus <0.25-64>` | 手动焦距（米） |
 | `/cinema_projector_client focus auto` | 自动对焦到配对屏幕 |
 | `/cinema_projector_client keystone <垂直角度> <水平角度>` | 梯形校正，-30..30 |
@@ -63,7 +63,8 @@
 | 指令 | 说明 |
 |---|---|
 | `/cinema_projector info` | 查看参数 |
-| `/cinema_projector throw <投掷比>` | 设置投掷比 |
+| `/cinema_projector throw auto` | 自动投掷比（按配对屏幕距离/宽度） |
+| `/cinema_projector throw <投掷比>` | 手动投掷比 |
 | `/cinema_projector focus auto` | 自动对焦 |
 | `/cinema_projector focus <0.25-64>` | 手动焦距（米） |
 | `/cinema_projector keystone <垂直角度> <水平角度>` | 梯形校正 |
@@ -76,7 +77,7 @@
 - 屏幕由同朝向、同平面的屏幕方块组成，最大 16×16。
 - 投影仪自动寻找前方 48 格内最近的屏幕；屏幕正面必须朝向投影仪。
 - 接收器每 20 tick 自动配对/重连 48 格内最近的投影仪；投影仪上的 `receiverPos` 会随方块实体同步。`/cinema_link` 仅用于立即强制重扫，正常流程不需要。
-- 右键投影仪打开 GUI，可直接调整环境光洗白；命令 `/cinema_projector[_client] wash <0-1>` 同步。
+- 右键投影仪打开正式 GUI：状态区显示屏幕/灯泡/AV 输入；自动/手动投掷比、自动/手动焦距、梯形、亮度、wash、Power ON/OFF、Focus/Keystone/Wash/Warmup 模拟开关都**改动即保存**（按钮立即，滑块约 200ms debounce；Close/Esc 前 flush）。命令 `/cinema_projector[_client]` 仍可用于调试。
 - 拆掉投影仪后屏幕保持黑屏，接收器音频继续；重新放回后等待自动重连或执行 `/cinema_link`。
 - 拆掉接收器后屏幕立即黑屏、音频停止。
 - `/time set midnight` / `/time set noon` 可测试环境光洗白。

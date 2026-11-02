@@ -49,6 +49,10 @@ public class ProjectorBlockEntity extends BlockEntity {
 	private double brightness = 1.0;
 	private double ambientWash = 0.18;
 	private boolean powered = true;
+	private boolean simFocus = true;
+	private boolean simKeystone = true;
+	private boolean simWash = true;
+	private boolean simWarmup = true;
 	private BlockPos receiverPos;
 
 	/** Client-local lamp output, 0..1. */
@@ -65,6 +69,10 @@ public class ProjectorBlockEntity extends BlockEntity {
 
 	private void tickLamp() {
 		float target = powered ? 1.0f : 0.0f;
+		if (!simWarmup) {
+			lampLevel = target;
+			return;
+		}
 		float step = powered ? WARMUP_PER_TICK : COOLDOWN_PER_TICK;
 		if (lampLevel < target) {
 			lampLevel = Math.min(target, lampLevel + step);
@@ -141,17 +149,35 @@ public class ProjectorBlockEntity extends BlockEntity {
 		return powered;
 	}
 
+	public boolean simFocus() {
+		return simFocus;
+	}
+
+	public boolean simKeystone() {
+		return simKeystone;
+	}
+
+	public boolean simWash() {
+		return simWash;
+	}
+
+	public boolean simWarmup() {
+		return simWarmup;
+	}
+
 	public float lampLevel() {
 		return lampLevel;
 	}
 
 	/** Effective lamp output after the warm-up ramp and the brightness trim. */
 	public float opticalBrightness() {
-		return (float) Math.max(0.0, Math.min(MAX_BRIGHTNESS, lampLevel * brightness));
+		float lamp = simWarmup ? lampLevel : (powered ? 1.0f : 0.0f);
+		return (float) Math.max(0.0, Math.min(MAX_BRIGHTNESS, lamp * brightness));
 	}
 
+	/** Negative means auto throw ratio derived from the paired screen. */
 	public void setThrowRatio(double value) {
-		throwRatio = clamp(value, MIN_THROW_RATIO, MAX_THROW_RATIO);
+		throwRatio = value < 0.0 ? -1.0 : clamp(value, MIN_THROW_RATIO, MAX_THROW_RATIO);
 		markUpdated();
 	}
 
@@ -181,6 +207,55 @@ public class ProjectorBlockEntity extends BlockEntity {
 		markUpdated();
 	}
 
+	public void setSimFocus(boolean value) {
+		simFocus = value;
+		markUpdated();
+	}
+
+	public void setSimKeystone(boolean value) {
+		simKeystone = value;
+		markUpdated();
+	}
+
+	public void setSimWash(boolean value) {
+		simWash = value;
+		markUpdated();
+	}
+
+	public void setSimWarmup(boolean value) {
+		simWarmup = value;
+		markUpdated();
+	}
+
+	/**
+	 * Applies a complete validated GUI snapshot and sends one block update.
+	 * The server calls this only after range/block/distance validation.
+	 */
+	public void applySettings(double throwRatio, double focusDistance,
+							  double keystoneVertical, double keystoneHorizontal,
+							  double brightness, double ambientWash, boolean powered,
+							  boolean simFocus, boolean simKeystone,
+							  boolean simWash, boolean simWarmup) {
+		this.throwRatio = throwRatio < 0.0
+			? -1.0
+			: clamp(throwRatio, MIN_THROW_RATIO, MAX_THROW_RATIO);
+		this.focusDistance = focusDistance < 0.0
+			? -1.0
+			: clamp(focusDistance, MIN_FOCUS_DISTANCE, MAX_FOCUS_DISTANCE);
+		this.keystoneVerticalDegrees = clamp(keystoneVertical,
+			MIN_KEYSTONE_DEGREES, MAX_KEYSTONE_DEGREES);
+		this.keystoneHorizontalDegrees = clamp(keystoneHorizontal,
+			MIN_KEYSTONE_DEGREES, MAX_KEYSTONE_DEGREES);
+		this.brightness = clamp(brightness, MIN_BRIGHTNESS, MAX_BRIGHTNESS);
+		this.ambientWash = clamp(ambientWash, MIN_AMBIENT_WASH, MAX_AMBIENT_WASH);
+		this.powered = powered;
+		this.simFocus = simFocus;
+		this.simKeystone = simKeystone;
+		this.simWash = simWash;
+		this.simWarmup = simWarmup;
+		markUpdated();
+	}
+
 	/** Debug/test hook: jump the lamp to a value without waiting for the ramp. */
 	public void setLampLevel(float value) {
 		lampLevel = Math.max(0.0f, Math.min(1.0f, value));
@@ -203,6 +278,10 @@ public class ProjectorBlockEntity extends BlockEntity {
 		tag.putDouble("brightness", brightness);
 		tag.putDouble("ambientWash", ambientWash);
 		tag.putBoolean("powered", powered);
+		tag.putBoolean("simFocus", simFocus);
+		tag.putBoolean("simKeystone", simKeystone);
+		tag.putBoolean("simWash", simWash);
+		tag.putBoolean("simWarmup", simWarmup);
 		if (receiverPos != null) {
 			tag.putLong("receiverPos", receiverPos.asLong());
 		}
@@ -211,8 +290,11 @@ public class ProjectorBlockEntity extends BlockEntity {
 	@Override
 	protected void loadAdditional(CompoundTag tag, HolderLookup.Provider registries) {
 		super.loadAdditional(tag, registries);
-		throwRatio = clamp(tag.getDouble("throwRatio") == 0.0 ? DEFAULT_THROW_RATIO : tag.getDouble("throwRatio"),
-			MIN_THROW_RATIO, MAX_THROW_RATIO);
+		double savedThrowRatio = tag.getDouble("throwRatio");
+		throwRatio = savedThrowRatio < 0.0
+			? -1.0
+			: clamp(savedThrowRatio == 0.0 ? DEFAULT_THROW_RATIO : savedThrowRatio,
+				MIN_THROW_RATIO, MAX_THROW_RATIO);
 		focusDistance = tag.contains("focusDistance")
 			? (tag.getDouble("focusDistance") < 0.0
 				? -1.0
@@ -227,6 +309,10 @@ public class ProjectorBlockEntity extends BlockEntity {
 		ambientWash = clamp(tag.contains("ambientWash") ? tag.getDouble("ambientWash") : 0.18,
 			MIN_AMBIENT_WASH, MAX_AMBIENT_WASH);
 		powered = !tag.contains("powered") || tag.getBoolean("powered");
+		simFocus = !tag.contains("simFocus") || tag.getBoolean("simFocus");
+		simKeystone = !tag.contains("simKeystone") || tag.getBoolean("simKeystone");
+		simWash = !tag.contains("simWash") || tag.getBoolean("simWash");
+		simWarmup = !tag.contains("simWarmup") || tag.getBoolean("simWarmup");
 		receiverPos = tag.contains("receiverPos") ? BlockPos.of(tag.getLong("receiverPos")) : null;
 	}
 

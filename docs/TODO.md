@@ -17,9 +17,13 @@
 
 ## P1：投影仪与交互
 
-- [ ] 投影仪 GUI（下一项；大纲见 [PROJECTOR-GUI.md](design/PROJECTOR-GUI.md)）
-- [ ] GUI 只放物理模拟/光学/灯泡/wash/配对；不放解码、播放、文件选择
-- [ ] GUI 内提供物理模拟独立开关：对焦、梯形、环境光洗白、灯泡预热、风扇（wash 已先做）
+- [x] M1 投影仪 GUI 只读状态页：屏幕配对/距离、灯泡、AV 信号状态（[PROJECTOR-GUI.md](design/PROJECTOR-GUI.md)）
+- [x] M2 投影仪 GUI 光学/wash 编辑：投掷比（自动/手动）、焦距（自动/手动）、梯形、亮度、wash、Power ON/OFF；改动即保存（按钮立即/滑块 debounce，Close/Esc flush）
+- [x] GUI 只放光学/灯泡/wash/配对；不放解码、播放、文件选择
+- [x] 投影仪 GUI 游戏内验收：scale 1..4、边界值、自动投掷比/焦距、改动即保存/Close、拆投影仪/屏幕、Sodium/Iris
+- [x] M3 GUI 内物理模拟独立开关：对焦模糊、梯形、环境光洗白、灯泡预热；block entity 持久化/同步，渲染路径跳过
+- [x] M3 验收：四个开关分别关闭后画面效果确实变化；专用服务器同步
+- [ ] 改进对焦模糊的物理观感（当前 mipmap/LOD 近似一般；后续可评估多级采样/卷积/景深，不阻塞）
 - [ ] 修复 BSL 下 ambient wash 某些值导致画面异常：确认是白色 overlay 的 bloom/exposure 问题，还是 alpha 曲线问题
 - [ ] 遥控器工具：在观众席远程调整投影仪/接收器
 - [ ] 配对工具（线材/配对器）：投影仪↔屏幕、接收器↔扬声器
@@ -81,7 +85,7 @@
 - [ ] A1 声学数据模型：房间平面/包围盒、体积/表面积、材质吸收、扬声器位置/朝向/高度、听者/Seat
 - [ ] A1b 材质映射：block/tag → 低/中/高频吸收 + 散射；屏幕/羊毛/地毯/木板/石砖/玻璃/树叶/水默认值；数据驱动
 - [ ] A1c 房间检测：6 方向 raycast + 凸盒验证；缓存/失效；非矩形/室外 fallback
-- [ ] A1d Spinorama 数据管线：确认 API 认证/导出方式；选 4 类代表型号；抓取水平/垂直指向性 + 轴上响应（或 3D）；用轴上响应归一化/1/3 octave 降采样/量化；生成 directivity 资源与 metadata（source/version/changes/quality/license）
+- [ ] A1d Spinorama 数据管线：申请 API Bearer key（`pierre@spinorama.org`，key 仅本地 env）；实现 Plotly `bdata` 解码 + `SPL Horizontal`/`SPL Vertical`/`On Axis` → `speaker_specs` 转换器；选 4 类代表型号；用轴上响应归一化/1/3 octave 降采样/量化；生成 directivity 资源与 metadata（source/version/changes/quality/license）
 - [ ] A1e Spinorama 许可决策：CC BY-NC-SA 4.0 非商业/相同方式共享，或改用宽松数据/用户本地导入；加 attribution/THIRD-PARTY
 - [ ] A2 直达声：距离/空气吸收/遮挡/指向性；明确 OpenAL 距离衰减与自定义增益分工，避免双重衰减
 - [ ] A2b 一阶早期反射：镜像源法（6 平面 × 6 扬声器）、可见性、延迟/增益/频带、VBAP/最近声道路由、最多 24–36 taps、平滑
@@ -115,6 +119,7 @@
 
 ## 最近完成
 
+- [x] 投影仪 GUI M1/M2/M3：状态页、光学/wash、Throw/Focus Auto、Power、四个物理模拟开关、改动即保存；用户游戏内验收通过
 - [x] M2 接收器 GUI：Media / Speakers / Signal / Settings 四页签、媒体列表、播放控制、音量/静音、诊断页
 - [x] M2 外部媒体库：`cinema/libraries.json`、`lib/<id>/...` key、添加/移除/切换库、记住上次库与文件夹
 - [x] M2 GUI 修复：长文本省略号、tooltip 自动换行、Settings 布局、库列表滚动、seek/音量滑块回弹、ESC 暂停循环、文字图层

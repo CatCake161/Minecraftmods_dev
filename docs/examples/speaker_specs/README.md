@@ -28,6 +28,10 @@ entry).
 `pattern` can be `omni`, `cardioid`, or `unmeasured`. The built-in subwoofer
 profiles already provide `sub-omni` and `sub-cardioid`.
 
+> This importer expects the normalized `speaker_specs` schema below, not the
+> raw Spinorama Plotly JSON. A1d will add a converter for the API/static JSON
+> (`SPL Horizontal`, `SPL Vertical`, `On Axis`) into this format.
+
 ## Measured profile
 
 A measured profile contains the three Spinorama datasets:
@@ -77,6 +81,9 @@ subtracts the on-axis response from each H/V row to obtain relative directivity.
   measurement. Do not use it for acoustic validation.
 - Real Spinorama measurement data is third-party and usually CC BY-NC-SA 4.0;
   keep its source/license metadata and do not redistribute it commercially.
+- The Spinorama REST API requires a manually approved Bearer key. Keep it in a
+  local environment variable for the converter, never in the repository or the
+  mod; the static site JSON is a fallback but is not a stable public API.
 - Per-speaker selections live in `cinema/speaker_specs/assignments.json`
   (client-local, keyed by dimension + block position). Type defaults live in
   `settings.json`.

@@ -38,9 +38,10 @@ public final class ClientProjectorCommand {
 						projector, videoAspect());
 					String paired = optics == null ? "none" : optics.screen().master().toShortString();
 					context.getSource().sendFeedback(Component.literal(String.format(
-						"client projector %s: throw=%.2f focus=%s keystone=%.1f/%.1f brightness=%.2f wash=%.2f power=%s screen=%s",
+						"client projector %s: throw=%s focus=%s keystone=%.1f/%.1f brightness=%.2f wash=%.2f power=%s screen=%s",
 						projector.getBlockPos(),
-						projector.throwRatio(),
+						projector.throwRatio() < 0.0 ? "auto"
+							: String.format("%.2f", projector.throwRatio()),
 						projector.focusDistance() < 0.0
 							? "auto"
 							: String.format("%.2f m", projector.focusDistance()),
@@ -59,19 +60,10 @@ public final class ClientProjectorCommand {
 						if (projector == null) {
 							return noProjector(context.getSource());
 						}
-						ProjectorOptics optics = ProjectorOptics.resolve(context.getSource().getClient().level,
-							projector, videoAspect());
-						if (optics == null) {
-							context.getSource().sendError(Component.literal(
-								"client projector has no paired screen"));
-							return 0;
-						}
-						double ratio = optics.lens().distanceTo(optics.screen().center())
-							/ (optics.screen().width() * 0.98);
-						projector.setThrowRatio(ratio);
+						projector.setThrowRatio(-1.0);
 						clearCaches();
 						context.getSource().sendFeedback(Component.literal(
-							String.format("client projector throw ratio = %.2f", projector.throwRatio())));
+							"client projector throw ratio = auto (paired screen)"));
 						return 1;
 					}))
 				.then(ClientCommandManager.argument("ratio", DoubleArgumentType.doubleArg(

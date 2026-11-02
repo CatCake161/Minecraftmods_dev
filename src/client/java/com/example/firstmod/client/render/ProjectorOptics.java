@@ -137,7 +137,10 @@ public final class ProjectorOptics {
 			new Vector3f((float) worldUp.x, (float) worldUp.y, (float) worldUp.z));
 
 		double aspect = videoAspect > 0.01f ? videoAspect : BASE_IMAGE_ASPECT;
-		double throwRatio = projector.throwRatio();
+		double throwRatio = projector.throwRatio() > 0.0
+			? projector.throwRatio()
+			: clamp(distance / Math.max(0.1, screen.width() * 0.98),
+				ProjectorBlockEntity.MIN_THROW_RATIO, ProjectorBlockEntity.MAX_THROW_RATIO);
 		double tanHalfHorizontal = 0.5 / throwRatio;
 		float fovY = (float) (2.0 * Math.atan(tanHalfHorizontal / aspect));
 		Matrix4f projection = new Matrix4f().perspective(fovY, (float) aspect, 0.05f, 512.0f);
@@ -146,9 +149,11 @@ public final class ProjectorOptics {
 			? projector.focusDistance()
 			: distance;
 		double focusError = Math.abs(distance - focusDistance);
-		float blurLod = (float) Math.min(3.0, Math.max(0.0, (focusError - 0.35) * 1.1));
+		float blurLod = projector.simFocus()
+			? (float) Math.min(3.0, Math.max(0.0, (focusError - 0.35) * 1.1))
+			: 0.0f;
 		float brightness = projector.opticalBrightness();
-		float ambientWash = (float) projector.ambientWash();
+		float ambientWash = projector.simWash() ? (float) projector.ambientWash() : 0.0f;
 
 		return new ProjectorOptics(projector, screen, lens, center, view, projection, throwRatio,
 			focusDistance, focusError, blurLod, brightness, ambientWash);
@@ -218,6 +223,9 @@ public final class ProjectorOptics {
 		float invW = 1.0f / clip.w;
 		float u = (clip.x * invW + 1.0f) * 0.5f;
 		float v = 1.0f - (clip.y * invW + 1.0f) * 0.5f;
+		if (!projector.simKeystone()) {
+			return new float[]{u, v};
+		}
 
 		double vertical = Math.tan(Math.toRadians(projector.keystoneVerticalDegrees()));
 		double horizontal = Math.tan(Math.toRadians(projector.keystoneHorizontalDegrees()));
@@ -274,5 +282,9 @@ public final class ProjectorOptics {
 
 	public static void clearCache() {
 		PAIRING_CACHE.clear();
+	}
+
+	private static double clamp(double value, double min, double max) {
+		return Math.max(min, Math.min(max, value));
 	}
 }
