@@ -339,6 +339,7 @@ duration, volume, muted, missing, CinemaPlayer player
 - 房间混响（EFX 预设、wet/dry）。
 - 未配对实体扬声器时明确显示“虚拟 5.1”。
 - Seat 完成后提供“以皇帝位重新计算距离/延迟”。
+- 房间声学/早期反射/晚期混响的计算、限制与分阶段见 [AUDIO-ACOUSTICS.md](AUDIO-ACOUSTICS.md)；扬声器指向性计划使用 Spinorama 实测 H/V SPL。Speakers 页只放开关、电平、校准和诊断，不在这里做 DSP 细节。
 
 ### 10.5 信号/诊断页
 

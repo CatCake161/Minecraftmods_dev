@@ -52,6 +52,7 @@
 - [ ] 无音轨墙钟的长时间漂移测试
 - [ ] 4K60 低性能时的自动降级策略（HDR 默认 720p / SDR 1080p，可覆盖）
 - [ ] 硬件解码失败时自动回退软件解码
+- [ ] `StreamingAudioDecoder` 消费 FFmpeg stderr（drain 线程），避免错误输出填满管道阻塞
 - [ ] seek 精确到帧（当前是关键帧附近重启）
 - [ ] 两小时长片完整内存/队列测试
 - [ ] 资源重载、音频设备切换、世界卸载恢复
@@ -65,8 +66,32 @@
 - [ ] 接收器-扬声器配对与距离计算
 - [ ] 立体声 upmix / 5.1 downmix 纯函数 + 测试
 - [ ] 扬声器遮挡 / 材料 low-pass
-- [ ] EFX 房间混响参数化
+- [ ] EFX 房间混响参数化（仅晚期尾音；早期反射见下方“音频计算 / 房间声学”）
 - [ ] LFE/低频管理
+
+## P1：音频计算 / 房间声学（M4 后）
+
+> 方案、可行性/声学判断见 [AUDIO-ACOUSTICS.md](design/AUDIO-ACOUSTICS.md)。
+> 依赖 M4 扬声器路由/Seat；A0 EFX spike、A1d Spinorama 数据/许可可提前做。
+
+- [ ] A0 EFX/EAXReverb spike：在自定义 OpenAL context 中检测 `ALC_EXT_EFX`/`AL_EXT_EFX`；创建 aux slot；验证 per-source send、wet return、stereo/5.1/HRTF 设备、reset/设备切换、CPU/延迟
+- [ ] A0b EFX 不可用回退：禁用 late reverb 或最小 Java FDN；干声/播放不受影响
+- [ ] A0c 决策门：按 spike 结果选择 EAXReverb late tail / FDN / 无混响，并把结论回写 AUDIO-ACOUSTICS.md
+- [ ] A1 声学数据模型：房间平面/包围盒、体积/表面积、材质吸收、扬声器位置/朝向/高度、听者/Seat
+- [ ] A1b 材质映射：block/tag → 低/中/高频吸收 + 散射；屏幕/羊毛/地毯/木板/石砖/玻璃/树叶/水默认值；数据驱动
+- [ ] A1c 房间检测：6 方向 raycast + 凸盒验证；缓存/失效；非矩形/室外 fallback
+- [ ] A1d Spinorama 数据管线：确认 API 认证/导出方式；选 4 类代表型号；抓取 H/V（或 3D）SPL；归一化/1/3 octave 降采样/量化；生成 directivity 资源与 metadata（source/version/changes/quality/license）
+- [ ] A1e Spinorama 许可决策：CC BY-NC-SA 4.0 非商业/相同方式共享，或改用宽松数据/用户本地导入；加 attribution/THIRD-PARTY
+- [ ] A2 直达声：距离/空气吸收/遮挡/指向性；明确 OpenAL 距离衰减与自定义增益分工，避免双重衰减
+- [ ] A2b 一阶早期反射：镜像源法（6 平面 × 6 扬声器）、可见性、延迟/增益/频带、VBAP/最近声道路由、最多 24–36 taps、平滑
+- [ ] A2c 扬声器指向性：用 Spinorama profile 查表（水平/垂直角插值、1/3 octave）；声学中心/朝向；低音炮 omni；只作用于反射相对增益
+- [ ] A2d 指向性渲染：3 频带增益/相位兼容分频；条件允许升级 1/3 octave 多频带或 32–64 tap FIR；A/B 实测
+- [ ] A3 晚期混响：EAXReverb 仅 late tail（`REFLECTIONS_GAIN=0`、`ECHO_DEPTH=0`）、RT60 Sabine/Eyring、HF/LF ratio、density/diffusion、modulation、air absorption
+- [ ] A3b 自定义 FDN 回退（可选）：8 线 FDN、吸收滤波、6 声道 wet、稳定性限制
+- [ ] A4 接收器集成：Speakers/Settings 页声学开关、early/late 电平、房间预设/重扫；服务端字段/网络包
+- [ ] A4b Seat/听者策略：Seat 皇帝位优先；未坐下时玩家位置；影院锁定 vs. 自由模式
+- [ ] A5 调试/验收：dump 房间/RT60/taps；A/B 开关；矩形房间、材质、旋转、移动、5.1、4K/BSL、设备切换
+- [ ] A6 后续：低频模态/多低音炮/模态 EQ、衍射/散射、测量 RIR/卷积、HRTF
 
 ## 网络 / LAN
 
@@ -84,6 +109,7 @@
 - [ ] Windows 之外的 FFmpeg 路径/二进制支持
 - [ ] CI 构建
 - [ ] 单元测试：屏幕几何、投影 UV、梯形、5.1 矩阵
+- [ ] 单元测试：镜像源几何（延迟/增益）、RT60、指向性、FDN 稳定性
 
 
 ## 最近完成

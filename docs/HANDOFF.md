@@ -60,6 +60,11 @@
   - `docs/design/P0-SPIKE-REPORT.md`、`docs/design/P05-DESIGN.md`
   - `docs/design/PROJECTOR-GUI.md`、`docs/design/AV-RECEIVER.md`
   - 个人绝对路径/姓名/邮箱已从工作树移除
+- 音频声学规划：
+  - 新增 `docs/design/AUDIO-ACOUSTICS.md`：EAXReverb 只取晚期尾音，早期反射用一阶镜像源 + **Spinorama 实测扬声器指向性**；
+    明确只做扬声器指向性/不做原始声源指向性、材质近似、低频模态不建模、Spinorama CC BY-NC-SA 许可、EFX spike 与 M4/Seat 依赖。
+  - 当前音频管线基线（FFmpeg → StreamingAudioDecoder → AudioChunk → CinemaAudioEngine → OpenAL，虚拟 5.1，M4 前不绑定实体扬声器）已写入 AUDIO-ACOUSTICS.md §4.1。
+  - 同步更新 `PLANNING.md`（P1-7 里程碑/风险/测试原则）、`TODO.md`（A0–A6 + A1d/A1e/A2d 任务）、`AV-RECEIVER.md`（交叉引用）。
 
 ## 4. 已知问题 / 风险
 
@@ -67,6 +72,10 @@
 - **BSL 下 ambient wash 某些值画面异常（待定位具体表现/数值）**；brightness 0.01..1 尚未验收；无音轨墙钟长播未测。
 - M2 GUI 测试期间再次出现 `nvoglv64.dll` ACCESS_VIOLATION（NVIDIA OpenGL 驱动层），栈为 `CinemaVideoTexture.upload → glTexSubImage2D`；不是 Java 异常。已改为每个接收器跨 seek 复用视频纹理，并提供 `-Dfirstmod.video.glFinish=true` 诊断开关，待复测。
 - AV Receiver M1 已完成；M2 接收器 GUI 已实现，等待游戏内验收。投影仪/扬声器仍使用接收器的共享播放代理。
+- **音频声学仍是规划**：见 `docs/design/AUDIO-ACOUSTICS.md`。EAXReverb 只计划用于晚期尾音；早期反射用一阶镜像源 + **Spinorama 实测扬声器指向性**。依赖 M4 扬声器路由/Seat；EFX 可用性、材质吸收、型号映射都需 spike/校准。
+- 当前 5.1 是 6 个固定相对位置的虚拟 source，尚未绑定实体扬声器方块；M4 之前不能验收真实房间声学/指向性。
+- Spinorama 测量数据默认 CC BY-NC-SA 4.0（非商业/相同方式共享），与项目 CC0 不同；发布前必须做许可/attribution 决策。
+- 一阶声学模型不覆盖衍射、散射、高阶反射和低频房间模态；LFE 低频峰谷/驻波不会正确重现。
 - 多屏/多投影仪、LAN 同步、资源重载、两小时长片仍未完成。
 - 旧 Git 历史仍含旧提交作者信息；工作树已清理。若要彻底隐私，需要重写历史并 force-push，或把仓库设为 private。
 - 不要重新引入：test scene、visual spike、barrier 测试方块、阴影、镜头光晕、过热。
@@ -87,7 +96,13 @@
    - 定位 BSL 下 wash 异常；补测 brightness 0.01..1
    - 无音轨墙钟长播；记录 4K/HDR codec/hwaccel/丢帧回归数据
 4. **媒体能力扩展**：音轨/视频轨/字幕选择与渲染、AV Receiver Video Processing、拖放导入媒体库
-5. 之后：M4 扬声器 5.1 路由、LAN、资源重载、长片测试、GUI 进一步打磨
+5. **M4 扬声器 5.1 路由、Seat、LAN、资源重载、长片测试、GUI 进一步打磨**
+6. **音频计算/房间声学（M4 后）**
+   - 见 `docs/design/AUDIO-ACOUSTICS.md`；A1d Spinorama 数据 spike、A0 EFX/EAXReverb spike 可在 M2/M3 之后提前做。
+   - 只做扬声器指向性，不做原始声源指向性；指向性用 Spinorama 实测 H/V SPL，映射到四类箱体。
+   - 早期反射用一阶镜像源 + Spinorama 指向性；EAXReverb 只取晚期尾音，关闭其固定 5 m 早期反射。
+   - 先做 Spinorama 许可决策（CC BY-NC-SA 4.0 vs 宽松数据/用户本地导入），再决定是否打包数据。
+   - 不要为了声学阻塞 M4；EFX 不可用时回退到无混响或小型 FDN。
 
 ### 5.1 新会话第一步（投影仪 GUI）
 
