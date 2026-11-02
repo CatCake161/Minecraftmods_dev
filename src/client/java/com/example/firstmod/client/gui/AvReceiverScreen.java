@@ -585,6 +585,8 @@ public final class AvReceiverScreen extends Screen {
 				0xB8B8B8, false);
 			lineY += 10;
 		}
+		graphics.drawString(font, "Right-click a speaker block to edit its directivity.",
+			contentLeft, contentBottom - 30, 0x9A9A9A, false);
 	}
 
 	private void drawSignalTab(GuiGraphics graphics) {

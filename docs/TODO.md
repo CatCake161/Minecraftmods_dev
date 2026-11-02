@@ -74,13 +74,14 @@
 > 方案、可行性/声学判断见 [AUDIO-ACOUSTICS.md](design/AUDIO-ACOUSTICS.md)。
 > 依赖 M4 扬声器路由/Seat；A0 EFX spike、A1d Spinorama 数据/许可可提前做。
 
+- [x] Spike：`cinema/speaker_specs/profiles/` 本地 JSON 导入/客户端 GUI；低音炮内置 omni + cardioid；空手右键扬声器打开 per-speaker GUI，角色选择也在 GUI（C2S `SpeakerRolePayload`）；简单参数 range/SPL gain 可编辑；`assignments.json` 按维度+坐标保存；measured profile 读取水平/垂直指向性 + 轴上响应三组数据；打开 GUI 不暂停游戏
 - [ ] A0 EFX/EAXReverb spike：在自定义 OpenAL context 中检测 `ALC_EXT_EFX`/`AL_EXT_EFX`；创建 aux slot；验证 per-source send、wet return、stereo/5.1/HRTF 设备、reset/设备切换、CPU/延迟
 - [ ] A0b EFX 不可用回退：禁用 late reverb 或最小 Java FDN；干声/播放不受影响
 - [ ] A0c 决策门：按 spike 结果选择 EAXReverb late tail / FDN / 无混响，并把结论回写 AUDIO-ACOUSTICS.md
 - [ ] A1 声学数据模型：房间平面/包围盒、体积/表面积、材质吸收、扬声器位置/朝向/高度、听者/Seat
 - [ ] A1b 材质映射：block/tag → 低/中/高频吸收 + 散射；屏幕/羊毛/地毯/木板/石砖/玻璃/树叶/水默认值；数据驱动
 - [ ] A1c 房间检测：6 方向 raycast + 凸盒验证；缓存/失效；非矩形/室外 fallback
-- [ ] A1d Spinorama 数据管线：确认 API 认证/导出方式；选 4 类代表型号；抓取 H/V（或 3D）SPL；归一化/1/3 octave 降采样/量化；生成 directivity 资源与 metadata（source/version/changes/quality/license）
+- [ ] A1d Spinorama 数据管线：确认 API 认证/导出方式；选 4 类代表型号；抓取水平/垂直指向性 + 轴上响应（或 3D）；用轴上响应归一化/1/3 octave 降采样/量化；生成 directivity 资源与 metadata（source/version/changes/quality/license）
 - [ ] A1e Spinorama 许可决策：CC BY-NC-SA 4.0 非商业/相同方式共享，或改用宽松数据/用户本地导入；加 attribution/THIRD-PARTY
 - [ ] A2 直达声：距离/空气吸收/遮挡/指向性；明确 OpenAL 距离衰减与自定义增益分工，避免双重衰减
 - [ ] A2b 一阶早期反射：镜像源法（6 平面 × 6 扬声器）、可见性、延迟/增益/频带、VBAP/最近声道路由、最多 24–36 taps、平滑

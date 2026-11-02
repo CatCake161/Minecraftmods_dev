@@ -1,14 +1,20 @@
 package com.example.firstmod.client;
 
 import com.example.firstmod.FirstMod;
+import com.example.firstmod.block.SpeakerBlock;
 import com.example.firstmod.block.entity.AvReceiverBlockEntity;
 import com.example.firstmod.block.entity.ProjectorBlockEntity;
+import com.example.firstmod.block.entity.SpeakerBlockEntity;
 import com.example.firstmod.client.audio.InGameAudioSpike;
+import com.example.firstmod.client.audio.directivity.SpeakerDirectivityAssignments;
+import com.example.firstmod.client.audio.directivity.SpeakerDirectivityRegistry;
 import com.example.firstmod.client.command.CinemaHelpCommand;
 import com.example.firstmod.client.command.ClientCinemaCommand;
 import com.example.firstmod.client.command.ClientProjectorCommand;
+import com.example.firstmod.client.command.DirectivityCommand;
 import com.example.firstmod.client.gui.AvReceiverScreen;
 import com.example.firstmod.client.gui.ProjectorScreen;
+import com.example.firstmod.client.gui.SpeakerDirectivityScreen;
 import com.example.firstmod.client.media.AvReceiverPlaybackManager;
 import com.example.firstmod.client.media.CinemaPlayer;
 import com.example.firstmod.client.media.CinemaPrewarm;
@@ -33,6 +39,7 @@ import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.level.GameRules;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
@@ -53,6 +60,8 @@ public class FirstModClient implements ClientModInitializer {
 	@Override
 	public void onInitializeClient() {
 		CinemaPrewarm.start();
+		SpeakerDirectivityRegistry.load();
+		SpeakerDirectivityAssignments.load();
 
 		UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
 			BlockEntity blockEntity = world.getBlockEntity(hitResult.getBlockPos());
@@ -70,6 +79,19 @@ public class FirstModClient implements ClientModInitializer {
 				}
 				return InteractionResult.SUCCESS;
 			}
+			if (world.getBlockState(hitResult.getBlockPos()).getBlock() instanceof SpeakerBlock) {
+				if (!player.getItemInHand(hand).isEmpty()) {
+					return InteractionResult.PASS;
+				}
+				if (world.isClientSide) {
+					SpeakerBlockEntity speaker = findSpeaker(world, hitResult.getBlockPos());
+					if (speaker != null) {
+						Minecraft.getInstance().setScreen(new SpeakerDirectivityScreen(null, speaker));
+						return InteractionResult.SUCCESS;
+					}
+				}
+				return InteractionResult.PASS;
+			}
 			return InteractionResult.PASS;
 		});
 
@@ -85,6 +107,9 @@ public class FirstModClient implements ClientModInitializer {
 			ClientProjectorCommand.register(dispatcher));
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
 			CinemaHelpCommand.register(dispatcher));
+
+		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
+			DirectivityCommand.register(dispatcher));
 
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
 			ClientCinemaCommand.register(dispatcher));
@@ -216,6 +241,18 @@ public class FirstModClient implements ClientModInitializer {
 				}
 			});
 		}
+	}
+
+	private static SpeakerBlockEntity findSpeaker(Level level, BlockPos pos) {
+		if (level.getBlockEntity(pos) instanceof SpeakerBlockEntity speaker) {
+			return speaker;
+		}
+		// Floorstanding speakers are two blocks tall and only the lower half
+		// owns the block entity.
+		if (level.getBlockEntity(pos.below()) instanceof SpeakerBlockEntity speaker) {
+			return speaker;
+		}
+		return null;
 	}
 
 	private static boolean isManualSpikeTest() {

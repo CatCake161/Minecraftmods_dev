@@ -15,6 +15,8 @@ import com.example.firstmod.item.CableItem;
 import com.example.firstmod.item.RemoteControllerItem;
 import com.example.firstmod.network.ReceiverControlHandler;
 import com.example.firstmod.network.ReceiverControlPayload;
+import com.example.firstmod.network.SpeakerRoleHandler;
+import com.example.firstmod.network.SpeakerRolePayload;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.itemgroup.v1.ItemGroupEvents;
@@ -96,6 +98,8 @@ public class FirstMod implements ModInitializer {
 
 		PayloadTypeRegistry.playC2S().register(ReceiverControlPayload.TYPE, ReceiverControlPayload.CODEC);
 		ServerPlayNetworking.registerGlobalReceiver(ReceiverControlPayload.TYPE, ReceiverControlHandler::handle);
+		PayloadTypeRegistry.playC2S().register(SpeakerRolePayload.TYPE, SpeakerRolePayload.CODEC);
+		ServerPlayNetworking.registerGlobalReceiver(SpeakerRolePayload.TYPE, SpeakerRoleHandler::handle);
 
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
 			ProjectorCommand.register(dispatcher));

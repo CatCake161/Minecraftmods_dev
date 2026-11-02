@@ -181,9 +181,11 @@ DirectivityProfile
   changes            对数据的修改（归一化/降采样/量化等）
   quality            High/Medium/Low
   frequencies        1/3 octave 频带
+  onAxisSpl[band]    轴上响应（绝对 SPL，与 H/V 同尺度）
   horizontalAngles   -180..180
   verticalAngles     -90..90
-  gainDb[band][h][v] 相对 on-axis 归一化
+  horizontalSpl      水平指向性原始 SPL
+  verticalSpl        垂直指向性原始 SPL
   is3D               是否有完整 3D/球面数据
 
 AcousticListener
@@ -296,7 +298,8 @@ R_p = sqrt(1 - α_p)
 **数据源与格式**
 
 - Spinorama 提供站点/API/测量 JSON；可用测量名包括 `SPL Horizontal`、`SPL Vertical`、`SPL Horizontal Contour`、`SPL Vertical Contour`、3D 变体、`CEA2034`、`Early Reflections` 等。API 不可用时用站点导出或仓库数据。
-- 优先使用 `SPL Horizontal` / `SPL Vertical` 的原始角度-频率 SPL，归一化到 on-axis；如果有 3D/球面数据，优先用 3D，否则用 H/V 两切面做 separable 近似。
+- 从 Spinorama 取三组数据：**水平指向性**（`SPL Horizontal`）、**垂直指向性**（`SPL Vertical`）、**轴上响应**（on-axis SPL）。
+  归一化时用轴上响应作为每个频带的 0 dB 参考；如果有 3D/球面数据，优先用 3D，否则用 H/V 两切面做 separable 近似。
 - 选 High 质量（Klippel NFS/消声室）、尽量同一测量来源/版本；记录 measurement source、版本、日期和质量。
 - 数据做 1/3 octave 降采样、归一化、量化（例如 0.1–0.5 dB）；角度按原始或 5°/10° 网格保留，不足则插值；生成紧凑资源，不要把整站原始数据打包。
 
@@ -318,7 +321,7 @@ R_p = sqrt(1 - α_p)
 - 扬声器朝向由 `SpeakerBlock.FACING` 定义；声学中心取高音轴高度偏移：落地式约 0.9–1.0 m，书架式约 0.6–0.8 m，中置约 0.6 m，低音炮约 0.3 m（按模型再校准）。
 - 对反射点 `r`，计算从扬声器到 `r` 的方向，投影到扬声器局部坐标得到水平角 `θh` 和垂直角 `θv`。
 - `θh` 归一化到 -180..180，`θv` 到 -90..90；H/V 表做双线性插值；3D 表做三线性/最近邻插值。
-- 归一化：每个频带除以 on-axis（0°）值；只保留相对指向性，灵敏度由 source gain/校准负责。
+- 归一化：每个频带减去 `onAxisSpl[band]`；只保留相对指向性，扬声器声压由 GUI 的 `SPL gain dB` 调整。
 
 **渲染**
 
@@ -332,7 +335,7 @@ R_p = sqrt(1 - α_p)
 
 1. 选型号/测量版本（High quality，记录 source/license）。
 2. 通过 API/JSON 获取 `SPL Horizontal` / `SPL Vertical`（或 3D）。
-3. 解析角度/频率/SPL；归一化到 on-axis；1/3 octave 重采样；缺失角度插值；量化。
+3. 解析角度/频率/SPL 与轴上响应；用 on-axis 数据归一化 H/V；1/3 octave 重采样；缺失角度插值；量化。
 4. 生成 `assets/firstmod/directivity/<id>.json`（或二进制）；带 metadata：brand/model/source/license/changes/quality/date。
 5. 运行时只读表，不在音频线程解析 JSON；启动/资源重载时加载。
 6. 数据文件单独标注许可证；不默认并入 CC0 代码许可。
@@ -343,6 +346,25 @@ R_p = sqrt(1 - α_p)
 - 项目代码目前是 CC0；可以把代码与数据分开授权，但发布包必须包含 attribution/license、标明对数据的修改（changes），且不能把数据用于商业用途。
 - 若未来要商业化/闭源分发，必须：取得权利方许可、改用许可宽松的测量、或让用户本地导入数据（不随模组分发）。
 - 这不是法律意见；发布前需要确认每个 measurement 的 source/license，并在仓库加 `docs/THIRD-PARTY.md`/数据目录 LICENSE。
+
+#### 7.4.1 Spike 实现（本地 profile / 客户端 GUI）
+
+已落地的第一个 directivity spike（只做数据/UI/求值，不改变播放）：
+
+- **内置低音炮模式**：`sub-omni`（全指向）和 `sub-cardioid`（心形指向）。
+  - 心形按 3D `0.5 * (1 + cos θ)` 计算，0° = 0 dB，90° ≈ -6 dB，180° 截断到 -60 dB。
+  - 其他箱体先提供 `unmeasured`（omni 占位）profile，等真实 Spinorama 数据导入。
+- **本地 profile**：`<game>/cinema/speaker_specs/profiles/*.json`；支持把 `.json` 拖到 GUI 导入，文件大小限制 1 MB。旧 `speaker_directivity` 文件夹会尝试一次性迁移。
+- **三组测量数据**：measured profile 包含水平指向性、垂直指向性、轴上响应（`onAxis`）；H/V 用轴上响应归一化，三者必须使用同一 SPL 尺度。
+- **简单参数**：客户端 GUI 可编辑频响范围 low/high Hz、`SPL gain dB`，并循环选择 profile；类型默认保存到 `settings.json`，具体扬声器保存到 `assignments.json`。
+- **角色选择**：per-speaker GUI 内直接循环合法角色；Done 通过 C2S `SpeakerRolePayload` 提交到服务端，服务端校验距离/方块/箱体类型后写入 block entity。
+- **按扬声器保存**：`assignments.json` 以“维度 + 方块坐标”为 key，保存该扬声器自己的 profile 和参数；没有 assignment 的扬声器回退到类型默认。
+- **求值**：`SpeakerDirectivityProfile.gainDb(horizontal, vertical, frequency)`；measured profile 对 H/V 表做频率/角度插值，减去轴上响应，再以 separable（dB 相加）方式合成；结果 clamp 到 -60..+12 dB。
+- **入口**：空手右键扬声器方块打开该扬声器的 directivity GUI；角色选择在 GUI 内。`/cinema_directivity` 是类型默认的调试入口；`reload` 重扫文件夹，`info` 打印每类当前 profile，`test <type> <h> <v> <hz>` 打印指定角度/频率的增益。
+- **示例**：`docs/examples/speaker_specs/`（含 synthetic 测试表和 cardioid 简单 profile）。
+- **边界**：这个 spike 不把 directivity 应用到 `CinemaAudioEngine` 的实际音频；A2d 才做反射/离轴渲染。`SPL gain dB` 目前只是保存/显示，尚未进入增益分配。
+- **暂停**：GUI 的 `isPauseScreen()` 为 false，单机打开面板不会暂停集成服务器/播放。
+- **许可**：内置 profile 和 synthetic 示例是项目自带/CC0；用户导入的真实 Spinorama 数据仍受其原始 license 约束，GUI 会显示 source/license。
 
 ### 7.5 晚期混响
 

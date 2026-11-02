@@ -1,0 +1,9 @@
+{
+  "id": "my-sub-cardioid",
+  "name": "My Sub Cardioid",
+  "type": "subwoofer",
+  "pattern": "cardioid",
+  "frequencyRange": [20, 200],
+  "source": "local test",
+  "license": "CC0"
+}

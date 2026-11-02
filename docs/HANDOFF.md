@@ -13,7 +13,7 @@
 - 投影仪光学、外部 FFmpeg、临时 wash GUI 已可运行。
 - **AV Receiver M1/M2 已完成并验收**：M1 把媒体/播放状态/音画时钟迁入接收器，新增 `ReceiverControlPayload`（C2S）与服务端校验；客户端 `AvReceiverPlaybackManager` 每 10 tick 同步接收器状态，视频经 `ProjectorOptics` 路由到屏幕，音频由接收器播放代理驱动共享 OpenAL 5.1。M2 新增接收器 GUI（Media/Speakers/Signal/Settings）、默认库 + 外部媒体库、`lib/<id>/...` key、添加/移除/切换库、记住上次库/文件夹，以及长文本截断、tooltip 换行、滑块 pending、ESC 暂停同步、文字图层修复。接收器每 20 tick 自动配对/重连 48 格内最近投影仪；M1 只允许一个接收器处于播放/暂停（单音频引擎）。设计见 `docs/design/AV-RECEIVER.md`。
 - 用户已验收通过：M1 选片/播放/暂停/seek/音量/静音、自动配对投影仪、拆接收器/投影仪/屏幕后的停止与恢复、缺文件提示；M2 界面无溢出、截断/tooltip 正常、4K HEVC 不再 1 秒重启、关闭 GUI 后记住库/文件夹。
-- 扬声器已拆分为四种箱体：落地式 `speaker`（两格高）、书架式 `bookshelf_speaker`（一格高，FL/FR/BL/BR）、中置 `center_speaker`（一格高，FC）、低音炮 `subwoofer`（一格高，LFE）；空手右键只在各自合法角色内循环。落地式下半格持有 block entity，上半格为无 block entity 的延伸；破坏任一半只掉一个物品。线材/遥控器物品已创建，行为尚未接入。
+- 扬声器已拆分为四种箱体：落地式 `speaker`（两格高）、书架式 `bookshelf_speaker`（一格高，FL/FR/BL/BR）、中置 `center_speaker`（一格高，FC）、低音炮 `subwoofer`（一格高，LFE）；空手右键打开该扬声器的 directivity GUI，角色选择也在 GUI 内（Done 提交服务端）。落地式下半格持有 block entity，上半格为无 block entity 的延伸；破坏任一半只掉一个物品。线材/遥控器物品已创建，行为尚未接入。
 - 用户已验收通过：四种扬声器外观与角色限制、两格落地式放置/破坏、书架式原落地模型、手持与放置均无闪烁。
 
 ## 2. 必须遵守的架构约束
@@ -64,7 +64,8 @@
   - 新增 `docs/design/AUDIO-ACOUSTICS.md`：EAXReverb 只取晚期尾音，早期反射用一阶镜像源 + **Spinorama 实测扬声器指向性**；
     明确只做扬声器指向性/不做原始声源指向性、材质近似、低频模态不建模、Spinorama CC BY-NC-SA 许可、EFX spike 与 M4/Seat 依赖。
   - 当前音频管线基线（FFmpeg → StreamingAudioDecoder → AudioChunk → CinemaAudioEngine → OpenAL，虚拟 5.1，M4 前不绑定实体扬声器）已写入 AUDIO-ACOUSTICS.md §4.1。
-  - 同步更新 `PLANNING.md`（P1-7 里程碑/风险/测试原则）、`TODO.md`（A0–A6 + A1d/A1e/A2d 任务）、`AV-RECEIVER.md`（交叉引用）。
+  - 已实现 directivity spike：`cinema/speaker_specs/profiles/` 本地 JSON、拖放导入、空手右键扬声器打开 per-speaker GUI（角色选择也在 GUI 内，Done 走 C2S `SpeakerRolePayload`）、`/cinema_directivity` 类型默认调试入口；类型默认 `settings.json`，每扬声器 `assignments.json`（维度+坐标）。measured profile 读取三组 Spinorama 数据：水平指向性、垂直指向性、轴上响应（`onAxis`）；低音炮内置 `sub-omni`/`sub-cardioid`，其他类型为 unmeasured 占位；简单参数 range/SPL gain 可编辑。GUI `isPauseScreen=false`，打开不暂停游戏。尚未把 directivity 应用到实际音频。
+  - 同步更新 `PLANNING.md`（P1-7 里程碑/风险/测试原则）、`TODO.md`（Spike + A0–A6/A1d/A1e/A2d 任务）、`AV-RECEIVER.md`（交叉引用）。
 
 ## 4. 已知问题 / 风险
 
