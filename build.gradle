@@ -16,7 +16,7 @@ loom {
 	splitEnvironmentSourceSets()
 
 	mods {
-		"firstmod" {
+		"cinema" {
 			sourceSet sourceSets.main
 			sourceSet sourceSets.client
 		}

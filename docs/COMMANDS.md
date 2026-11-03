@@ -86,13 +86,13 @@
 
 | 物品 | ID | 当前行为 |
 |---|---|---|
-| AV 接收器 | `firstmod:av_receiver` | 空手右键显示媒体/状态/音量/视频输出 |
-| 落地式扬声器 | `firstmod:speaker` | 两格高；空手右键打开 directivity GUI；角色在 GUI 内选择 `NONE/FL/FR/BL/BR` |
-| 书架式扬声器 | `firstmod:bookshelf_speaker` | 一格高；空手右键打开 directivity GUI；角色在 GUI 内选择 `NONE/FL/FR/BL/BR` |
-| 中置扬声器 | `firstmod:center_speaker` | 一格高；空手右键打开 directivity GUI；角色在 GUI 内选择 `NONE/FC` |
-| 低音炮 | `firstmod:subwoofer` | 一格高；空手右键打开 directivity GUI；角色在 GUI 内选择 `NONE/LFE` |
-| 影院线材 | `firstmod:cable` | 仅物品与提示，连接行为未接 |
-| 影院遥控器 | `firstmod:remote_controller` | 仅物品与提示，遥控行为未接 |
+| AV 接收器 | `cinema:av_receiver` | 空手右键显示媒体/状态/音量/视频输出 |
+| 落地式扬声器 | `cinema:floorstanding_speaker` | 两格高；空手右键打开 directivity GUI；角色在 GUI 内选择 `NONE/FL/FR/BL/BR` |
+| 书架式扬声器 | `cinema:bookshelf_speaker` | 一格高；空手右键打开 directivity GUI；角色在 GUI 内选择 `NONE/FL/FR/BL/BR` |
+| 中置扬声器 | `cinema:center_speaker` | 一格高；空手右键打开 directivity GUI；角色在 GUI 内选择 `NONE/FC` |
+| 低音炮 | `cinema:subwoofer` | 一格高；空手右键打开 directivity GUI；角色在 GUI 内选择 `NONE/LFE` |
+| 影院线材 | `cinema:cable` | 仅物品与提示，连接行为未接 |
+| 影院遥控器 | `cinema:remote_controller` | 仅物品与提示，遥控行为未接 |
 
 创造模式位置：接收器/扬声器在 Functional Blocks，线材/遥控器在 Tools & Utilities。
 
@@ -102,7 +102,7 @@
 
 ```powershell
 $video=(Resolve-Path '<测试视频>').Path
-$env:JAVA_TOOL_OPTIONS="-Dfirstmod.spike.video=$video -Dfirstmod.spike.manual=true"
+$env:JAVA_TOOL_OPTIONS="-Dcinema.spike.video=$video -Dcinema.spike.manual=true"
 .\gradlew runClient --args="--quickPlaySingleplayer=spike"
 ```
 
@@ -131,8 +131,8 @@ $env:JAVA_TOOL_OPTIONS="-Dfirstmod.spike.video=$video -Dfirstmod.spike.manual=tr
 或直接放 `mods/ffmpeg.exe`，或指定：
 
 ```text
--Dfirstmod.ffmpeg.path=C:\path\to\ffmpeg.exe
+-Dcinema.ffmpeg.path=C:\path\to\ffmpeg.exe
 ```
 
-默认 HDR 缩到 720p、SDR 缩到 1080p；`-Dfirstmod.video.maxHeight=0` 保留原生。
-硬件解码默认 `auto`；`-Dfirstmod.ffmpeg.hwaccel=none` 可关闭。
+默认 HDR 缩到 720p、SDR 缩到 1080p；`-Dcinema.video.maxHeight=0` 保留原生。
+硬件解码默认 `auto`；`-Dcinema.ffmpeg.hwaccel=none` 可关闭。

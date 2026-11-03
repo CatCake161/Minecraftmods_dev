@@ -68,7 +68,7 @@ view/projection 矩阵计算。可见光束已按决定删除。
   屏幕的实际距离（10 格）计算后，UV 约在 0–1 之间。
 - 正式方块可以把镜头装在后墙/天花板，但必须用镜头位移/梯形校正把画面拉回屏幕。
 - 遮挡采样 32×18 = **576 条射线**，单次约 **0.5–1.1 ms**（每 20 次纹理更新一次）。
-- 截图路径为 `run/screenshots/`，自动截图在 `-Dfirstmod.spike.visual=true` 时触发。
+- 截图路径为 `run/screenshots/`，自动截图在 `-Dcinema.spike.visual=true` 时触发。
 
 踩到的渲染坑（P1 必须保留）：
 

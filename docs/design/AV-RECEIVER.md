@@ -50,7 +50,7 @@ AV Receiver（媒体与播放权威）
 ### 3.1 方块
 
 ```text
-id: firstmod:av_receiver
+id: cinema:av_receiver
 class: AvReceiverBlock / AvReceiverBlockEntity
 ```
 
@@ -410,7 +410,7 @@ M2 已完成并通过游戏内验收：
 4. `CinemaPlayer` 纹理 ID 实例化、音量/静音接口、音频引擎注入。
 5. 新增客户端 `AvReceiverPlaybackManager` / `AvReceiverPlayback`，每 10 tick 扫描附近接收器。
 6. `ScreenBlockEntityRenderer` 改为从播放管理器取对应接收器的播放实例。
-7. `FirstModClient` 的 `/cinema_play` 等命令改为操作最近接收器；保留一个迁移期的兼容入口，M2 后删除。
+7. `CinemaClient` 的 `/cinema_play` 等命令改为操作最近接收器；保留一个迁移期的兼容入口，M2 后删除。
 8. 更新 `docs/COMMANDS.md`、`docs/TODO.md`、`docs/HANDOFF.md`，补充手动测试步骤。
 
 ## 13. 测试清单

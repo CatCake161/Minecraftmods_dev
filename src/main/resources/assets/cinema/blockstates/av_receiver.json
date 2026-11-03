@@ -1,0 +1,8 @@
+{
+	"variants": {
+		"facing=north": { "model": "cinema:block/av_receiver" },
+		"facing=south": { "model": "cinema:block/av_receiver", "y": 180 },
+		"facing=west": { "model": "cinema:block/av_receiver", "y": 270 },
+		"facing=east": { "model": "cinema:block/av_receiver", "y": 90 }
+	}
+}

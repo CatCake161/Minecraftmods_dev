@@ -1,0 +1,8 @@
+{
+	"variants": {
+		"facing=north": { "model": "cinema:block/center_speaker" },
+		"facing=south": { "model": "cinema:block/center_speaker", "y": 180 },
+		"facing=west": { "model": "cinema:block/center_speaker", "y": 270 },
+		"facing=east": { "model": "cinema:block/center_speaker", "y": 90 }
+	}
+}

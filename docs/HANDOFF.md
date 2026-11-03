@@ -5,7 +5,7 @@
 
 ## 1. 当前状态
 
-- Minecraft 1.21.1 + Fabric，Java 21；包名 `com.example.firstmod`，模组 id `firstmod`。
+- Minecraft 1.21.1 + Fabric，Java 21；包名 `com.example.cinema`，模组 id `cinema`。
 - 主模组构建通过：`.\gradlew build`。
 - 最近一局 M2 验收：接收器 GUI、外部媒体库、4K HEVC 播放稳定；不再 1 秒一次重启。
 - 用户已验收通过：HDR10/HLG、4K60 VP9、4K60 HEVC/AV1、四角对齐/四个朝向、对焦/梯形、亮度 0.01..1、拆投影仪立即黑屏、相邻方块不透明。
@@ -77,7 +77,7 @@
 
 - 4K60/HDR 已由用户验收通过；建议后续记录具体 codec/pix_fmt/hwaccel/丢帧数据，便于回归。
 - **BSL 下 ambient wash 某些值画面异常（待定位具体表现/数值）**；无音轨墙钟长播未测。
-- M2 GUI 测试期间再次出现 `nvoglv64.dll` ACCESS_VIOLATION（NVIDIA OpenGL 驱动层），栈为 `CinemaVideoTexture.upload → glTexSubImage2D`；不是 Java 异常。已改为每个接收器跨 seek 复用视频纹理，并提供 `-Dfirstmod.video.glFinish=true` 诊断开关，待复测。
+- M2 GUI 测试期间再次出现 `nvoglv64.dll` ACCESS_VIOLATION（NVIDIA OpenGL 驱动层），栈为 `CinemaVideoTexture.upload → glTexSubImage2D`；不是 Java 异常。已改为每个接收器跨 seek 复用视频纹理，并提供 `-Dcinema.video.glFinish=true` 诊断开关，待复测。
 - AV Receiver M1 已完成；M2 接收器 GUI 已实现，等待游戏内验收。投影仪/扬声器仍使用接收器的共享播放代理。
 - **音频声学仍是规划**：见 `docs/design/AUDIO-ACOUSTICS.md`。EAXReverb 只计划用于晚期尾音；早期反射用一阶镜像源 + **Spinorama 实测扬声器指向性**。依赖 M4 扬声器路由/Seat；EFX 可用性、材质吸收、型号映射都需 spike/校准。
 - 当前 5.1 是 6 个固定相对位置的虚拟 source，尚未绑定实体扬声器方块；M4 之前不能验收真实房间声学/指向性。
@@ -138,20 +138,20 @@ run/mods/ffmpeg/bin/ffmpeg.exe
 run/mods/ffmpeg/bin/ffprobe.exe
 ```
 
-发布版对应 `.minecraft/mods/ffmpeg/bin/`。也支持 `-Dfirstmod.ffmpeg.path=...`。
+发布版对应 `.minecraft/mods/ffmpeg/bin/`。也支持 `-Dcinema.ffmpeg.path=...`。
 
 手动测试（不自动退出、不锁定玩家）：
 
 ```powershell
-$env:JAVA_TOOL_OPTIONS="-Dfirstmod.spike.manual=true"
+$env:JAVA_TOOL_OPTIONS="-Dcinema.spike.manual=true"
 .\gradlew runClient --args="--quickPlaySingleplayer=spike"
 ```
 
 自动测试不再搭场景；屏幕/投影仪需要手动放置。旧布局可参考：
 
 ```text
-/fill -2 -59 4 1 -57 4 firstmod:screen[facing=north]
-/setblock 0 -59 -3 firstmod:projector[facing=south]
+/fill -2 -59 4 1 -57 4 cinema:screen[facing=north]
+/setblock 0 -59 -3 cinema:projector[facing=south]
 ```
 
 然后：
@@ -165,19 +165,19 @@ $env:JAVA_TOOL_OPTIONS="-Dfirstmod.spike.manual=true"
 ## 7. 关键文件
 
 ```text
-src/main/java/com/example/firstmod/FirstMod.java
-src/main/java/com/example/firstmod/block/entity/ProjectorBlockEntity.java
-src/main/java/com/example/firstmod/block/entity/ScreenBlockEntity.java
-src/main/java/com/example/firstmod/command/ProjectorCommand.java
+src/main/java/com/example/cinema/Cinema.java
+src/main/java/com/example/cinema/block/entity/ProjectorBlockEntity.java
+src/main/java/com/example/cinema/block/entity/ScreenBlockEntity.java
+src/main/java/com/example/cinema/command/ProjectorCommand.java
 
-src/client/java/com/example/firstmod/client/FirstModClient.java
-src/client/java/com/example/firstmod/client/gui/ProjectorConfigScreen.java
-src/client/java/com/example/firstmod/client/command/ClientHelpCommand.java
-src/client/java/com/example/firstmod/client/command/ClientProjectorCommand.java
-src/client/java/com/example/firstmod/client/media/          # FFmpeg/播放/音频/纹理
-src/client/java/com/example/firstmod/client/render/ProjectorOptics.java
-src/client/java/com/example/firstmod/client/render/ScreenBlockEntityRenderer.java
-src/client/java/com/example/firstmod/client/render/ScreenGeometry.java
+src/client/java/com/example/cinema/client/CinemaClient.java
+src/client/java/com/example/cinema/client/gui/ProjectorConfigScreen.java
+src/client/java/com/example/cinema/client/command/ClientHelpCommand.java
+src/client/java/com/example/cinema/client/command/ClientProjectorCommand.java
+src/client/java/com/example/cinema/client/media/          # FFmpeg/播放/音频/纹理
+src/client/java/com/example/cinema/client/render/ProjectorOptics.java
+src/client/java/com/example/cinema/client/render/ScreenBlockEntityRenderer.java
+src/client/java/com/example/cinema/client/render/ScreenGeometry.java
 ```
 
 ## 8. 用户偏好 / 协作规则

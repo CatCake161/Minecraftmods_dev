@@ -60,7 +60,7 @@
 - [ ] seek 精确到帧（当前是关键帧附近重启）
 - [ ] 两小时长片完整内存/队列测试
 - [ ] 资源重载、音频设备切换、世界卸载恢复
-- [ ] 调查 NVIDIA `nvoglv64.dll` / `glTexSubImage2D` ACCESS_VIOLATION：纹理已跨 seek 复用，可用 `-Dfirstmod.video.glFinish=true` 复测
+- [ ] 调查 NVIDIA `nvoglv64.dll` / `glTexSubImage2D` ACCESS_VIOLATION：纹理已跨 seek 复用，可用 `-Dcinema.video.glFinish=true` 复测
 
 ## P1：扬声器 / 座位
 

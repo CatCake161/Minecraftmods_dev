@@ -1,0 +1,18 @@
+{
+	"block.cinema.screen": "Cinema Screen",
+	"block.cinema.projector": "Cinema Projector",
+	"block.cinema.av_receiver": "AV Receiver",
+	"block.cinema.floorstanding_speaker": "Floorstanding Speaker",
+	"block.cinema.bookshelf_speaker": "Bookshelf Speaker",
+	"block.cinema.center_speaker": "Center Speaker",
+	"block.cinema.subwoofer": "Subwoofer",
+	"item.cinema.cable": "Cinema Cable",
+	"item.cinema.remote_controller": "Cinema Remote",
+	"item.cinema.cable.tooltip": "Wiring tool for linking cinema devices (not yet active)",
+	"item.cinema.remote_controller.tooltip": "Remote control for cinema devices (not yet active)",
+	"speaker_type.cinema.floorstanding": "Floorstanding speaker",
+	"speaker_type.cinema.bookshelf": "Bookshelf speaker",
+	"speaker_type.cinema.center": "Center speaker",
+	"speaker_type.cinema.subwoofer": "Subwoofer",
+	"message.cinema.speaker_role": "%s role: %s"
+}

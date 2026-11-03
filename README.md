@@ -35,11 +35,11 @@ run/mods/ffmpeg/bin/ffprobe.exe
 也支持直接放 `mods/ffmpeg.exe`，或使用：
 
 ```text
--Dfirstmod.ffmpeg.path=C:\path\to\ffmpeg.exe
+-Dcinema.ffmpeg.path=C:\path\to\ffmpeg.exe
 ```
 
-默认 HDR 缩到 720p、SDR 缩到 1080p；要保留原生分辨率使用 `-Dfirstmod.video.maxHeight=0`。
-硬件解码默认 `auto`；驱动有问题时用 `-Dfirstmod.ffmpeg.hwaccel=none` 关闭。
+默认 HDR 缩到 720p、SDR 缩到 1080p；要保留原生分辨率使用 `-Dcinema.video.maxHeight=0`。
+硬件解码默认 `auto`；驱动有问题时用 `-Dcinema.ffmpeg.hwaccel=none` 关闭。
 
 ## 构建与运行
 

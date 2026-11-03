@@ -1,0 +1,12 @@
+{
+	"variants": {
+		"facing=north,half=lower": { "model": "cinema:block/floorstanding_speaker" },
+		"facing=south,half=lower": { "model": "cinema:block/floorstanding_speaker", "y": 180 },
+		"facing=west,half=lower": { "model": "cinema:block/floorstanding_speaker", "y": 270 },
+		"facing=east,half=lower": { "model": "cinema:block/floorstanding_speaker", "y": 90 },
+		"facing=north,half=upper": { "model": "cinema:block/floorstanding_speaker_upper" },
+		"facing=south,half=upper": { "model": "cinema:block/floorstanding_speaker_upper", "y": 180 },
+		"facing=west,half=upper": { "model": "cinema:block/floorstanding_speaker_upper", "y": 270 },
+		"facing=east,half=upper": { "model": "cinema:block/floorstanding_speaker_upper", "y": 90 }
+	}
+}

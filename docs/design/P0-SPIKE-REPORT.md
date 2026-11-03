@@ -142,27 +142,27 @@ $env:JAVA_HOME='<JDK-25+>'
 # runServer 生成 run/spike 后，复制到 run/saves/spike
 
 # 5.1 扬声器：独立 OpenAL context + 6 个 mono source
-$env:JAVA_TOOL_OPTIONS='-Dfirstmod.spike.audio=independent -Dfirstmod.spike.exit=true'
+$env:JAVA_TOOL_OPTIONS='-Dcinema.spike.audio=independent -Dcinema.spike.exit=true'
 .\gradlew runClient --args="--quickPlaySingleplayer=spike"
 
 # 屏幕 + 投影 UV：自动启用、截图、退出
-$env:JAVA_TOOL_OPTIONS='-Dfirstmod.spike.visual=true -Dfirstmod.spike.exit=true'
+$env:JAVA_TOOL_OPTIONS='-Dcinema.spike.visual=true -Dcinema.spike.exit=true'
 .\gradlew runClient --args="--quickPlaySingleplayer=spike"
 
 # 真实 720p30 + 5.1：自动播放、截图、退出
 $video=(Resolve-Path 'spike\testmedia\test720p30_51.mp4').Path
-$env:JAVA_TOOL_OPTIONS="-Dfirstmod.spike.video=$video -Dfirstmod.spike.exit=true"
+$env:JAVA_TOOL_OPTIONS="-Dcinema.spike.video=$video -Dcinema.spike.exit=true"
 .\gradlew runClient --args="--quickPlaySingleplayer=spike"
 
 # 播放 + 5 秒后 seek 到 5.0 s
-$env:JAVA_TOOL_OPTIONS="-Dfirstmod.spike.video=$video -Dfirstmod.spike.video.seek=5.0 -Dfirstmod.spike.exit=true"
+$env:JAVA_TOOL_OPTIONS="-Dcinema.spike.video=$video -Dcinema.spike.video.seek=5.0 -Dcinema.spike.exit=true"
 .\gradlew runClient --args="--quickPlaySingleplayer=spike"
 ```
 
 也可以在游戏内使用 `/cinema_audio_spike`、`/cinema_visual_spike`、
 `/cinema_play <path>`、`/cinema_pause`、`/cinema_seek <seconds>`、`/cinema_stop`；
 `/cinema_visual_spike screenshot` 手动截图。截图输出到 `run/screenshots/`。
-带 `firstmod.spike.*` 属性的自动测试会在启动后把游戏窗口置前，便于观察。
+带 `cinema.spike.*` 属性的自动测试会在启动后把游戏窗口置前，便于观察。
 
 Sodium/Iris/BSL 只作为测试环境放入 `run/mods`、`run/shaderpacks`，不进入模组依赖。
 
@@ -301,8 +301,8 @@ Sodium/Iris 直接崩溃。只保留 `javacv`/`ffmpeg`/`javacpp` 三件套并设
 
 已注册/实现：
 
-- `firstmod:screen`：4×3 多方块屏幕，master 渲染；有投影仪时按镜头 UV 逐块投影/裁剪，未配对时保持黑屏
-- `firstmod:projector`：带镜头模型的投影仪方块 + `ProjectorBlockEntity`
+- `cinema:screen`：4×3 多方块屏幕，master 渲染；有投影仪时按镜头 UV 逐块投影/裁剪，未配对时保持黑屏
+- `cinema:projector`：带镜头模型的投影仪方块 + `ProjectorBlockEntity`
 - 投掷比/变焦、自动对焦/手动焦距、垂直/水平梯形、亮度、灯泡预热/冷却
 - 屏幕自动配对；镜头 view/projection 计算四角 UV；梯形预畸变
 - 对焦：视频纹理 mipmap + `GL_TEXTURE_LOD_BIAS`；覆盖 `entityCutoutNoCull` 每次绘制的过滤重置
@@ -314,7 +314,7 @@ Sodium/Iris 直接崩溃。只保留 `javacv`/`ffmpeg`/`javacpp` 三件套并设
 
 ```powershell
 $video=(Resolve-Path 'spike\testmedia\test720p30_51.mp4').Path
-$env:JAVA_TOOL_OPTIONS="-Dfirstmod.spike.video=$video -Dfirstmod.spike.blocks=true -Dfirstmod.spike.projector.shadow=true -Dfirstmod.spike.exit=true"
+$env:JAVA_TOOL_OPTIONS="-Dcinema.spike.video=$video -Dcinema.spike.blocks=true -Dcinema.spike.projector.shadow=true -Dcinema.spike.exit=true"
 .\gradlew runClient --args="--quickPlaySingleplayer=spike"
 ```
 
@@ -322,7 +322,7 @@ $env:JAVA_TOOL_OPTIONS="-Dfirstmod.spike.video=$video -Dfirstmod.spike.blocks=tr
 
 ```powershell
 $video=(Resolve-Path 'spike\testmedia\test720p30_51.mp4').Path
-$env:JAVA_TOOL_OPTIONS="-Dfirstmod.spike.video=$video -Dfirstmod.spike.blocks=true -Dfirstmod.spike.manual=true"
+$env:JAVA_TOOL_OPTIONS="-Dcinema.spike.video=$video -Dcinema.spike.blocks=true -Dcinema.spike.manual=true"
 .\gradlew runClient --args="--quickPlaySingleplayer=spike"
 ```
 

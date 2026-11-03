@@ -336,7 +336,7 @@ R_p = sqrt(1 - α_p)
 1. 选型号/测量版本（High quality，记录 source/license）。
 2. 通过 API/JSON 获取 `SPL Horizontal` / `SPL Vertical`（或 3D）。
 3. 解析角度/频率/SPL 与轴上响应；用 on-axis 数据归一化 H/V；1/3 octave 重采样；缺失角度插值；量化。
-4. 生成 `assets/firstmod/directivity/<id>.json`（或二进制）；带 metadata：brand/model/source/license/changes/quality/date。
+4. 生成 `assets/cinema/directivity/<id>.json`（或二进制）；带 metadata：brand/model/source/license/changes/quality/date。
 5. 运行时只读表，不在音频线程解析 JSON；启动/资源重载时加载。
 6. 数据文件单独标注许可证；不默认并入 CC0 代码许可。
 

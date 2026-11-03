@@ -1,0 +1,8 @@
+{
+	"variants": {
+		"facing=north": { "model": "cinema:block/bookshelf_speaker" },
+		"facing=south": { "model": "cinema:block/bookshelf_speaker", "y": 180 },
+		"facing=west": { "model": "cinema:block/bookshelf_speaker", "y": 270 },
+		"facing=east": { "model": "cinema:block/bookshelf_speaker", "y": 90 }
+	}
+}

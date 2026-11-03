@@ -71,9 +71,9 @@ M1 已把解码、播放状态、媒体选择和音画时钟迁入 AV Receiver�
 
 默认参数：
 
-- `-Dfirstmod.video.maxHeight=720`（HDR）/ `1080`（SDR）
-- `-Dfirstmod.ffmpeg.hwaccel=auto`
-- `-Dfirstmod.ffmpeg.path=...` 可覆盖 FFmpeg 位置
+- `-Dcinema.video.maxHeight=720`（HDR）/ `1080`（SDR）
+- `-Dcinema.ffmpeg.hwaccel=auto`
+- `-Dcinema.ffmpeg.path=...` 可覆盖 FFmpeg 位置
 - HDR10/HLG 自动 `zscale + tonemap` 到 BT.709；HDR 默认 720p
 
 ### 3.2 屏幕与投影仪
@@ -92,8 +92,8 @@ M1 已把解码、播放状态、媒体选择和音画时钟迁入 AV Receiver�
 - 游戏内帮助：`/cinema_help [页码]` / `/cinema help [页码]`
 - 客户端投影仪调参：`/cinema_projector_client`
 - 服务端投影仪调参：`/cinema_projector`
-- 手动模式：`-Dfirstmod.spike.manual=true`，不退出、不锁定玩家
-- 自动模式：`-Dfirstmod.spike.exit=true`，测试结束后退出
+- 手动模式：`-Dcinema.spike.manual=true`，不退出、不锁定玩家
+- 自动模式：`-Dcinema.spike.exit=true`，测试结束后退出
 - 自动测试固定出生点/朝南、正午、晴天、无动物
 - 测试用屏幕/投影仪由玩家自行放置；不再提供自动测试场景命令
 
@@ -118,7 +118,7 @@ M1 已把解码、播放状态、媒体选择和音画时钟迁入 AV Receiver�
 
 1. **构建和单元级验证**可以自动跑；涉及动态画面、对焦、梯形、环境光、HDR 的最终效果，交给用户在游戏内检查。
 2. 自动测试必须固定时间、天气、玩家位置/朝向，并关闭动物生成。
-3. 手动测试使用 `firstmod.spike.manual=true`，让玩家自由移动和调参。
+3. 手动测试使用 `cinema.spike.manual=true`，让玩家自由移动和调参。
 4. 测试用屏幕/投影仪由玩家放置；不要留下自动生成的测试方块或不可见 barrier。
 5. 日志中记录 codec、源/输出分辨率、color metadata、解码 fps、丢帧数；但日志不提交到仓库。
 6. 声学效果（早期反射、晚期混响、指向性、遮挡）最终由用户游戏内试听验收；数值/日志只用于定位，不替代听感。

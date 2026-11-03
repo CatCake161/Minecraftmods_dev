@@ -1,0 +1,18 @@
+{
+	"block.cinema.screen": "影院屏幕",
+	"block.cinema.projector": "影院投影仪",
+	"block.cinema.av_receiver": "AV 接收器",
+	"block.cinema.floorstanding_speaker": "落地式扬声器",
+	"block.cinema.bookshelf_speaker": "书架式扬声器",
+	"block.cinema.center_speaker": "中置扬声器",
+	"block.cinema.subwoofer": "低音炮",
+	"item.cinema.cable": "影院线材",
+	"item.cinema.remote_controller": "影院遥控器",
+	"item.cinema.cable.tooltip": "用于连接影院设备的线材（尚未启用）",
+	"item.cinema.remote_controller.tooltip": "用于远程控制影院设备（尚未启用）",
+	"speaker_type.cinema.floorstanding": "落地式扬声器",
+	"speaker_type.cinema.bookshelf": "书架式扬声器",
+	"speaker_type.cinema.center": "中置扬声器",
+	"speaker_type.cinema.subwoofer": "低音炮",
+	"message.cinema.speaker_role": "%s 角色：%s"
+}
