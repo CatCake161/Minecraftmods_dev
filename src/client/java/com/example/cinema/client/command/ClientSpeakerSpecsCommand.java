@@ -1,9 +1,9 @@
 package com.example.cinema.client.command;
 
 import com.example.cinema.block.entity.SpeakerType;
-import com.example.cinema.client.audio.directivity.SpeakerDirectivityProfile;
-import com.example.cinema.client.audio.directivity.SpeakerDirectivityRegistry;
-import com.example.cinema.client.gui.SpeakerDirectivityConfigScreen;
+import com.example.cinema.client.audio.speakerspecs.SpeakerSpecsProfile;
+import com.example.cinema.client.audio.speakerspecs.SpeakerSpecsRegistry;
+import com.example.cinema.client.gui.SpeakerSpecsConfigScreen;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
@@ -14,23 +14,23 @@ import net.minecraft.network.chat.Component;
 
 import java.util.Locale;
 
-/** Client-only commands for the speaker directivity spike. */
-public final class ClientDirectivityCommand {
-	private ClientDirectivityCommand() {
+/** Client-only commands for the speaker specs spike. */
+public final class ClientSpeakerSpecsCommand {
+	private ClientSpeakerSpecsCommand() {
 	}
 
 	public static void register(CommandDispatcher<FabricClientCommandSource> dispatcher) {
-		dispatcher.register(ClientCommandManager.literal("cinema_directivity")
+		dispatcher.register(ClientCommandManager.literal("cinema_speaker_specs")
 			.executes(context -> {
-				Minecraft.getInstance().setScreen(new SpeakerDirectivityConfigScreen(null));
+				Minecraft.getInstance().setScreen(new SpeakerSpecsConfigScreen(null));
 				return 1;
 			})
 			.then(ClientCommandManager.literal("reload")
 				.executes(context -> {
-					SpeakerDirectivityRegistry.ReloadResult result =
-						SpeakerDirectivityRegistry.reloadProfiles();
+					SpeakerSpecsRegistry.ReloadResult result =
+						SpeakerSpecsRegistry.reloadProfiles();
 					context.getSource().sendFeedback(Component.literal(
-						"directivity: " + result.profileCount() + " profile(s) loaded"));
+						"speaker specs: " + result.profileCount() + " profile(s) loaded"));
 					for (String error : result.errors()) {
 						context.getSource().sendError(Component.literal(error));
 					}
@@ -38,15 +38,15 @@ public final class ClientDirectivityCommand {
 				}))
 			.then(ClientCommandManager.literal("info")
 				.executes(context -> {
-					SpeakerDirectivityRegistry.load();
+					SpeakerSpecsRegistry.load();
 					for (SpeakerType type : SpeakerType.values()) {
-						SpeakerDirectivityRegistry.SpeakerSettings settings =
-							SpeakerDirectivityRegistry.settings(type);
+						SpeakerSpecsRegistry.SpeakerSettings settings =
+							SpeakerSpecsRegistry.settings(type);
 						if (settings == null) {
 							continue;
 						}
-						SpeakerDirectivityProfile profile =
-							SpeakerDirectivityRegistry.find(type, settings.profileId());
+						SpeakerSpecsProfile profile =
+							SpeakerSpecsRegistry.find(type, settings.profileId());
 						if (profile == null) {
 							continue;
 						}
@@ -79,13 +79,13 @@ public final class ClientDirectivityCommand {
 											"unknown speaker type"));
 										return 0;
 									}
-									SpeakerDirectivityRegistry.SpeakerSettings settings =
-										SpeakerDirectivityRegistry.settings(type);
-									SpeakerDirectivityProfile profile = settings == null ? null
-										: SpeakerDirectivityRegistry.find(type, settings.profileId());
+									SpeakerSpecsRegistry.SpeakerSettings settings =
+										SpeakerSpecsRegistry.settings(type);
+									SpeakerSpecsProfile profile = settings == null ? null
+										: SpeakerSpecsRegistry.find(type, settings.profileId());
 									if (profile == null) {
 										context.getSource().sendError(Component.literal(
-											"no directivity profile selected"));
+											"no speaker specs profile selected"));
 										return 0;
 									}
 									double horizontal = DoubleArgumentType.getDouble(context, "horizontal");

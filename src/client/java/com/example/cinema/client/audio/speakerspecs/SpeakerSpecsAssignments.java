@@ -1,4 +1,4 @@
-package com.example.cinema.client.audio.directivity;
+package com.example.cinema.client.audio.speakerspecs;
 
 import com.example.cinema.Cinema;
 import com.example.cinema.block.entity.SpeakerBlockEntity;
@@ -17,23 +17,23 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Client-local per-speaker directivity assignment.
+ * Client-local per-speaker speaker specs assignment.
  *
  * <p>The key is dimension + block position. The values are intentionally local:
- * directivity affects the client's rendering/audio, like a graphics setting, and
+ * speaker specs affect the client's rendering/audio, like a graphics setting, and
  * the profile data itself is client-local. If a speaker has no valid assignment,
- * the type-level defaults from {@link SpeakerDirectivityRegistry} are used.
+ * the type-level defaults from {@link SpeakerSpecsRegistry} are used.
  */
-public final class SpeakerDirectivityAssignments {
+public final class SpeakerSpecsAssignments {
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 	private static final Map<String, Assignment> assignmentsByKey = new HashMap<>();
 	private static boolean loaded;
 
-	private SpeakerDirectivityAssignments() {
+	private SpeakerSpecsAssignments() {
 	}
 
 	public record Assignment(SpeakerType type,
-							 SpeakerDirectivityRegistry.SpeakerSettings settings) {
+							 SpeakerSpecsRegistry.SpeakerSettings settings) {
 	}
 
 	public static synchronized void load() {
@@ -72,12 +72,12 @@ public final class SpeakerDirectivityAssignments {
 				double high = getDouble(value, "highHz", 20_000.0);
 				double gain = getDouble(value, "gainDb", 0.0);
 				assignmentsByKey.put(entry.getKey(), new Assignment(type,
-					clampSettings(new SpeakerDirectivityRegistry.SpeakerSettings(
+					clampSettings(new SpeakerSpecsRegistry.SpeakerSettings(
 						profileId, low, high, gain))));
 			}
-			Cinema.LOGGER.info("cinema directivity: {} speaker assignment(s)", assignmentsByKey.size());
+			Cinema.LOGGER.info("cinema speaker specs: {} speaker assignment(s)", assignmentsByKey.size());
 		} catch (Exception e) {
-			Cinema.LOGGER.warn("cinema directivity: could not load speaker assignments: {}",
+			Cinema.LOGGER.warn("cinema speaker specs: could not load speaker assignments: {}",
 				e.getMessage());
 		}
 	}
@@ -89,15 +89,15 @@ public final class SpeakerDirectivityAssignments {
 		return assignmentsByKey.get(key(speaker));
 	}
 
-	public static synchronized SpeakerDirectivityRegistry.SpeakerSettings settingsFor(
+	public static synchronized SpeakerSpecsRegistry.SpeakerSettings settingsFor(
 		SpeakerBlockEntity speaker) {
-		SpeakerDirectivityRegistry.SpeakerSettings fallback =
-			SpeakerDirectivityRegistry.settings(speaker.type());
+		SpeakerSpecsRegistry.SpeakerSettings fallback =
+			SpeakerSpecsRegistry.settings(speaker.type());
 		Assignment assignment = get(speaker);
 		if (assignment == null || assignment.type() != speaker.type()) {
 			return fallback;
 		}
-		if (SpeakerDirectivityRegistry.find(speaker.type(),
+		if (SpeakerSpecsRegistry.find(speaker.type(),
 			assignment.settings().profileId()) == null) {
 			return fallback;
 		}
@@ -105,11 +105,11 @@ public final class SpeakerDirectivityAssignments {
 	}
 
 	public static synchronized void apply(SpeakerBlockEntity speaker,
-										  SpeakerDirectivityRegistry.SpeakerSettings settings) {
+										  SpeakerSpecsRegistry.SpeakerSettings settings) {
 		if (speaker == null || speaker.getLevel() == null || settings == null) {
 			return;
 		}
-		if (SpeakerDirectivityRegistry.find(speaker.type(), settings.profileId()) == null) {
+		if (SpeakerSpecsRegistry.find(speaker.type(), settings.profileId()) == null) {
 			return;
 		}
 		assignmentsByKey.put(key(speaker), new Assignment(speaker.type(), clampSettings(settings)));
@@ -131,16 +131,16 @@ public final class SpeakerDirectivityAssignments {
 		}
 		root.add("assignments", assignments);
 		try {
-			Files.createDirectories(SpeakerDirectivityRegistry.rootDir());
+			Files.createDirectories(SpeakerSpecsRegistry.rootDir());
 			Files.writeString(file(), GSON.toJson(root), StandardCharsets.UTF_8);
 		} catch (IOException e) {
-			Cinema.LOGGER.warn("cinema directivity: could not save speaker assignments: {}",
+			Cinema.LOGGER.warn("cinema speaker specs: could not save speaker assignments: {}",
 				e.getMessage());
 		}
 	}
 
 	public static Path file() {
-		return SpeakerDirectivityRegistry.rootDir().resolve("assignments.json");
+		return SpeakerSpecsRegistry.rootDir().resolve("assignments.json");
 	}
 
 	private static String key(SpeakerBlockEntity speaker) {
@@ -156,11 +156,11 @@ public final class SpeakerDirectivityAssignments {
 		return null;
 	}
 
-	private static SpeakerDirectivityRegistry.SpeakerSettings clampSettings(
-		SpeakerDirectivityRegistry.SpeakerSettings settings) {
+	private static SpeakerSpecsRegistry.SpeakerSettings clampSettings(
+		SpeakerSpecsRegistry.SpeakerSettings settings) {
 		double low = clamp(settings.lowHz(), 1.0, 23_999.0);
 		double high = clamp(settings.highHz(), low + 1.0, 24_000.0);
-		return new SpeakerDirectivityRegistry.SpeakerSettings(settings.profileId(), low, high,
+		return new SpeakerSpecsRegistry.SpeakerSettings(settings.profileId(), low, high,
 			clamp(settings.gainDb(), -60.0, 60.0));
 	}
 

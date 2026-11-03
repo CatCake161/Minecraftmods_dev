@@ -170,10 +170,10 @@ AcousticSpeaker
   position           世界坐标（含高度偏移）
   facing             水平朝向
   gain               校准增益
-  directivityProfileId
+  speakerSpecsProfileId
   acousticCenterY    声学中心（高音轴）高度偏移
 
-DirectivityProfile
+SpeakerSpecsProfile
   id                 例如 kef-r11 / kef-ls50 / kef-r2c / sub-omni
   brand/model        被测音箱
   source             测量来源（ASR/Erin's Audio Corner/厂商等）
@@ -336,7 +336,7 @@ R_p = sqrt(1 - α_p)
 1. 选型号/测量版本（High quality，记录 source/license）。
 2. 通过 API/JSON 获取 `SPL Horizontal` / `SPL Vertical`（或 3D）。
 3. 解析角度/频率/SPL 与轴上响应；用 on-axis 数据归一化 H/V；1/3 octave 重采样；缺失角度插值；量化。
-4. 生成 `assets/cinema/directivity/<id>.json`（或二进制）；带 metadata：brand/model/source/license/changes/quality/date。
+4. 生成 `assets/cinema/speaker_specs/<id>.json`（或二进制）；带 metadata：brand/model/source/license/changes/quality/date。
 5. 运行时只读表，不在音频线程解析 JSON；启动/资源重载时加载。
 6. 数据文件单独标注许可证；不默认并入 CC0 代码许可。
 
@@ -349,7 +349,7 @@ R_p = sqrt(1 - α_p)
 
 #### 7.4.1 Spike 实现（本地 profile / 客户端 GUI）
 
-已落地的第一个 directivity spike（只做数据/UI/求值，不改变播放）：
+已落地的第一个 speaker specs spike（只做数据/UI/求值，不改变播放）：
 
 - **内置低音炮模式**：`sub-omni`（全指向）和 `sub-cardioid`（心形指向）。
   - 心形按 3D `0.5 * (1 + cos θ)` 计算，0° = 0 dB，90° ≈ -6 dB，180° 截断到 -60 dB。
@@ -359,10 +359,10 @@ R_p = sqrt(1 - α_p)
 - **简单参数**：客户端 GUI 可编辑频响范围 low/high Hz、`SPL gain dB`，并循环选择 profile；类型默认保存到 `settings.json`，具体扬声器保存到 `assignments.json`。
 - **角色选择**：per-speaker GUI 内直接循环合法角色；Done 通过 C2S `SpeakerRolePayload` 提交到服务端，服务端校验距离/方块/箱体类型后写入 block entity。
 - **按扬声器保存**：`assignments.json` 以“维度 + 方块坐标”为 key，保存该扬声器自己的 profile 和参数；没有 assignment 的扬声器回退到类型默认。
-- **求值**：`SpeakerDirectivityProfile.gainDb(horizontal, vertical, frequency)`；measured profile 对 H/V 表做频率/角度插值，减去轴上响应，再以 separable（dB 相加）方式合成；结果 clamp 到 -60..+12 dB。
-- **入口**：空手右键扬声器方块打开该扬声器的 directivity GUI；角色选择在 GUI 内。`/cinema_directivity` 是类型默认的调试入口；`reload` 重扫文件夹，`info` 打印每类当前 profile，`test <type> <h> <v> <hz>` 打印指定角度/频率的增益。
+- **求值**：`SpeakerSpecsProfile.gainDb(horizontal, vertical, frequency)`；measured profile 对 H/V 表做频率/角度插值，减去轴上响应，再以 separable（dB 相加）方式合成；结果 clamp 到 -60..+12 dB。
+- **入口**：空手右键扬声器方块打开该扬声器的 speaker specs GUI；角色选择在 GUI 内。`/cinema_speaker_specs` 是类型默认的调试入口；`reload` 重扫文件夹，`info` 打印每类当前 profile，`test <type> <h> <v> <hz>` 打印指定角度/频率的增益。
 - **示例**：`docs/examples/speaker_specs/`（含 synthetic 测试表和 cardioid 简单 profile）。
-- **边界**：这个 spike 不把 directivity 应用到 `CinemaAudioEngine` 的实际音频；A2d 才做反射/离轴渲染。`SPL gain dB` 目前只是保存/显示，尚未进入增益分配。
+- **边界**：这个 spike 不把 speaker specs 应用到 `CinemaAudioEngine` 的实际音频；A2d 才做反射/离轴渲染。`SPL gain dB` 目前只是保存/显示，尚未进入增益分配。
 - **暂停**：GUI 的 `isPauseScreen()` 为 false，单机打开面板不会暂停集成服务器/播放。
 - **许可**：内置 profile 和 synthetic 示例是项目自带/CC0；用户导入的真实 Spinorama 数据仍受其原始 license 约束，GUI 会显示 source/license。
 
@@ -555,7 +555,7 @@ rt60Clamp              0.3–2.5 s
 UI 归属：
 
 - AV Receiver 的 Speakers/Settings 页：声学开关、early/late 电平、房间预设、重新扫描房间、调试信息。
-- Speakers 页显示每只扬声器的 directivity profile（品牌/型号/测量来源/许可证），允许切换 profile 或恢复默认。
+- Speakers 页显示每只扬声器的 speaker specs profile（品牌/型号/测量来源/许可证），允许切换 profile 或恢复默认。
 - 投影仪 GUI 不放音频设置。
 - 调试命令（后续实现）：dump 房间尺寸/RT60/taps 数、指向性表、A/B 开关、强制材质、强制座位。
 
@@ -565,7 +565,7 @@ UI 归属：
 |---|---|---|---|
 | A0 | EFX/EAXReverb 能力 spike：aux send、wet return、设备布局、CPU/延迟、reset | 无（可在 M2/M3 后提前） | 能听到/关闭混响，无 OpenAL 错误，干声不受影响 |
 | A1 | 声学数据模型、材质映射、房间检测、直达声距离/空气吸收 | M4 扬声器位置/Seat 更佳 | dump 出正确的房间尺寸/RT60；干声电平一致 |
-| A1d | Spinorama 数据管线：选 4 类代表型号、抓取 H/V（或 3D）、归一化/降采样、生成资源和 metadata | 无（可提前） | 每类有一张可追溯的 directivity 表；来源/许可证/质量记录完整 |
+| A1d | Spinorama 数据管线：选 4 类代表型号、抓取 H/V（或 3D）、归一化/降采样、生成资源和 metadata | 无（可提前） | 每类有一张可追溯的 speaker specs 数据表；来源/许可证/质量记录完整 |
 | A1e | 数据许可决策：CC BY-NC-SA 4.0 非商业/相同方式共享，或改宽松数据/用户本地导入 | A1d | 发布包与仓库的许可证/attribution 明确，不违反 NC/SA |
 | A2 | 一阶镜像源早期反射 + 5.1 路由 + 平滑 | M4 | 矩形房间反射延迟/方向合理；开关可辨；无爆音 |
 | A2d | 指向性渲染：角度插值 + 3 频带/短 FIR + 声学中心高度 | A1d/M4 | 旋转/离轴变化与实测曲线趋势一致；无分频染色/爆音 |

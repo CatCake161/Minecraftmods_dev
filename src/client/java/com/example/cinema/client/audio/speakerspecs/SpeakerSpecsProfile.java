@@ -1,4 +1,4 @@
-package com.example.cinema.client.audio.directivity;
+package com.example.cinema.client.audio.speakerspecs;
 
 import com.example.cinema.block.entity.SpeakerType;
 import com.google.gson.JsonArray;
@@ -12,15 +12,15 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * One speaker directivity profile.
+ * One speaker specs profile.
  *
- * <p>This is the data model for the directivity spike. It supports two analytic
+ * <p>This is the data model for the speaker specs spike. It supports two analytic
  * patterns used by subwoofers (omni and cardioid) and a measured table with
  * horizontal/vertical SPL cuts. The table is normalized to the on-axis response
  * at evaluation time. Absolute speaker sensitivity is intentionally not part of
  * this model; the client applies a single SPL gain per speaker instead.
  */
-public final class SpeakerDirectivityProfile {
+public final class SpeakerSpecsProfile {
 	public enum Pattern {
 		OMNI,
 		CARDIOID,
@@ -50,7 +50,7 @@ public final class SpeakerDirectivityProfile {
 	private final Row[] horizontal;
 	private final Row[] vertical;
 
-	SpeakerDirectivityProfile(String id, String name, SpeakerType type, Pattern pattern,
+	SpeakerSpecsProfile(String id, String name, SpeakerType type, Pattern pattern,
 							  String source, String license, String quality,
 							  double lowHz, double highHz, double[] frequencies,
 							  double[] onAxisSpl, Row[] horizontal, Row[] vertical) {
@@ -277,7 +277,7 @@ public final class SpeakerDirectivityProfile {
 		return copy;
 	}
 
-	public static SpeakerDirectivityProfile fromJson(JsonObject json) {
+	public static SpeakerSpecsProfile fromJson(JsonObject json) {
 		String id = requiredString(json, "id");
 		if (!id.matches("[A-Za-z0-9_.-]+")) {
 			throw new IllegalArgumentException("id may only contain letters, digits, '_', '.', '-'");
@@ -322,7 +322,7 @@ public final class SpeakerDirectivityProfile {
 		if (pattern == Pattern.MEASURED && horizontal.length == 0 && vertical.length == 0) {
 			throw new IllegalArgumentException("measured profile needs horizontal or vertical SPL rows");
 		}
-		return new SpeakerDirectivityProfile(id, name, type, pattern, source, license, quality,
+		return new SpeakerSpecsProfile(id, name, type, pattern, source, license, quality,
 			lowHz, highHz, frequencies, onAxisSpl, horizontal, vertical);
 	}
 

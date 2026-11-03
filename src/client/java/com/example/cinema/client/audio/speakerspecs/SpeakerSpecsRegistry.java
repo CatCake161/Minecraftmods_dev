@@ -1,4 +1,4 @@
-package com.example.cinema.client.audio.directivity;
+package com.example.cinema.client.audio.speakerspecs;
 
 import com.example.cinema.Cinema;
 import com.example.cinema.block.entity.SpeakerType;
@@ -24,19 +24,19 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Client-local speaker directivity profile registry.
+ * Client-local speaker specs profile registry.
  *
- * <p>Profiles are read from {@code <game>/cinema/speaker_directivity/profiles/}.
+ * <p>Profiles are read from {@code <game>/cinema/speaker_specs/profiles/}.
  * The selected profile and per-profile simple parameters are saved to
  * {@code settings.json}. Nothing here is synchronized to the server.
  */
-public final class SpeakerDirectivityRegistry {
+public final class SpeakerSpecsRegistry {
 	public static final String SUB_OMNI_ID = "sub-omni";
 	public static final String SUB_CARDIOID_ID = "sub-cardioid";
 
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 	private static final long MAX_IMPORT_BYTES = 1_000_000L;
-	private static final Map<SpeakerType, List<SpeakerDirectivityProfile>> profilesByType =
+	private static final Map<SpeakerType, List<SpeakerSpecsProfile>> profilesByType =
 		new EnumMap<>(SpeakerType.class);
 	/** Selected profile per cabinet type. */
 	private static final Map<SpeakerType, String> selectedByType = new EnumMap<>(SpeakerType.class);
@@ -45,7 +45,7 @@ public final class SpeakerDirectivityRegistry {
 	private static final List<String> profileErrors = new ArrayList<>();
 	private static boolean loaded;
 
-	private SpeakerDirectivityRegistry() {
+	private SpeakerSpecsRegistry() {
 	}
 
 	public record SpeakerSettings(String profileId, double lowHz, double highHz,
@@ -64,12 +64,12 @@ public final class SpeakerDirectivityRegistry {
 		try {
 			Files.createDirectories(profilesDir());
 		} catch (IOException e) {
-			Cinema.LOGGER.warn("cinema directivity: could not create profile folder: {}", e.getMessage());
+			Cinema.LOGGER.warn("cinema speaker specs: could not create profile folder: {}", e.getMessage());
 		}
 		reloadProfiles();
 		loadSettings();
 		ensureSettingsValid();
-		Cinema.LOGGER.info("cinema directivity: {} profile(s), {} load error(s)",
+		Cinema.LOGGER.info("cinema speaker specs: {} profile(s), {} load error(s)",
 			profileCount(), profileErrors.size());
 	}
 
@@ -89,25 +89,25 @@ public final class SpeakerDirectivityRegistry {
 					String.CASE_INSENSITIVE_ORDER));
 				for (Path path : files) {
 					try {
-						SpeakerDirectivityProfile profile = readProfile(path);
+						SpeakerSpecsProfile profile = readProfile(path);
 						register(profile);
 						imported++;
 					} catch (Exception e) {
 						String message = path.getFileName() + ": " + e.getMessage();
 						profileErrors.add(message);
-						Cinema.LOGGER.warn("cinema directivity: {}", message);
+						Cinema.LOGGER.warn("cinema speaker specs: {}", message);
 					}
 				}
 			}
 		} catch (IOException e) {
 			profileErrors.add("profiles folder: " + e.getMessage());
-			Cinema.LOGGER.warn("cinema directivity: could not scan profiles: {}", e.getMessage());
+			Cinema.LOGGER.warn("cinema speaker specs: could not scan profiles: {}", e.getMessage());
 		}
 		ensureSettingsValid();
 		return new ReloadResult(imported, List.copyOf(profileErrors));
 	}
 
-	public static synchronized SpeakerDirectivityProfile importProfile(Path source) throws IOException {
+	public static synchronized SpeakerSpecsProfile importProfile(Path source) throws IOException {
 		if (source == null || !Files.isRegularFile(source)) {
 			throw new IOException("not a file");
 		}
@@ -119,7 +119,7 @@ public final class SpeakerDirectivityRegistry {
 		if (size <= 0L || size > MAX_IMPORT_BYTES) {
 			throw new IOException("profile is empty or larger than " + MAX_IMPORT_BYTES + " bytes");
 		}
-		SpeakerDirectivityProfile profile = readProfile(source);
+		SpeakerSpecsProfile profile = readProfile(source);
 		Files.createDirectories(profilesDir());
 		Path target = profilesDir().resolve(safeFileName(profile.id()) + ".json");
 		if (!sameFile(source, target)) {
@@ -127,19 +127,19 @@ public final class SpeakerDirectivityRegistry {
 		}
 		register(profile);
 		ensureSettingsValid();
-		Cinema.LOGGER.info("cinema directivity: imported {} ({})", profile.id(), profile.name());
+		Cinema.LOGGER.info("cinema speaker specs: imported {} ({})", profile.id(), profile.name());
 		return profile;
 	}
 
-	public static synchronized List<SpeakerDirectivityProfile> profilesFor(SpeakerType type) {
+	public static synchronized List<SpeakerSpecsProfile> profilesFor(SpeakerType type) {
 		return List.copyOf(profilesByType.getOrDefault(type, List.of()));
 	}
 
-	public static synchronized SpeakerDirectivityProfile find(SpeakerType type, String id) {
+	public static synchronized SpeakerSpecsProfile find(SpeakerType type, String id) {
 		if (type == null || id == null || id.isBlank()) {
 			return null;
 		}
-		for (SpeakerDirectivityProfile profile : profilesByType.getOrDefault(type, List.of())) {
+		for (SpeakerSpecsProfile profile : profilesByType.getOrDefault(type, List.of())) {
 			if (profile.id().equals(id)) {
 				return profile;
 			}
@@ -160,7 +160,7 @@ public final class SpeakerDirectivityRegistry {
 	 * profile keeps its own low/high/on-axis/gain values.
 	 */
 	public static synchronized SpeakerSettings profileSettings(SpeakerType type, String profileId) {
-		SpeakerDirectivityProfile profile = find(type, profileId);
+		SpeakerSpecsProfile profile = find(type, profileId);
 		if (profile == null) {
 			return defaultSettings(type);
 		}
@@ -220,13 +220,13 @@ public final class SpeakerDirectivityRegistry {
 			Files.createDirectories(rootDir());
 			Files.writeString(settingsFile(), GSON.toJson(root), StandardCharsets.UTF_8);
 		} catch (IOException e) {
-			Cinema.LOGGER.warn("cinema directivity: could not save settings: {}", e.getMessage());
+			Cinema.LOGGER.warn("cinema speaker specs: could not save settings: {}", e.getMessage());
 		}
 	}
 
 	public static synchronized int profileCount() {
 		int count = 0;
-		for (List<SpeakerDirectivityProfile> list : profilesByType.values()) {
+		for (List<SpeakerSpecsProfile> list : profilesByType.values()) {
 			count += list.size();
 		}
 		return count;
@@ -248,10 +248,10 @@ public final class SpeakerDirectivityRegistry {
 		}
 		try {
 			copyDirectory(legacy, current);
-			Cinema.LOGGER.info("cinema directivity: migrated legacy folder {} to {}",
+			Cinema.LOGGER.info("cinema speaker specs: migrated legacy folder {} to {}",
 				legacy, current);
 		} catch (IOException e) {
-			Cinema.LOGGER.warn("cinema directivity: could not migrate legacy folder: {}",
+			Cinema.LOGGER.warn("cinema speaker specs: could not migrate legacy folder: {}",
 				e.getMessage());
 		}
 	}
@@ -280,67 +280,67 @@ public final class SpeakerDirectivityRegistry {
 	}
 
 	private static void installBuiltins() {
-		addBuiltin(new SpeakerDirectivityProfile(SUB_OMNI_ID, "Subwoofer Omni",
-			SpeakerType.SUBWOOFER, SpeakerDirectivityProfile.Pattern.OMNI,
+		addBuiltin(new SpeakerSpecsProfile(SUB_OMNI_ID, "Subwoofer Omni",
+			SpeakerType.SUBWOOFER, SpeakerSpecsProfile.Pattern.OMNI,
 			"built-in", "built-in", "built-in", 20.0, 200.0, null, null, null, null));
-		addBuiltin(new SpeakerDirectivityProfile(SUB_CARDIOID_ID, "Subwoofer Cardioid",
-			SpeakerType.SUBWOOFER, SpeakerDirectivityProfile.Pattern.CARDIOID,
+		addBuiltin(new SpeakerSpecsProfile(SUB_CARDIOID_ID, "Subwoofer Cardioid",
+			SpeakerType.SUBWOOFER, SpeakerSpecsProfile.Pattern.CARDIOID,
 			"built-in", "built-in", "built-in", 20.0, 200.0, null, null, null, null));
 		addBuiltin(unmeasured(SpeakerType.FLOORSTANDING, 40.0));
 		addBuiltin(unmeasured(SpeakerType.BOOKSHELF, 60.0));
 		addBuiltin(unmeasured(SpeakerType.CENTER, 80.0));
 	}
 
-	private static SpeakerDirectivityProfile unmeasured(SpeakerType type, double lowHz) {
-		return new SpeakerDirectivityProfile(type.id() + "-unmeasured",
+	private static SpeakerSpecsProfile unmeasured(SpeakerType type, double lowHz) {
+		return new SpeakerSpecsProfile(type.id() + "-unmeasured",
 			capitalize(type.id()) + " (unmeasured)",
-			type, SpeakerDirectivityProfile.Pattern.UNMEASURED,
+			type, SpeakerSpecsProfile.Pattern.UNMEASURED,
 			"built-in placeholder", "built-in", "unmeasured",
 			lowHz, 20_000.0, null, null, null, null);
 	}
 
-	private static void addBuiltin(SpeakerDirectivityProfile profile) {
+	private static void addBuiltin(SpeakerSpecsProfile profile) {
 		register(profile);
 	}
 
-	private static void register(SpeakerDirectivityProfile profile) {
-		List<SpeakerDirectivityProfile> list = profilesByType.computeIfAbsent(
+	private static void register(SpeakerSpecsProfile profile) {
+		List<SpeakerSpecsProfile> list = profilesByType.computeIfAbsent(
 			profile.type(), type -> new ArrayList<>());
 		list.removeIf(existing -> existing.id().equals(profile.id()));
 		list.add(profile);
-		list.sort(Comparator.comparing(SpeakerDirectivityProfile::name, String.CASE_INSENSITIVE_ORDER));
+		list.sort(Comparator.comparing(SpeakerSpecsProfile::name, String.CASE_INSENSITIVE_ORDER));
 	}
 
 	private static void ensureSettingsValid() {
 		for (SpeakerType type : SpeakerType.values()) {
 			String selected = selectedByType.get(type);
 			if (selected == null || find(type, selected) == null) {
-				SpeakerDirectivityProfile profile = defaultProfile(type);
+				SpeakerSpecsProfile profile = defaultProfile(type);
 				selectedByType.put(type, profile == null ? "" : profile.id());
 			}
 		}
 	}
 
 	private static SpeakerSettings defaultSettings(SpeakerType type) {
-		SpeakerDirectivityProfile profile = defaultProfile(type);
+		SpeakerSpecsProfile profile = defaultProfile(type);
 		return profile == null
 			? new SpeakerSettings("", 20.0, 20_000.0, 0.0)
 			: defaultForProfile(profile);
 	}
 
-	private static SpeakerSettings defaultForProfile(SpeakerDirectivityProfile profile) {
+	private static SpeakerSettings defaultForProfile(SpeakerSpecsProfile profile) {
 		return new SpeakerSettings(profile.id(), profile.lowHz(), profile.highHz(), 0.0);
 	}
 
-	private static SpeakerDirectivityProfile defaultProfile(SpeakerType type) {
+	private static SpeakerSpecsProfile defaultProfile(SpeakerType type) {
 		String preferred = type == SpeakerType.SUBWOOFER
 			? SUB_OMNI_ID
 			: type.id() + "-unmeasured";
-		SpeakerDirectivityProfile profile = find(type, preferred);
+		SpeakerSpecsProfile profile = find(type, preferred);
 		if (profile != null) {
 			return profile;
 		}
-		List<SpeakerDirectivityProfile> list = profilesByType.getOrDefault(type, List.of());
+		List<SpeakerSpecsProfile> list = profilesByType.getOrDefault(type, List.of());
 		return list.isEmpty() ? null : list.get(0);
 	}
 
@@ -387,7 +387,7 @@ public final class SpeakerDirectivityRegistry {
 						continue;
 					}
 					String profileId = key.substring(slash + 1);
-					SpeakerDirectivityProfile profile = find(type, profileId);
+					SpeakerSpecsProfile profile = find(type, profileId);
 					if (profile == null) {
 						continue;
 					}
@@ -411,7 +411,7 @@ public final class SpeakerDirectivityRegistry {
 					continue;
 				}
 				String profileId = entry.get("profile").getAsString();
-				SpeakerDirectivityProfile profile = find(type, profileId);
+				SpeakerSpecsProfile profile = find(type, profileId);
 				if (profile == null) {
 					continue;
 				}
@@ -422,7 +422,7 @@ public final class SpeakerDirectivityRegistry {
 					getDouble(entry, "gainDb", 0.0)));
 			}
 		} catch (Exception e) {
-			Cinema.LOGGER.warn("cinema directivity: could not load settings: {}", e.getMessage());
+			Cinema.LOGGER.warn("cinema speaker specs: could not load settings: {}", e.getMessage());
 		}
 	}
 
@@ -441,7 +441,7 @@ public final class SpeakerDirectivityRegistry {
 		return type.name() + "/" + profileId;
 	}
 
-	private static SpeakerDirectivityProfile readProfile(Path path) throws IOException {
+	private static SpeakerSpecsProfile readProfile(Path path) throws IOException {
 		long size = Files.size(path);
 		if (size <= 0L || size > MAX_IMPORT_BYTES) {
 			throw new IOException("profile is empty or too large");
@@ -452,7 +452,7 @@ public final class SpeakerDirectivityRegistry {
 			throw new IOException("profile root must be a JSON object");
 		}
 		try {
-			return SpeakerDirectivityProfile.fromJson(parsed.getAsJsonObject());
+			return SpeakerSpecsProfile.fromJson(parsed.getAsJsonObject());
 		} catch (RuntimeException e) {
 			throw new IOException(e.getMessage() == null ? "invalid profile" : e.getMessage(), e);
 		}

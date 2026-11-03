@@ -6,15 +6,15 @@ import com.example.cinema.block.entity.AvReceiverBlockEntity;
 import com.example.cinema.block.entity.ProjectorBlockEntity;
 import com.example.cinema.block.entity.SpeakerBlockEntity;
 import com.example.cinema.client.audio.InGameAudioSpike;
-import com.example.cinema.client.audio.directivity.SpeakerDirectivityAssignments;
-import com.example.cinema.client.audio.directivity.SpeakerDirectivityRegistry;
+import com.example.cinema.client.audio.speakerspecs.SpeakerSpecsAssignments;
+import com.example.cinema.client.audio.speakerspecs.SpeakerSpecsRegistry;
 import com.example.cinema.client.command.ClientHelpCommand;
 import com.example.cinema.client.command.ClientReceiverCommand;
 import com.example.cinema.client.command.ClientProjectorCommand;
-import com.example.cinema.client.command.ClientDirectivityCommand;
+import com.example.cinema.client.command.ClientSpeakerSpecsCommand;
 import com.example.cinema.client.gui.AvReceiverConfigScreen;
 import com.example.cinema.client.gui.ProjectorConfigScreen;
-import com.example.cinema.client.gui.SpeakerDirectivityConfigScreen;
+import com.example.cinema.client.gui.SpeakerSpecsConfigScreen;
 import com.example.cinema.client.media.AvReceiverPlaybackManager;
 import com.example.cinema.client.media.CinemaPlayer;
 import com.example.cinema.client.media.CinemaPrewarm;
@@ -60,8 +60,8 @@ public class CinemaClient implements ClientModInitializer {
 	@Override
 	public void onInitializeClient() {
 		CinemaPrewarm.start();
-		SpeakerDirectivityRegistry.load();
-		SpeakerDirectivityAssignments.load();
+		SpeakerSpecsRegistry.load();
+		SpeakerSpecsAssignments.load();
 
 		UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
 			BlockEntity blockEntity = world.getBlockEntity(hitResult.getBlockPos());
@@ -86,7 +86,7 @@ public class CinemaClient implements ClientModInitializer {
 				if (world.isClientSide) {
 					SpeakerBlockEntity speaker = findSpeaker(world, hitResult.getBlockPos());
 					if (speaker != null) {
-						Minecraft.getInstance().setScreen(new SpeakerDirectivityConfigScreen(null, speaker));
+						Minecraft.getInstance().setScreen(new SpeakerSpecsConfigScreen(null, speaker));
 						return InteractionResult.SUCCESS;
 					}
 				}
@@ -109,7 +109,7 @@ public class CinemaClient implements ClientModInitializer {
 			ClientHelpCommand.register(dispatcher));
 
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
-			ClientDirectivityCommand.register(dispatcher));
+			ClientSpeakerSpecsCommand.register(dispatcher));
 
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
 			ClientReceiverCommand.register(dispatcher));

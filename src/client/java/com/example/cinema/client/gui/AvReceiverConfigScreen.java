@@ -585,7 +585,7 @@ public final class AvReceiverConfigScreen extends Screen {
 				0xB8B8B8, false);
 			lineY += 10;
 		}
-		graphics.drawString(font, "Right-click a speaker block to edit its directivity.",
+		graphics.drawString(font, "Right-click a speaker block to edit its speaker specs.",
 			contentLeft, contentBottom - 30, 0x9A9A9A, false);
 	}
 

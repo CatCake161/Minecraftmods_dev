@@ -3,9 +3,9 @@ package com.example.cinema.client.gui;
 import com.example.cinema.block.entity.SpeakerBlockEntity;
 import com.example.cinema.block.entity.SpeakerRole;
 import com.example.cinema.block.entity.SpeakerType;
-import com.example.cinema.client.audio.directivity.SpeakerDirectivityAssignments;
-import com.example.cinema.client.audio.directivity.SpeakerDirectivityProfile;
-import com.example.cinema.client.audio.directivity.SpeakerDirectivityRegistry;
+import com.example.cinema.client.audio.speakerspecs.SpeakerSpecsAssignments;
+import com.example.cinema.client.audio.speakerspecs.SpeakerSpecsProfile;
+import com.example.cinema.client.audio.speakerspecs.SpeakerSpecsRegistry;
 import com.example.cinema.client.network.SpeakerRoleClient;
 import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
@@ -23,13 +23,13 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Spike GUI for client-local speaker directivity profiles.
+ * Spike GUI for client-local speaker specs profiles.
  *
- * <p>Profiles are loaded from {@code <game>/cinema/speaker_directivity/profiles/}.
+ * <p>Profiles are loaded from {@code <game>/cinema/speaker_specs/profiles/}.
  * Drop a JSON profile onto this screen to import it. Done saves the selected
  * profile and simple parameters; Cancel discards the draft.
  */
-public final class SpeakerDirectivityConfigScreen extends Screen {
+public final class SpeakerSpecsConfigScreen extends Screen {
 	private static final int ROW_HEIGHT = 16;
 	private static final int TYPE_ROW_HEIGHT = 18;
 
@@ -68,12 +68,12 @@ public final class SpeakerDirectivityConfigScreen extends Screen {
 	private long statusUntil;
 	private boolean closing;
 
-	public SpeakerDirectivityConfigScreen(Screen parent) {
+	public SpeakerSpecsConfigScreen(Screen parent) {
 		this(parent, null);
 	}
 
-	public SpeakerDirectivityConfigScreen(Screen parent, SpeakerBlockEntity speaker) {
-		super(Component.literal("Speaker Directivity (Spike)"));
+	public SpeakerSpecsConfigScreen(Screen parent, SpeakerBlockEntity speaker) {
+		super(Component.literal("Speaker Specs (Spike)"));
 		this.parent = parent;
 		this.speaker = speaker;
 		this.fixedType = speaker != null;
@@ -81,8 +81,8 @@ public final class SpeakerDirectivityConfigScreen extends Screen {
 			this.selectedType = speaker.type();
 			this.draftRole = speaker.role();
 		}
-		SpeakerDirectivityRegistry.load();
-		SpeakerDirectivityAssignments.load();
+		SpeakerSpecsRegistry.load();
+		SpeakerSpecsAssignments.load();
 		loadDraftFromRegistry();
 	}
 
@@ -161,9 +161,9 @@ public final class SpeakerDirectivityConfigScreen extends Screen {
 	}
 
 	private void loadDraftFromRegistry() {
-		SpeakerDirectivityRegistry.SpeakerSettings settings = speaker != null
-			? SpeakerDirectivityAssignments.settingsFor(speaker)
-			: SpeakerDirectivityRegistry.settings(selectedType);
+		SpeakerSpecsRegistry.SpeakerSettings settings = speaker != null
+			? SpeakerSpecsAssignments.settingsFor(speaker)
+			: SpeakerSpecsRegistry.settings(selectedType);
 		if (settings == null) {
 			draftProfileId = "";
 			draftLowHz = 20.0;
@@ -192,7 +192,7 @@ public final class SpeakerDirectivityConfigScreen extends Screen {
 	}
 
 	private Component profileLabel() {
-		SpeakerDirectivityProfile profile = selectedProfile();
+		SpeakerSpecsProfile profile = selectedProfile();
 		String name = profile == null ? "none" : profile.name();
 		int maxWidth = Math.max(80, contentWidth - 100);
 		return Component.literal("Profile: " + truncate(name, maxWidth));
@@ -224,7 +224,7 @@ public final class SpeakerDirectivityConfigScreen extends Screen {
 	}
 
 	private void cycleProfile() {
-		List<SpeakerDirectivityProfile> profiles = SpeakerDirectivityRegistry.profilesFor(selectedType);
+		List<SpeakerSpecsProfile> profiles = SpeakerSpecsRegistry.profilesFor(selectedType);
 		if (profiles.isEmpty()) {
 			setStatus("No profiles for this type");
 			return;
@@ -236,8 +236,8 @@ public final class SpeakerDirectivityConfigScreen extends Screen {
 				break;
 			}
 		}
-		SpeakerDirectivityProfile next = profiles.get((index + 1) % profiles.size());
-		SpeakerDirectivityRegistry.SpeakerSettings defaults = settingsForProfile(next.id());
+		SpeakerSpecsProfile next = profiles.get((index + 1) % profiles.size());
+		SpeakerSpecsRegistry.SpeakerSettings defaults = settingsForProfile(next.id());
 		draftProfileId = next.id();
 		draftLowHz = defaults.lowHz();
 		draftHighHz = defaults.highHz();
@@ -246,21 +246,21 @@ public final class SpeakerDirectivityConfigScreen extends Screen {
 		setStatus("Profile: " + next.name());
 	}
 
-	private SpeakerDirectivityRegistry.SpeakerSettings settingsForProfile(String profileId) {
+	private SpeakerSpecsRegistry.SpeakerSettings settingsForProfile(String profileId) {
 		if (speaker != null) {
-			SpeakerDirectivityAssignments.Assignment assignment =
-				SpeakerDirectivityAssignments.get(speaker);
+			SpeakerSpecsAssignments.Assignment assignment =
+				SpeakerSpecsAssignments.get(speaker);
 			if (assignment != null && assignment.type() == selectedType
 				&& assignment.settings().profileId().equals(profileId)) {
 				return assignment.settings();
 			}
 		}
-		return SpeakerDirectivityRegistry.profileSettings(selectedType, profileId);
+		return SpeakerSpecsRegistry.profileSettings(selectedType, profileId);
 	}
 
 	private void reloadProfiles() {
-		SpeakerDirectivityRegistry.ReloadResult result = SpeakerDirectivityRegistry.reloadProfiles();
-		if (SpeakerDirectivityRegistry.find(selectedType, draftProfileId) == null) {
+		SpeakerSpecsRegistry.ReloadResult result = SpeakerSpecsRegistry.reloadProfiles();
+		if (SpeakerSpecsRegistry.find(selectedType, draftProfileId) == null) {
 			loadDraftFromRegistry();
 		}
 		syncFields();
@@ -273,9 +273,9 @@ public final class SpeakerDirectivityConfigScreen extends Screen {
 
 	private void openFolder() {
 		try {
-			java.nio.file.Files.createDirectories(SpeakerDirectivityRegistry.profilesDir());
-			Util.getPlatform().openPath(SpeakerDirectivityRegistry.profilesDir());
-			setStatus("Opened " + SpeakerDirectivityRegistry.profilesDir());
+			java.nio.file.Files.createDirectories(SpeakerSpecsRegistry.profilesDir());
+			Util.getPlatform().openPath(SpeakerSpecsRegistry.profilesDir());
+			setStatus("Opened " + SpeakerSpecsRegistry.profilesDir());
 		} catch (IOException e) {
 			setStatus("Could not open folder: " + e.getMessage());
 		}
@@ -285,20 +285,20 @@ public final class SpeakerDirectivityConfigScreen extends Screen {
 		if (!readFields()) {
 			return;
 		}
-		SpeakerDirectivityRegistry.SpeakerSettings settings =
-			new SpeakerDirectivityRegistry.SpeakerSettings(draftProfileId, draftLowHz,
+		SpeakerSpecsRegistry.SpeakerSettings settings =
+			new SpeakerSpecsRegistry.SpeakerSettings(draftProfileId, draftLowHz,
 				draftHighHz, draftGainDb);
 		if (speaker != null) {
 			if (draftRole != speaker.role()) {
 				SpeakerRoleClient.setRole(speaker.getBlockPos(), draftRole);
 			}
-			SpeakerDirectivityAssignments.apply(speaker, settings);
+			SpeakerSpecsAssignments.apply(speaker, settings);
 			// Also write type defaults in the current format so the first
 			// spike settings.json is migrated after a speaker edit.
-			SpeakerDirectivityRegistry.saveSettings();
+			SpeakerSpecsRegistry.saveSettings();
 		} else {
-			SpeakerDirectivityRegistry.applySettings(selectedType, settings);
-			SpeakerDirectivityRegistry.saveSettings();
+			SpeakerSpecsRegistry.applySettings(selectedType, settings);
+			SpeakerSpecsRegistry.saveSettings();
 		}
 		onClose();
 	}
@@ -335,10 +335,10 @@ public final class SpeakerDirectivityConfigScreen extends Screen {
 		List<String> errors = new ArrayList<>();
 		for (Path path : paths) {
 			try {
-				SpeakerDirectivityProfile profile = SpeakerDirectivityRegistry.importProfile(path);
+				SpeakerSpecsProfile profile = SpeakerSpecsRegistry.importProfile(path);
 				imported++;
 				if (profile.type() == selectedType) {
-					SpeakerDirectivityRegistry.SpeakerSettings defaults =
+					SpeakerSpecsRegistry.SpeakerSettings defaults =
 						settingsForProfile(profile.id());
 					draftProfileId = profile.id();
 					draftLowHz = defaults.lowHz();
@@ -389,7 +389,7 @@ public final class SpeakerDirectivityConfigScreen extends Screen {
 		graphics.drawString(font, "High Hz", contentLeft + secondColumn, fieldY + 4, 0xB8B8B8, false);
 		graphics.drawString(font, "SPL gain dB", contentLeft, fieldY + 26, 0xB8B8B8, false);
 
-		SpeakerDirectivityProfile profile = selectedProfile();
+		SpeakerSpecsProfile profile = selectedProfile();
 		if (profile == null) {
 			graphics.drawString(font, "No profile selected", contentLeft, sourceY, 0xFF7070, false);
 		} else {
@@ -417,7 +417,7 @@ public final class SpeakerDirectivityConfigScreen extends Screen {
 			graphics.drawString(font,
 				truncate("Drop a .json profile here, or put it in the profiles folder.", contentWidth),
 				contentLeft, compactY, 0x808080, false);
-			graphics.drawString(font, truncate(SpeakerDirectivityRegistry.profilesDir().toString(),
+			graphics.drawString(font, truncate(SpeakerSpecsRegistry.profilesDir().toString(),
 				contentWidth), contentLeft, compactY + 12, 0x707070, false);
 		}
 
@@ -446,7 +446,7 @@ public final class SpeakerDirectivityConfigScreen extends Screen {
 		}
 		if (profileButton != null && inBox(mouseX, mouseY, profileButton.getX(), profileButton.getY(),
 			profileButton.getWidth(), profileButton.getHeight())) {
-			SpeakerDirectivityProfile profile = selectedProfile();
+			SpeakerSpecsProfile profile = selectedProfile();
 			if (profile != null) {
 				renderWrappedTooltip(graphics,
 					profile.name() + "\n" + profile.patternLabel() + " · " + profile.source()
@@ -458,8 +458,8 @@ public final class SpeakerDirectivityConfigScreen extends Screen {
 		if (!compact && mouseY >= compactY && mouseY < compactY + 22
 			&& mouseX >= contentLeft && mouseX < contentLeft + contentWidth) {
 			renderWrappedTooltip(graphics,
-				"Local folder:\n" + SpeakerDirectivityRegistry.profilesDir()
-					+ "\n\nSettings file:\n" + SpeakerDirectivityRegistry.settingsFile(),
+				"Local folder:\n" + SpeakerSpecsRegistry.profilesDir()
+					+ "\n\nSettings file:\n" + SpeakerSpecsRegistry.settingsFile(),
 				mouseX, mouseY);
 		}
 	}
@@ -477,11 +477,11 @@ public final class SpeakerDirectivityConfigScreen extends Screen {
 		return mouseX >= x && mouseX < x + width && mouseY >= y && mouseY < y + height;
 	}
 
-	private SpeakerDirectivityProfile selectedProfile() {
-		return SpeakerDirectivityRegistry.find(selectedType, draftProfileId);
+	private SpeakerSpecsProfile selectedProfile() {
+		return SpeakerSpecsRegistry.find(selectedType, draftProfileId);
 	}
 
-	private String previewLine(SpeakerDirectivityProfile profile) {
+	private String previewLine(SpeakerSpecsProfile profile) {
 		return String.format(Locale.ROOT,
 			"1 kHz: 0° %+.1f · 45° %+.1f · 90° %+.1f · 135° %+.1f · 180° %+.1f dB",
 			profile.gainDb(0, 0, 1000),

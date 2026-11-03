@@ -6,9 +6,9 @@ Copy `.json` files into:
 <game>/cinema/speaker_specs/profiles/
 ```
 
-or drag them onto the **Speaker Directivity (Spike)** screen. Right-click a
+or drag them onto the **Speaker Specs (Spike)** screen. Right-click a
 speaker block with an empty hand to open that speaker's panel. Role selection is
-also in that panel; `/cinema_directivity` opens the type-default editor (debug
+also in that panel; `/cinema_speaker_specs` opens the type-default editor (debug
 entry).
 
 ## Simple profile
