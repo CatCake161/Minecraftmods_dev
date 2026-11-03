@@ -1,6 +1,7 @@
 plugins {
 	id 'net.fabricmc.fabric-loom-remap' version "${loom_version}"
 	id 'maven-publish'
+	id 'checkstyle'
 }
 
 repositories {
@@ -58,6 +59,11 @@ java {
 	toolchain {
 		languageVersion = JavaLanguageVersion.of(21)
 	}
+}
+
+checkstyle {
+	toolVersion = "${checkstyle_version}"
+	configFile = file('config/checkstyle/checkstyle.xml')
 }
 
 jar {

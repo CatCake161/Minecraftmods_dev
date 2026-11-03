@@ -49,6 +49,8 @@ $env:JAVA_HOME='<JDK-25+>'
 .\gradlew runClient
 ```
 
+`build` 会运行 Checkstyle 命名检查（配置在 `config/checkstyle/checkstyle.xml`），报告输出到 `build/reports/checkstyle/`。只跑命名检查可用 `.\gradlew checkstyleMain checkstyleClient`。
+
 ## 游戏内帮助
 
 ```text

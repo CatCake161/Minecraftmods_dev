@@ -131,6 +131,8 @@ $env:JAVA_HOME='<JDK-25+>'
 .\gradlew runClient
 ```
 
+`build` 包含 Checkstyle 命名检查，配置在 `config/checkstyle/checkstyle.xml`，报告在 `build/reports/checkstyle/`；只跑检查可用 `.\gradlew checkstyleMain checkstyleClient`。
+
 FFmpeg（必须）：
 
 ```text
