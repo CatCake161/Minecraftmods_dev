@@ -50,9 +50,12 @@ public final class ClientReceiverCommand {
 					"cinema: seek requested"))));
 
 		dispatcher.register(ClientCommandManager.literal("cinema_volume")
-			.then(ClientCommandManager.argument("value", DoubleArgumentType.doubleArg(0.0, 1.0))
-				.executes(context -> sendValue(context.getSource(), AvReceiverControlPayload.Action.SET_VOLUME,
-					DoubleArgumentType.getDouble(context, "value"),
+			.then(ClientCommandManager.argument("dBFS",
+					DoubleArgumentType.doubleArg(AvReceiverBlockEntity.MIN_VOLUME_DB,
+						AvReceiverBlockEntity.MAX_VOLUME_DB))
+				.executes(context -> sendValue(context.getSource(),
+					AvReceiverControlPayload.Action.SET_VOLUME_DB,
+					DoubleArgumentType.getDouble(context, "dBFS"),
 					"cinema: volume requested"))));
 
 		dispatcher.register(ClientCommandManager.literal("cinema_mute")

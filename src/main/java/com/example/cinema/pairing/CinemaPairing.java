@@ -6,6 +6,7 @@ import com.example.cinema.block.ScreenBlock;
 import com.example.cinema.block.SpeakerBlock;
 import com.example.cinema.block.entity.AvReceiverBlockEntity;
 import com.example.cinema.block.entity.ProjectorBlockEntity;
+import com.example.cinema.block.entity.ScreenBlockEntity;
 import com.example.cinema.block.entity.SpeakerBlockEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -181,7 +182,29 @@ public final class CinemaPairing {
 			action(player, "message.cinema.pair.not_in_front");
 			return false;
 		}
+
+		BlockPos previousOwner = ScreenBlockEntity.findOwner(level, screenPos);
+		if (previousOwner != null && !previousOwner.equals(projector.getBlockPos())) {
+			boolean stillActive = false;
+			if (level.isLoaded(previousOwner)
+				&& level.getBlockEntity(previousOwner) instanceof ProjectorBlockEntity old) {
+				BlockPos oldScreen = old.screenPos();
+				stillActive = oldScreen != null && sameScreen(level, oldScreen, screenPos);
+			}
+			if (stillActive) {
+				action(player, "message.cinema.pair.screen_occupied");
+				return false;
+			}
+			// The previous owner was removed or re-linked; reclaim the screen.
+			ScreenBlockEntity.clearOwnerFor(level, screenPos, previousOwner);
+		}
+
+		BlockPos oldScreen = projector.screenPos();
+		if (oldScreen != null && !sameScreen(level, oldScreen, screenPos)) {
+			ScreenBlockEntity.clearOwnerFor(level, oldScreen, projector.getBlockPos());
+		}
 		projector.setScreenPos(screenPos);
+		ScreenBlockEntity.applyOwnerToConnected(level, screenPos, projector.getBlockPos());
 		Cinema.LOGGER.info("cinema pairing: linked projector {} to screen {}",
 			projector.getBlockPos().toShortString(), screenPos.toShortString());
 		return true;
@@ -298,6 +321,7 @@ public final class CinemaPairing {
 			return false;
 		}
 		projector.clearScreen();
+		ScreenBlockEntity.clearOwnerFor(level, clickedScreen, projector.getBlockPos());
 		Cinema.LOGGER.info("cinema pairing: unlinked projector {} from screen {}",
 			projector.getBlockPos().toShortString(), clickedScreen.toShortString());
 		return true;

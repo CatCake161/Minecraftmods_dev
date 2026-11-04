@@ -21,15 +21,15 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Client-side registry of receiver playback proxies.
  *
  * <p>Receivers are discovered from loaded chunks near the player and then kept
- * tracked until their block entity or chunk disappears. M1 shares one audio
- * engine; the server rejects a second simultaneously playing receiver.
+ * tracked until their block entity or chunk disappears. Each receiver owns its
+ * own player, video texture and audio engine, so multiple receivers can play
+ * independently.
  */
 public final class AvReceiverPlaybackManager {
 	private static final int SCAN_RADIUS_BLOCKS = 64;
 	private static final int SYNC_INTERVAL_TICKS = 10;
 	private static final Map<BlockPos, AvReceiverPlayback> playbacks = new HashMap<>();
 	private static final AtomicInteger textureSequence = new AtomicInteger();
-	private static CinemaAudioEngine audioEngine;
 	private static ClientLevel lastLevel;
 	private static int tickCounter;
 
@@ -47,10 +47,14 @@ public final class AvReceiverPlaybackManager {
 			lastLevel = client.level;
 			tickCounter = 0;
 		}
-		if (++tickCounter % SYNC_INTERVAL_TICKS != 0) {
-			return;
+		if (++tickCounter % SYNC_INTERVAL_TICKS == 0) {
+			scan(client.level, client.player.blockPosition());
+		} else {
+			// The listener now follows the player's actual ears and head direction,
+			// so refresh relative source positions every client tick. The full
+			// receiver scan stays at the lower interval above.
+			updateLayouts(client.level);
 		}
-		scan(client.level, client.player.blockPosition());
 	}
 
 	public static AvReceiverPlayback playbackAt(BlockPos receiverPos) {
@@ -66,14 +70,6 @@ public final class AvReceiverPlaybackManager {
 	public static void shutdown() {
 		closeAll();
 		lastLevel = null;
-	}
-
-	static CinemaAudioEngine audioEngine() {
-		if (audioEngine == null) {
-			audioEngine = new CinemaAudioEngine();
-			audioEngine.start();
-		}
-		return audioEngine;
 	}
 
 	static ResourceLocation nextTextureId() {
@@ -123,13 +119,18 @@ public final class AvReceiverPlaybackManager {
 		}
 	}
 
+	private static void updateLayouts(ClientLevel level) {
+		for (Map.Entry<BlockPos, AvReceiverPlayback> entry : playbacks.entrySet()) {
+			if (level.getBlockEntity(entry.getKey()) instanceof AvReceiverBlockEntity receiver) {
+				entry.getValue().updateChannelLayout(level, receiver);
+			}
+		}
+	}
+
 	private static void closeAll() {
 		for (AvReceiverPlayback playback : playbacks.values()) {
 			playback.close();
 		}
 		playbacks.clear();
-		// Keep the shared OpenAL context alive across worlds; players reset the
-		// sources when they close, and recreating devices on every reconnect
-		// would leak contexts.
 	}
 }

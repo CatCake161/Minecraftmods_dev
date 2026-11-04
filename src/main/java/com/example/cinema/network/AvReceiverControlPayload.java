@@ -58,7 +58,7 @@ public record AvReceiverControlPayload(BlockPos avReceiverPos, Action action, St
 		PAUSE,
 		STOP,
 		SEEK,
-		SET_VOLUME,
+		SET_VOLUME_DB,
 		SET_MUTED;
 
 		public static Action byOrdinal(int ordinal) {

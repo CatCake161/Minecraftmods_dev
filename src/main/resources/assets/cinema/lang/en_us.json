@@ -2,6 +2,8 @@
 	"block.cinema.screen": "Cinema Screen",
 	"block.cinema.projector": "Cinema Projector",
 	"block.cinema.av_receiver": "AV Receiver",
+	"block.cinema.seat": "Cinema Seat",
+	"entity.cinema.seat": "Cinema Seat",
 	"block.cinema.floorstanding_speaker": "Floorstanding Speaker",
 	"block.cinema.bookshelf_speaker": "Bookshelf Speaker",
 	"block.cinema.center_speaker": "Center Speaker",
@@ -28,5 +30,6 @@
 	"message.cinema.pair.no_pair_link": "No connection exists between %s and %s.",
 	"message.cinema.pair.behind_screen": "The projector must be in front of the screen.",
 	"message.cinema.pair.not_in_front": "The screen must be in front of the projector.",
+	"message.cinema.pair.screen_occupied": "This screen is already paired with another projector. Unlink it first.",
 	"message.cinema.pair.speaker": "speaker"
 }

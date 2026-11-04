@@ -8,6 +8,7 @@ import org.lwjgl.openal.ALC;
 import org.lwjgl.openal.ALC10;
 import org.lwjgl.openal.ALCCapabilities;
 import org.lwjgl.openal.ALCapabilities;
+import org.lwjgl.openal.EXTThreadLocalContext;
 import org.lwjgl.openal.SOFTDeviceClock;
 import org.lwjgl.openal.SOFTSourceLatency;
 import org.lwjgl.openal.SOFTSourceStartDelay;
@@ -17,10 +18,13 @@ import java.nio.IntBuffer;
 import java.nio.ShortBuffer;
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.lwjgl.openal.AL10.*;
 import static org.lwjgl.system.MemoryUtil.NULL;
@@ -28,10 +32,12 @@ import static org.lwjgl.system.MemoryUtil.NULL;
 /**
  * Six independent mono OpenAL sources in one cinema-owned context.
  *
- * <p>The decoder submits interleaved 5.1 chunks. The audio thread deinterleaves
- * each chunk, queues one mono buffer per speaker, and schedules all six sources
- * at the same device-clock instant. It also publishes the audible media clock
- * so the render thread can choose video frames without touching OpenAL.
+ * <p>Each AV receiver playback proxy owns one engine/context, so multiple
+ * receivers can play independently. The decoder submits interleaved 5.1 chunks.
+ * The audio thread deinterleaves each chunk, queues one mono buffer per speaker,
+ * and schedules all six sources at the same device-clock instant. It also
+ * publishes the audible media clock so the render thread can choose video frames
+ * without touching OpenAL.
  */
 public final class CinemaAudioEngine implements AutoCloseable {
 	public static final int SAMPLE_RATE = 48_000;
@@ -40,7 +46,17 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	private static final int BUFFER_COUNT = 4;
 	private static final float BASE_GAIN = 0.65f;
 	private static final String[] LABELS = {"FL", "FR", "FC", "LFE", "BL", "BR"};
-	private static final float[][] POSITIONS = {
+	private static final Set<CinemaAudioEngine> OPEN_ENGINES = ConcurrentHashMap.newKeySet();
+
+	static {
+		Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+			for (CinemaAudioEngine engine : OPEN_ENGINES.toArray(new CinemaAudioEngine[0])) {
+				engine.close();
+			}
+		}, "cinema-audio-shutdown"));
+	}
+
+	private static final float[][] DEFAULT_POSITIONS = {
 		{-3.0f, 0.0f, -4.0f},
 		{3.0f, 0.0f, -4.0f},
 		{0.0f, 0.0f, -4.5f},
@@ -71,11 +87,16 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	private boolean appliedPaused;
 	private volatile float masterGain = 1.0f;
 	private volatile boolean masterMuted;
-	private float appliedGain = Float.NaN;
+	private final AtomicInteger layoutVersion = new AtomicInteger();
+	private volatile float[][] channelPositions = copyDefaultPositions();
+	private volatile float[] channelGains = defaultChannelGains();
+	private final float[] appliedGains = new float[SPEAKERS];
+	private int appliedLayoutVersion = -1;
 	private volatile double audiblePts;
 	private volatile double latencySeconds;
 	private double lastEndPts;
 	private ALCapabilities previousProcessCaps;
+	private boolean threadLocalContext;
 	private long deviceHandle = NULL;
 	private long contextHandle = NULL;
 	private boolean ownsDevice;
@@ -83,10 +104,11 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	public CinemaAudioEngine() {
 		for (int i = 0; i < SPEAKERS; i++) {
 			freeBuffers[i] = new ArrayDeque<>(BUFFER_COUNT);
+			appliedGains[i] = Float.NaN;
 		}
 		thread = new Thread(this::run, "cinema-audio");
 		thread.setDaemon(true);
-		Runtime.getRuntime().addShutdownHook(new Thread(this::closeDevice, "cinema-audio-device"));
+		OPEN_ENGINES.add(this);
 	}
 
 	public void start() {
@@ -97,8 +119,14 @@ public final class CinemaAudioEngine implements AutoCloseable {
 
 	/** Stops all current sources and prepares the same device/context for a new file. */
 	public void reset() {
+		if (!running.get()) {
+			return;
+		}
 		if (!threadStarted.get()) {
 			clearQueues();
+			return;
+		}
+		if (!thread.isAlive()) {
 			return;
 		}
 		java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
@@ -139,10 +167,77 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		paused = value;
 	}
 
-	/** Receiver volume, 0..1, applied on top of the fixed source gain. */
+	/**
+	 * Receiver volume as linear amplitude, on top of the fixed source gain.
+	 * The receiver allows up to +6 dB (linear 1.995), so this is intentionally
+	 * not clamped to 1.0; loud material may clip above 0 dBFS.
+	 */
 	public void setMasterGain(float volume, boolean muted) {
-		masterGain = Math.max(0.0f, Math.min(1.0f, volume));
+		masterGain = Math.max(0.0f, Math.min(2.0f, volume));
 		masterMuted = muted;
+	}
+
+	/**
+	 * Updates the six mono source positions (listener-relative: x right, y up,
+	 * z forward is negative) and per-channel linear gains. Null entries keep the
+	 * default virtual 5.1 layout for that channel. Channel gain is capped at
+	 * +6 dB to match the receiver's level limit.
+	 */
+	public void setChannelLayout(float[][] positions, float[] gains) {
+		float[][] nextPositions = new float[SPEAKERS][];
+		float[] nextGains = new float[SPEAKERS];
+		for (int i = 0; i < SPEAKERS; i++) {
+			float[] position = positions != null && i < positions.length ? positions[i] : null;
+			nextPositions[i] = isValidPosition(position)
+				? position.clone() : DEFAULT_POSITIONS[i].clone();
+			float gain = gains != null && i < gains.length ? gains[i] : 1.0f;
+			nextGains[i] = Float.isFinite(gain)
+				? Math.max(0.0f, Math.min(2.0f, gain)) : 1.0f;
+		}
+		if (sameLayout(nextPositions, nextGains)) {
+			return;
+		}
+		channelPositions = nextPositions;
+		channelGains = nextGains;
+		layoutVersion.incrementAndGet();
+	}
+
+	private boolean sameLayout(float[][] positions, float[] gains) {
+		float[][] currentPositions = channelPositions;
+		float[] currentGains = channelGains;
+		for (int i = 0; i < SPEAKERS; i++) {
+			for (int axis = 0; axis < 3; axis++) {
+				if (Math.abs(positions[i][axis] - currentPositions[i][axis]) > 1.0e-4f) {
+					return false;
+				}
+			}
+			if (Math.abs(gains[i] - currentGains[i]) > 1.0e-4f) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	private static boolean isValidPosition(float[] position) {
+		return position != null && position.length == 3
+			&& Float.isFinite(position[0]) && Float.isFinite(position[1])
+			&& Float.isFinite(position[2]);
+	}
+
+	private static float[][] copyDefaultPositions() {
+		float[][] copy = new float[SPEAKERS][];
+		for (int i = 0; i < SPEAKERS; i++) {
+			copy[i] = DEFAULT_POSITIONS[i].clone();
+		}
+		return copy;
+	}
+
+	private static float[] defaultChannelGains() {
+		float[] gains = new float[SPEAKERS];
+		for (int i = 0; i < SPEAKERS; i++) {
+			gains[i] = 1.0f;
+		}
+		return gains;
 	}
 
 	private void run() {
@@ -160,6 +255,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			}
 			deviceHandle = device;
 			ALCCapabilities deviceCaps = ALC.createCapabilities(device);
+			threadLocalContext = deviceCaps.ALC_EXT_thread_local_context;
 			try {
 				previousProcessCaps = AL.getCapabilities();
 			} catch (IllegalStateException ignored) {
@@ -170,7 +266,11 @@ public final class CinemaAudioEngine implements AutoCloseable {
 				throw new IllegalStateException("alcCreateContext() failed");
 			}
 			contextHandle = context;
-			ALC10.alcMakeContextCurrent(context);
+			if (threadLocalContext) {
+				EXTThreadLocalContext.alcSetThreadContext(context);
+			} else {
+				ALC10.alcMakeContextCurrent(context);
+			}
 			if (previousProcessCaps != null) {
 				// Reuse Minecraft's AL function pointers. Calling
 				// AL.createCapabilities() here replaces LWJGL's process-wide ICD
@@ -193,8 +293,13 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			Cinema.LOGGER.error("cinema audio engine failed", t);
 		} finally {
 			cleanup();
-			// Never replace Minecraft's process-wide OpenAL capabilities. Only
-			// clear/replace this thread's capability binding.
+			// Never replace Minecraft's process-wide OpenAL context/capabilities.
+			// Clear only this thread's context.
+			if (threadLocalContext) {
+				EXTThreadLocalContext.alcSetThreadContext(NULL);
+			} else {
+				ALC10.alcMakeContextCurrent(NULL);
+			}
 			AL.setCurrentThread(previousProcessCaps);
 		}
 	}
@@ -212,24 +317,34 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			}
 			monoBuffers[i] = BufferUtils.createShortBuffer(SAMPLE_RATE / 2);
 			alSourcei(sources[i], AL_SOURCE_RELATIVE, AL_TRUE);
-			alSource3f(sources[i], AL_POSITION, POSITIONS[i][0], POSITIONS[i][1], POSITIONS[i][2]);
-			float gain = masterMuted ? 0.0f : BASE_GAIN * masterGain;
-			alSourcef(sources[i], AL_GAIN, gain);
-			appliedGain = gain;
 			alSourcef(sources[i], AL_ROLLOFF_FACTOR, 1.0f);
 			alSourcef(sources[i], AL_MAX_DISTANCE, 64f);
+			appliedGains[i] = Float.NaN;
 		}
+		applyChannelLayout();
+		applyChannelGains();
 		checkError("setupSources");
 	}
 
-	private void applyMasterGain() {
-		float target = masterMuted ? 0.0f : BASE_GAIN * masterGain;
-		if (Math.abs(target - appliedGain) < 0.001f) {
-			return;
+	private void applyChannelLayout() {
+		int version = layoutVersion.get();
+		float[][] positions = channelPositions;
+		for (int i = 0; i < SPEAKERS; i++) {
+			float[] position = positions[i];
+			alSource3f(sources[i], AL_POSITION, position[0], position[1], position[2]);
 		}
-		appliedGain = target;
-		for (int source : sources) {
-			alSourcef(source, AL_GAIN, target);
+		appliedLayoutVersion = version;
+	}
+
+	private void applyChannelGains() {
+		float master = masterMuted ? 0.0f : BASE_GAIN * masterGain;
+		float[] gains = channelGains;
+		for (int i = 0; i < SPEAKERS; i++) {
+			float target = master * gains[i];
+			if (Float.isNaN(appliedGains[i]) || Math.abs(target - appliedGains[i]) >= 0.001f) {
+				appliedGains[i] = target;
+				alSourcef(sources[i], AL_GAIN, target);
+			}
 		}
 	}
 
@@ -238,7 +353,10 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			performReset();
 			return;
 		}
-		applyMasterGain();
+		if (appliedLayoutVersion != layoutVersion.get()) {
+			applyChannelLayout();
+		}
+		applyChannelGains();
 		reclaimProcessed();
 		if (pendingChunk == null) {
 			pendingChunk = input.poll();
@@ -388,7 +506,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		}
 	}
 
-	private void closeDevice() {
+	private synchronized void closeDevice() {
 		long context = contextHandle;
 		long device = deviceHandle;
 		contextHandle = NULL;
@@ -436,6 +554,10 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			thread.join(1_000);
 		} catch (InterruptedException e) {
 			Thread.currentThread().interrupt();
+		}
+		OPEN_ENGINES.remove(this);
+		if (!thread.isAlive()) {
+			closeDevice();
 		}
 	}
 

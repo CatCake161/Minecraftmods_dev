@@ -2,14 +2,21 @@ package com.example.cinema.client.media;
 
 import com.example.cinema.Cinema;
 import com.example.cinema.block.entity.AvReceiverBlockEntity;
+import com.example.cinema.block.entity.SpeakerBlockEntity;
+import com.example.cinema.block.entity.SpeakerRole;
+import com.example.cinema.block.entity.SpeakerType;
+import com.example.cinema.client.audio.speakerspecs.SpeakerSpecsAssignments;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.phys.Vec3;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 
 /**
  * Client-side playback proxy for one AV receiver.
@@ -27,6 +34,7 @@ public final class AvReceiverPlayback {
 	private final BlockPos receiverPos;
 	private final ResourceLocation textureId;
 	private final CinemaVideoTexture texture;
+	private CinemaAudioEngine audio;
 	private boolean textureRegistered;
 	private CinemaPlayer player;
 	private String mediaKey = "";
@@ -39,6 +47,7 @@ public final class AvReceiverPlayback {
 	private double clockOffset;
 	private boolean clockAligned;
 	private boolean missing;
+	private int physicalChannels;
 
 	AvReceiverPlayback(BlockPos receiverPos) {
 		this.receiverPos = receiverPos;
@@ -54,6 +63,11 @@ public final class AvReceiverPlayback {
 
 	public CinemaPlayer player() {
 		return player;
+	}
+
+	/** Number of 5.1 channels currently routed to physical linked speakers. */
+	public int physicalChannels() {
+		return physicalChannels;
 	}
 
 	/**
@@ -82,6 +96,7 @@ public final class AvReceiverPlayback {
 		if (player == null && !open(level, receiver)) {
 			return true;
 		}
+		updateChannelLayout(level, receiver);
 		if (player.error() != null) {
 			Cinema.LOGGER.warn("cinema receiver {}: playback failed for {}: {}",
 				receiverPos.toShortString(), mediaKey, player.error().toString());
@@ -141,6 +156,10 @@ public final class AvReceiverPlayback {
 
 	public void close() {
 		closePlayer();
+		if (audio != null) {
+			audio.close();
+			audio = null;
+		}
 		if (textureRegistered) {
 			Minecraft.getInstance().getTextureManager().release(textureId);
 			textureRegistered = false;
@@ -151,6 +170,7 @@ public final class AvReceiverPlayback {
 		missing = false;
 		clockAligned = false;
 		clockOffset = 0.0;
+		physicalChannels = 0;
 	}
 
 	private void closePlayer() {
@@ -204,7 +224,7 @@ public final class AvReceiverPlayback {
 	private boolean openAt(Path file, AvReceiverBlockEntity receiver, double expected) {
 		try {
 			player = CinemaPlayer.open(Minecraft.getInstance(), file, expected,
-				AvReceiverPlaybackManager.audioEngine(), textureId, texture);
+				audioEngine(), textureId, texture);
 		} catch (Exception e) {
 			failedKey = mediaKey;
 			failedAtMillis = System.currentTimeMillis();
@@ -220,6 +240,15 @@ public final class AvReceiverPlayback {
 		return true;
 	}
 
+	/** One OpenAL context per receiver; reused across seeks, closed with the proxy. */
+	private CinemaAudioEngine audioEngine() {
+		if (audio == null) {
+			audio = new CinemaAudioEngine();
+			audio.start();
+		}
+		return audio;
+	}
+
 	private void reportMissing(String reason) {
 		missing = true;
 		failedKey = mediaKey;
@@ -229,6 +258,103 @@ public final class AvReceiverPlayback {
 			Cinema.LOGGER.warn("cinema receiver {}: media unavailable: {}",
 				receiverPos.toShortString(), reason);
 		}
+	}
+
+	/**
+	 * The listener is always the local player's actual ears and head direction.
+	 * There is no Seat/sweet-spot calibration and no screen-locked correction:
+	 * walking or looking away therefore keeps the physical speaker directions
+	 * correct instead of re-centering the sound field on a fixed seat.
+	 */
+	void updateChannelLayout(ClientLevel level, AvReceiverBlockEntity receiver) {
+		CinemaAudioEngine engine = audio;
+		if (engine == null) {
+			return;
+		}
+		Minecraft client = Minecraft.getInstance();
+		Vec3 listener;
+		Vec3 forward;
+		if (client.player != null) {
+			listener = client.player.getEyePosition();
+			Vec3 look = client.player.getLookAngle();
+			forward = new Vec3(look.x, 0.0, look.z);
+		} else {
+			listener = Vec3.atCenterOf(receiver.getBlockPos()).add(0.0, 1.5, 0.0);
+			forward = new Vec3(0.0, 0.0, -1.0);
+		}
+		if (forward.lengthSqr() < 1.0e-4) {
+			forward = new Vec3(0.0, 0.0, -1.0);
+		} else {
+			forward = forward.normalize();
+		}
+
+		float[][] positions = new float[CinemaAudioEngine.CHANNELS][];
+		float[] gains = new float[CinemaAudioEngine.CHANNELS];
+		Arrays.fill(gains, 1.0f);
+		double[] bestDistance = new double[CinemaAudioEngine.CHANNELS];
+		Arrays.fill(bestDistance, Double.MAX_VALUE);
+		for (BlockPos pos : receiver.speakerTargets()) {
+			if (!level.isLoaded(pos)) {
+				continue;
+			}
+			BlockEntity blockEntity = level.getBlockEntity(pos);
+			if (!(blockEntity instanceof SpeakerBlockEntity speaker)) {
+				continue;
+			}
+			SpeakerRole role = speaker.role();
+			int channel = role.ordinal() - 1;
+			if (channel < 0 || channel >= positions.length) {
+				continue;
+			}
+			Vec3 center = speakerCenter(speaker);
+			Vec3 relative = center.subtract(listener);
+			double distance = relative.lengthSqr();
+			if (distance < 0.01 || distance >= bestDistance[channel]) {
+				continue;
+			}
+			bestDistance[channel] = distance;
+			positions[channel] = toListenerSpace(relative, forward);
+			gains[channel] = speakerGain(speaker);
+		}
+
+		int routed = 0;
+		for (float[] position : positions) {
+			if (position != null) {
+				routed++;
+			}
+		}
+		physicalChannels = routed;
+		engine.setChannelLayout(positions, gains);
+	}
+
+	private static Vec3 speakerCenter(SpeakerBlockEntity speaker) {
+		Vec3 center = Vec3.atCenterOf(speaker.getBlockPos());
+		if (speaker.type() == SpeakerType.FLOORSTANDING) {
+			center = center.add(0.0, 0.5, 0.0);
+		}
+		return center;
+	}
+
+	private static float speakerGain(SpeakerBlockEntity speaker) {
+		double db = speaker.levelDb() + SpeakerSpecsAssignments.settingsFor(speaker).gainDb();
+		double linear = Math.pow(10.0, db / 20.0);
+		double max = Math.pow(10.0, SpeakerBlockEntity.MAX_LEVEL_DB / 20.0);
+		return (float) Math.max(0.0, Math.min(max, linear));
+	}
+
+	private static float[] toListenerSpace(Vec3 relative, Vec3 forward) {
+		Vec3 up = new Vec3(0.0, 1.0, 0.0);
+		Vec3 right = forward.cross(up);
+		if (right.lengthSqr() < 1.0e-6) {
+			right = new Vec3(1.0, 0.0, 0.0);
+		} else {
+			right = right.normalize();
+		}
+		return new float[]{
+			(float) relative.dot(right),
+			(float) relative.y,
+			(float) -relative.dot(forward),
+		};
 	}
 
 	private static double expectedPosition(ClientLevel level, AvReceiverBlockEntity receiver) {

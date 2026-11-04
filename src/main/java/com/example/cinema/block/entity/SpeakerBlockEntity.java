@@ -2,6 +2,7 @@ package com.example.cinema.block.entity;
 
 import com.example.cinema.Cinema;
 import com.example.cinema.block.SpeakerBlock;
+import com.example.cinema.util.CinemaNames;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
@@ -19,10 +20,16 @@ import net.minecraft.world.level.chunk.LevelChunk;
 import java.util.Locale;
 import java.util.Objects;
 
-/** One physical speaker; the receiver assigns its channel role and gain. */
+/** One physical speaker; the receiver assigns its channel role and level. */
 public class SpeakerBlockEntity extends BlockEntity {
+	/** Receiver channel trim range. The receiver output is capped at +6 dB. */
+	public static final double MIN_LEVEL_DB = -12.0;
+	public static final double MAX_LEVEL_DB = 6.0;
+	public static final int MAX_NAME_LENGTH = CinemaNames.MAX_LENGTH;
+
 	private SpeakerRole role = SpeakerRole.NONE;
-	private float gain = 1.0f;
+	private double levelDb;
+	private String name = "";
 	private BlockPos receiverPos;
 
 	public SpeakerBlockEntity(BlockPos pos, BlockState blockState) {
@@ -40,8 +47,22 @@ public class SpeakerBlockEntity extends BlockEntity {
 		return role;
 	}
 
-	public float gain() {
-		return gain;
+	public double levelDb() {
+		return levelDb;
+	}
+
+	/** User-assigned name, or empty for the role/type fallback label. */
+	public String name() {
+		return name;
+	}
+
+	public void setName(String value) {
+		name = sanitizeName(value);
+		markUpdated();
+	}
+
+	public static String sanitizeName(String value) {
+		return CinemaNames.sanitize(value);
 	}
 
 	/** Receiver this speaker is explicitly wired to, or {@code null}. */
@@ -88,15 +109,23 @@ public class SpeakerBlockEntity extends BlockEntity {
 		markUpdated();
 	}
 
-	public void setGain(float value) {
-		gain = Math.max(0.0f, Math.min(2.0f, value));
+	public void setLevelDb(double value) {
+		levelDb = clampLevelDb(value);
 		markUpdated();
+	}
+
+	public static double clampLevelDb(double value) {
+		if (!Double.isFinite(value)) {
+			return 0.0;
+		}
+		return Math.max(MIN_LEVEL_DB, Math.min(MAX_LEVEL_DB, value));
 	}
 
 	public Component status() {
 		return Component.literal(String.format(Locale.ROOT,
-			"Speaker %s (%s): role=%s gain=%.2f receiver=%s",
-			worldPosition.toShortString(), type().id(), role.label(), gain,
+			"Speaker %s (%s): name=%s role=%s level=%+.1f dB receiver=%s",
+			worldPosition.toShortString(), type().id(), name.isEmpty() ? "unnamed" : name,
+			role.label(), levelDb,
 			receiverPos == null ? "none" : receiverPos.toShortString()));
 	}
 
@@ -135,7 +164,8 @@ public class SpeakerBlockEntity extends BlockEntity {
 	protected void saveAdditional(CompoundTag tag, HolderLookup.Provider registries) {
 		super.saveAdditional(tag, registries);
 		tag.putString("role", role.name());
-		tag.putFloat("gain", gain);
+		tag.putDouble("levelDb", levelDb);
+		tag.putString("name", name);
 		if (receiverPos != null) {
 			tag.putLong("receiverPos", receiverPos.asLong());
 		}
@@ -145,7 +175,18 @@ public class SpeakerBlockEntity extends BlockEntity {
 	protected void loadAdditional(CompoundTag tag, HolderLookup.Provider registries) {
 		super.loadAdditional(tag, registries);
 		role = type().sanitize(SpeakerRole.byName(tag.getString("role")));
-		gain = tag.contains("gain") ? tag.getFloat("gain") : 1.0f;
+		if (tag.contains("levelDb")) {
+			levelDb = clampLevelDb(tag.getDouble("levelDb"));
+		} else if (tag.contains("gain")) {
+			// Alpha 0.0.1 saved a linear 0..2 gain. Migrate it to dB once.
+			double legacyGain = Math.max(0.0, tag.getFloat("gain"));
+			levelDb = legacyGain <= 0.0
+				? MIN_LEVEL_DB
+				: clampLevelDb(20.0 * Math.log10(legacyGain));
+		} else {
+			levelDb = 0.0;
+		}
+		name = sanitizeName(tag.getString("name"));
 		receiverPos = tag.contains("receiverPos") ? BlockPos.of(tag.getLong("receiverPos")) : null;
 	}
 

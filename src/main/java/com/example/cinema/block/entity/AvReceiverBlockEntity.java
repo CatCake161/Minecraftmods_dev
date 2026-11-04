@@ -2,6 +2,7 @@ package com.example.cinema.block.entity;
 
 import com.example.cinema.Cinema;
 import com.example.cinema.block.SpeakerBlock;
+import com.example.cinema.util.CinemaNames;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
@@ -37,16 +38,22 @@ public class AvReceiverBlockEntity extends BlockEntity {
 		PAUSED
 	}
 
-	public static final double MIN_VOLUME = 0.0;
-	public static final double MAX_VOLUME = 1.0;
+	/**
+	 * Master volume is stored and displayed in dBFS. 0 dBFS is digital full
+	 * scale; the receiver intentionally allows up to +6 dB of output gain.
+	 */
+	public static final double MIN_VOLUME_DB = -60.0;
+	public static final double MAX_VOLUME_DB = 6.0;
+	public static final double DEFAULT_VOLUME_DB = -2.0;
 
+	private String name = "";
 	private String mediaKey = "";
 	private long mediaSize;
 	private String mediaSha256 = "";
 	private double durationSeconds;
 	private State state = State.STOPPED;
 	private double positionSeconds;
-	private float volume = 0.8f;
+	private float volumeDb = (float) DEFAULT_VOLUME_DB;
 	private boolean muted;
 	private BlockPos videoTarget;
 	/** Explicitly linked speakers. Speakers store the matching receiver position. */
@@ -84,6 +91,15 @@ public class AvReceiverBlockEntity extends BlockEntity {
 		}
 	}
 
+	public String name() {
+		return name;
+	}
+
+	public void setName(String value) {
+		name = CinemaNames.sanitize(value);
+		markUpdated();
+	}
+
 	public String mediaKey() {
 		return mediaKey;
 	}
@@ -108,8 +124,13 @@ public class AvReceiverBlockEntity extends BlockEntity {
 		return positionSeconds;
 	}
 
+	/** Linear amplitude for the audio engine. */
 	public float volume() {
-		return volume;
+		return (float) dbToLinear(volumeDb);
+	}
+
+	public float volumeDb() {
+		return volumeDb;
 	}
 
 	public boolean isMuted() {
@@ -160,7 +181,7 @@ public class AvReceiverBlockEntity extends BlockEntity {
 	}
 
 	public boolean selectMedia(String key, long size, String sha256, double duration) {
-		if (level == null || key == null || key.isEmpty() || isAnotherReceiverActive(level, worldPosition)) {
+		if (level == null || key == null || key.isEmpty()) {
 			return false;
 		}
 		mediaKey = key;
@@ -175,7 +196,7 @@ public class AvReceiverBlockEntity extends BlockEntity {
 	}
 
 	public boolean play() {
-		if (mediaKey.isEmpty() || level == null || isAnotherReceiverActive(level, worldPosition)) {
+		if (mediaKey.isEmpty() || level == null) {
 			return false;
 		}
 		state = State.PLAYING;
@@ -204,9 +225,30 @@ public class AvReceiverBlockEntity extends BlockEntity {
 		markUpdated();
 	}
 
-	public void setVolume(double value) {
-		volume = (float) Math.max(MIN_VOLUME, Math.min(MAX_VOLUME, value));
+	public void setVolumeDb(double value) {
+		volumeDb = (float) clampVolumeDb(value);
 		markUpdated();
+	}
+
+	public static double clampVolumeDb(double value) {
+		if (!Double.isFinite(value)) {
+			return DEFAULT_VOLUME_DB;
+		}
+		return Math.max(MIN_VOLUME_DB, Math.min(MAX_VOLUME_DB, value));
+	}
+
+	public static double dbToLinear(double db) {
+		if (!Double.isFinite(db) || db <= MIN_VOLUME_DB) {
+			return 0.0;
+		}
+		return Math.pow(10.0, db / 20.0);
+	}
+
+	public static double linearToDb(double linear) {
+		if (!Double.isFinite(linear) || linear <= 0.0) {
+			return MIN_VOLUME_DB;
+		}
+		return clampVolumeDb(20.0 * Math.log10(linear));
 	}
 
 	public void setMuted(boolean value) {
@@ -284,34 +326,6 @@ public class AvReceiverBlockEntity extends BlockEntity {
 		}
 	}
 
-	/**
-	 * M1 allows one audio engine, so only one nearby receiver may be active
-	 * (playing or paused with an open client player).
-	 */
-	public static boolean isAnotherReceiverActive(Level level, BlockPos self) {
-		if (level == null || level.isClientSide) {
-			return false;
-		}
-		ChunkPos center = new ChunkPos(self);
-		int radiusChunks = 4;
-		for (int chunkX = center.x - radiusChunks; chunkX <= center.x + radiusChunks; chunkX++) {
-			for (int chunkZ = center.z - radiusChunks; chunkZ <= center.z + radiusChunks; chunkZ++) {
-				LevelChunk chunk = level.getChunkSource().getChunkNow(chunkX, chunkZ);
-				if (chunk == null) {
-					continue;
-				}
-				for (BlockEntity blockEntity : chunk.getBlockEntities().values()) {
-					if (blockEntity instanceof AvReceiverBlockEntity other
-						&& !other.worldPosition.equals(self)
-						&& other.state != State.STOPPED) {
-						return true;
-					}
-				}
-			}
-		}
-		return false;
-	}
-
 	@Override
 	public void setRemoved() {
 		// Chunk unload also calls setRemoved(). Only clear links when the block
@@ -346,9 +360,10 @@ public class AvReceiverBlockEntity extends BlockEntity {
 		String media = mediaKey.isEmpty() ? "none" : mediaKey;
 		String target = videoTarget == null ? "none" : videoTarget.toShortString();
 		return Component.literal(String.format(Locale.ROOT,
-			"AV receiver %s: media=%s state=%s %.1f/%.1fs volume=%.2f%s projector=%s",
-			worldPosition.toShortString(), media, state.name().toLowerCase(Locale.ROOT),
-			positionSeconds, durationSeconds, volume, muted ? " muted" : "", target));
+			"AV receiver %s: name=%s media=%s state=%s %.1f/%.1fs volume=%.1f dBFS%s projector=%s",
+			worldPosition.toShortString(), name.isEmpty() ? "unnamed" : name, media,
+			state.name().toLowerCase(Locale.ROOT), positionSeconds, durationSeconds, volumeDb,
+			muted ? " muted" : "", target));
 	}
 
 	private void markUpdated() {
@@ -364,13 +379,14 @@ public class AvReceiverBlockEntity extends BlockEntity {
 	@Override
 	protected void saveAdditional(CompoundTag tag, HolderLookup.Provider registries) {
 		super.saveAdditional(tag, registries);
+		tag.putString("name", name);
 		tag.putString("mediaKey", mediaKey);
 		tag.putLong("mediaSize", mediaSize);
 		tag.putString("mediaSha256", mediaSha256);
 		tag.putDouble("durationSeconds", durationSeconds);
 		tag.putString("state", state.name());
 		tag.putDouble("positionSeconds", positionSeconds);
-		tag.putFloat("volume", volume);
+		tag.putFloat("volumeDb", volumeDb);
 		tag.putBoolean("muted", muted);
 		if (videoTarget != null) {
 			tag.putLong("videoTarget", videoTarget.asLong());
@@ -384,14 +400,21 @@ public class AvReceiverBlockEntity extends BlockEntity {
 	@Override
 	protected void loadAdditional(CompoundTag tag, HolderLookup.Provider registries) {
 		super.loadAdditional(tag, registries);
+		name = CinemaNames.sanitize(tag.getString("name"));
 		mediaKey = tag.getString("mediaKey");
 		mediaSize = tag.getLong("mediaSize");
 		mediaSha256 = tag.getString("mediaSha256");
 		durationSeconds = Math.max(0.0, tag.getDouble("durationSeconds"));
 		state = parseState(tag.getString("state"));
 		positionSeconds = Math.max(0.0, tag.getDouble("positionSeconds"));
-		volume = (float) Math.max(MIN_VOLUME, Math.min(MAX_VOLUME,
-			tag.contains("volume") ? tag.getDouble("volume") : 0.8));
+		if (tag.contains("volumeDb")) {
+			volumeDb = (float) clampVolumeDb(tag.getDouble("volumeDb"));
+		} else if (tag.contains("volume")) {
+			// Alpha 0.0.1 saved linear 0..1 volume. Migrate it to dBFS once.
+			volumeDb = (float) linearToDb(tag.getFloat("volume"));
+		} else {
+			volumeDb = (float) DEFAULT_VOLUME_DB;
+		}
 		muted = tag.getBoolean("muted");
 		videoTarget = tag.getBoolean("videoTargetExplicit") && tag.contains("videoTarget")
 			? BlockPos.of(tag.getLong("videoTarget")) : null;

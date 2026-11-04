@@ -11,6 +11,8 @@ import java.nio.ShortBuffer;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 
@@ -20,6 +22,7 @@ import java.util.function.BooleanSupplier;
 public final class StreamingAudioDecoder implements AutoCloseable {
 	private static final int CHANNELS = 6;
 	private static final int SAMPLE_RATE = 48_000;
+	private static final Map<Path, Integer> SOURCE_CHANNEL_CACHE = new ConcurrentHashMap<>();
 
 	private Process process;
 	private volatile boolean closed;
@@ -32,9 +35,12 @@ public final class StreamingAudioDecoder implements AutoCloseable {
 	}
 
 	public boolean decode(Path file, ChunkSink sink) throws Exception {
+		int sourceChannels = sourceChannels(file);
+		boolean upmix = sourceChannels == 2;
 		int chunkFrames = SAMPLE_RATE / 2;
-		int chunkBytes = chunkFrames * CHANNELS * 2;
+		int chunkBytes = chunkFrames * sourceChannels * 2;
 		byte[] bytes = new byte[chunkBytes];
+		StereoUpmixer upmixer = upmix ? new StereoUpmixer() : null;
 		long totalFrames = 0;
 		long started = System.nanoTime();
 
@@ -56,11 +62,11 @@ public final class StreamingAudioDecoder implements AutoCloseable {
 		command.add("-sn");
 		command.add("-dn");
 		command.add("-ac");
-		command.add(Integer.toString(CHANNELS));
+		command.add(Integer.toString(sourceChannels));
 		command.add("-ar");
 		command.add(Integer.toString(SAMPLE_RATE));
 		command.add("-channel_layout");
-		command.add("5.1");
+		command.add(upmix ? "stereo" : "5.1");
 		command.add("-f");
 		command.add("s16le");
 		command.add("-acodec");
@@ -68,8 +74,9 @@ public final class StreamingAudioDecoder implements AutoCloseable {
 		command.add("pipe:1");
 
 		process = new ProcessBuilder(command).redirectErrorStream(false).start();
-		Cinema.LOGGER.info("cinema audio decoder: ffmpeg {} Hz, {} channels, start={} s",
-			SAMPLE_RATE, CHANNELS, String.format("%.2f", startSeconds));
+		Cinema.LOGGER.info("cinema audio decoder: ffmpeg {} Hz, {} source channels{}, start={} s",
+			SAMPLE_RATE, sourceChannels, upmix ? " -> 5.1 upmix" : "",
+			String.format("%.2f", startSeconds));
 
 		try (InputStream input = new BufferedInputStream(process.getInputStream(), 64 * 1024)) {
 			while (!closed && !cancelled.getAsBoolean()) {
@@ -80,7 +87,7 @@ public final class StreamingAudioDecoder implements AutoCloseable {
 				if (read == 0) {
 					continue;
 				}
-				int frames = read / (CHANNELS * 2);
+				int frames = read / (sourceChannels * 2);
 				if (frames <= 0) {
 					continue;
 				}
@@ -88,8 +95,9 @@ public final class StreamingAudioDecoder implements AutoCloseable {
 				ShortBuffer samples = ByteBuffer.wrap(bytes, 0, read)
 					.order(ByteOrder.LITTLE_ENDIAN)
 					.asShortBuffer();
-				short[] data = new short[samples.remaining()];
-				samples.get(data);
+				short[] source = new short[samples.remaining()];
+				samples.get(source);
+				short[] data = upmixer == null ? source : upmixer.upmix(source, frames);
 				sink.accept(new AudioChunk(pts, data));
 				totalFrames += frames;
 			}
@@ -105,6 +113,26 @@ public final class StreamingAudioDecoder implements AutoCloseable {
 		Cinema.LOGGER.info("cinema audio decoder: {} frames, {} s media in {} s wall",
 			totalFrames, String.format("%.3f", duration), String.format("%.3f", elapsed));
 		return totalFrames > 0;
+	}
+
+	private static int sourceChannels(Path file) {
+		Path key = file.toAbsolutePath().normalize();
+		Integer cached = SOURCE_CHANNEL_CACHE.get(key);
+		if (cached != null) {
+			return cached;
+		}
+		int channels = CHANNELS;
+		try {
+			Ffmpeg.AudioInfo info = Ffmpeg.probeAudio(file);
+			if (info != null) {
+				channels = info.channels() <= 2 ? 2 : CHANNELS;
+			}
+		} catch (Exception e) {
+			Cinema.LOGGER.warn("cinema audio decoder: could not probe source channels; assuming 5.1: {}",
+				e.getMessage());
+		}
+		SOURCE_CHANNEL_CACHE.put(key, channels);
+		return channels;
 	}
 
 	private static int readFully(InputStream input, byte[] buffer) throws IOException {

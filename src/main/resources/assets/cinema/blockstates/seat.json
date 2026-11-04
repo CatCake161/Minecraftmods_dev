@@ -1,0 +1,8 @@
+{
+	"variants": {
+		"facing=north": { "model": "cinema:block/seat" },
+		"facing=south": { "model": "cinema:block/seat", "y": 180 },
+		"facing=west": { "model": "cinema:block/seat", "y": 270 },
+		"facing=east": { "model": "cinema:block/seat", "y": 90 }
+	}
+}

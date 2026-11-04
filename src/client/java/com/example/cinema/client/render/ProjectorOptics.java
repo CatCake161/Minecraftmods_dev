@@ -135,8 +135,7 @@ public final class ProjectorOptics {
 		double aspect = videoAspect > 0.01f ? videoAspect : BASE_IMAGE_ASPECT;
 		double throwRatio = projector.throwRatio() > 0.0
 			? projector.throwRatio()
-			: clamp(distance / Math.max(0.1, screen.width() * 0.98),
-				ProjectorBlockEntity.MIN_THROW_RATIO, ProjectorBlockEntity.MAX_THROW_RATIO);
+			: autoThrowRatio(screen, view, aspect, distance);
 		double tanHalfHorizontal = 0.5 / throwRatio;
 		float fovY = (float) (2.0 * Math.atan(tanHalfHorizontal / aspect));
 		Matrix4f projection = new Matrix4f().perspective(fovY, (float) aspect, 0.05f, 512.0f);
@@ -153,6 +152,51 @@ public final class ProjectorOptics {
 
 		return new ProjectorOptics(projector, screen, lens, center, view, projection, throwRatio,
 			focusDistance, focusError, blurLod, brightness, ambientWash);
+	}
+
+	/**
+	 * Fits the complete screen rectangle inside the video frame, including when
+	 * the screen aspect differs from the video aspect or the projector is
+	 * installed obliquely. Uses the maximum angular extent of the four screen
+	 * corners; the old width-only formula could crop the image.
+	 */
+	private static double autoThrowRatio(ScreenGeometry screen, Matrix4f view,
+										 double aspect, double distance) {
+		double[] extents = screenAngularExtents(screen, view);
+		if (extents != null) {
+			double tanHalfHorizontal = Math.min(extents[0], extents[1] * aspect) * 0.98;
+			if (tanHalfHorizontal > 1.0e-4 && Double.isFinite(tanHalfHorizontal)) {
+				return clamp(0.5 / tanHalfHorizontal,
+					ProjectorBlockEntity.MIN_THROW_RATIO, ProjectorBlockEntity.MAX_THROW_RATIO);
+			}
+		}
+		// Fallback for a corner behind the lens: fit width and height in block
+		// space, still respecting the video aspect ratio.
+		double fitWidth = Math.min(screen.width(), screen.height() * aspect);
+		return clamp(distance / Math.max(0.1, fitWidth * 0.98),
+			ProjectorBlockEntity.MIN_THROW_RATIO, ProjectorBlockEntity.MAX_THROW_RATIO);
+	}
+
+	private static double[] screenAngularExtents(ScreenGeometry screen, Matrix4f view) {
+		Vec3 origin = screen.surfaceOrigin();
+		Vec3 right = screen.right();
+		Vec3 up = screen.up();
+		double maxX = 0.0;
+		double maxY = 0.0;
+		for (int i = 0; i < 4; i++) {
+			Vec3 corner = origin
+				.add(right.scale((i & 1) == 0 ? 0.0 : screen.width()))
+				.add(up.scale((i & 2) == 0 ? 0.0 : screen.height()));
+			Vector3f point = new Vector3f((float) corner.x, (float) corner.y, (float) corner.z);
+			view.transformPosition(point);
+			double depth = -point.z;
+			if (depth <= 0.05) {
+				return null;
+			}
+			maxX = Math.max(maxX, Math.abs(point.x) / depth);
+			maxY = Math.max(maxY, Math.abs(point.y) / depth);
+		}
+		return new double[]{maxX, maxY};
 	}
 
 	private static ScreenGeometry findScreen(Level level, ProjectorBlockEntity projector) {

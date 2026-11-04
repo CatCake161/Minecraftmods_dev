@@ -11,7 +11,9 @@ import java.util.List;
 /**
  * Remote control placeholder for opening a receiver/projector GUI from a seat.
  *
- * <p>Binding and distance checks arrive with the formal GUI/remote milestone.
+ * <p>Future work: bind the remote to a projector/receiver, open the same GUI
+ * from a distance, and initiate remote device pairing. Binding, range and
+ * permission checks arrive with the formal remote milestone.
  */
 public class RemoteControllerItem extends Item {
 	public RemoteControllerItem(Properties properties) {

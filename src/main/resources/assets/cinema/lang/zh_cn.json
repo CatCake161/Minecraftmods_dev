@@ -2,6 +2,8 @@
 	"block.cinema.screen": "影院屏幕",
 	"block.cinema.projector": "影院投影仪",
 	"block.cinema.av_receiver": "AV 接收器",
+	"block.cinema.seat": "影院座位",
+	"entity.cinema.seat": "影院座位",
 	"block.cinema.floorstanding_speaker": "落地式扬声器",
 	"block.cinema.bookshelf_speaker": "书架式扬声器",
 	"block.cinema.center_speaker": "中置扬声器",
@@ -28,5 +30,6 @@
 	"message.cinema.pair.no_pair_link": "%s 与 %s 之间没有连接",
 	"message.cinema.pair.behind_screen": "投影仪必须位于屏幕正面",
 	"message.cinema.pair.not_in_front": "屏幕必须位于投影仪前方",
+	"message.cinema.pair.screen_occupied": "该屏幕已被另一个投影仪占用，请先解除连接",
 	"message.cinema.pair.speaker": "扬声器"
 }

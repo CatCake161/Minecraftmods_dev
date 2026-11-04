@@ -7,6 +7,7 @@ import com.example.cinema.client.audio.speakerspecs.SpeakerSpecsAssignments;
 import com.example.cinema.client.audio.speakerspecs.SpeakerSpecsProfile;
 import com.example.cinema.client.audio.speakerspecs.SpeakerSpecsRegistry;
 import com.example.cinema.client.config.CinemaClientConfig;
+import com.example.cinema.client.network.SpeakerNameClient;
 import com.example.cinema.client.network.SpeakerRoleClient;
 import com.example.cinema.block.entity.AvReceiverBlockEntity;
 import net.minecraft.Util;
@@ -66,8 +67,12 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 	private EditBox lowBox;
 	private EditBox highBox;
 	private EditBox gainBox;
+	private EditBox nameBox;
 	private Button profileButton;
 	private Button roleButton;
+	private boolean nameDirty;
+	private long nameDirtyAtMillis;
+	private boolean syncingName;
 
 	private String status = "";
 	private long statusUntil;
@@ -125,6 +130,15 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 		}
 
 		if (fixedType && speaker != null) {
+			nameBox = new EditBox(font, contentLeft, typeY, contentWidth - 110, 18,
+				Component.literal("Speaker name"));
+			nameBox.setMaxLength(SpeakerBlockEntity.MAX_NAME_LENGTH);
+			nameBox.setHint(Component.literal("Speaker name"));
+			syncingName = true;
+			nameBox.setValue(speaker.name());
+			syncingName = false;
+			nameBox.setResponder(value -> onNameChanged());
+			addRenderableWidget(nameBox);
 			roleButton = Button.builder(roleLabel(), button -> cycleRole())
 				.bounds(contentLeft + contentWidth - 104, typeY, 104, 18).build();
 			addRenderableWidget(roleButton);
@@ -168,12 +182,31 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 		fieldsDirtyAtMillis = System.currentTimeMillis() + FIELD_SAVE_DEBOUNCE_MS;
 	}
 
+	private void onNameChanged() {
+		if (syncingName || nameBox == null) {
+			return;
+		}
+		nameDirty = true;
+		nameDirtyAtMillis = System.currentTimeMillis() + FIELD_SAVE_DEBOUNCE_MS;
+	}
+
+	private void flushName() {
+		if (!nameDirty || nameBox == null || speaker == null) {
+			return;
+		}
+		nameDirty = false;
+		SpeakerNameClient.setName(speaker.getBlockPos(), nameBox.getValue());
+	}
+
 	@Override
 	public void tick() {
 		super.tick();
 		if (fieldsDirty && System.currentTimeMillis() >= fieldsDirtyAtMillis) {
 			fieldsDirty = false;
 			applyDraftSettings(false);
+		}
+		if (nameDirty && System.currentTimeMillis() >= nameDirtyAtMillis) {
+			flushName();
 		}
 	}
 
@@ -449,7 +482,7 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 		} else if (speaker != null) {
 			String header = "Speaker: " + speaker.type().displayName().getString()
 				+ " @ " + speaker.getBlockPos().toShortString();
-			graphics.drawString(font, truncate(header, contentWidth - 110), contentLeft, typeY + 4,
+			graphics.drawString(font, truncate(header, contentWidth), contentLeft, top + 18,
 				0xB8B8B8, false);
 		}
 
@@ -505,6 +538,15 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 	}
 
 	private void drawHoverTooltip(GuiGraphics graphics, int mouseX, int mouseY) {
+		if (nameBox != null && inBox(mouseX, mouseY, nameBox.getX(), nameBox.getY(),
+			nameBox.getWidth(), nameBox.getHeight())) {
+			renderWrappedTooltip(graphics,
+				"Custom speaker name shown in the receiver Speakers list. "
+					+ "Leave empty to use role/type/coordinates. Max "
+					+ SpeakerBlockEntity.MAX_NAME_LENGTH + " characters.",
+				mouseX, mouseY);
+			return;
+		}
 		if (roleButton != null && inBox(mouseX, mouseY, roleButton.getX(), roleButton.getY(),
 			roleButton.getWidth(), roleButton.getHeight())) {
 			renderWrappedTooltip(graphics,
@@ -638,6 +680,7 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 			fieldsDirty = false;
 			applyDraftSettings(true);
 		}
+		flushName();
 		closing = true;
 		if (parent != null && minecraft != null) {
 			// Defer the parent switch until after the mouse release. Opening the

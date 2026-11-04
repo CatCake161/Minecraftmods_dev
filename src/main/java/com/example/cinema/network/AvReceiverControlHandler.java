@@ -39,10 +39,6 @@ public final class AvReceiverControlHandler {
 		switch (payload.action()) {
 			case SELECT_MEDIA -> selectMedia(player, receiver, payload);
 			case PLAY -> {
-				if (AvReceiverBlockEntity.isAnotherReceiverActive(level, avReceiverPos)) {
-					error(player, "Another AV receiver is already active; stop it first");
-					return;
-				}
 				if (!receiver.play()) {
 					error(player, "AV receiver has no media selected");
 				}
@@ -50,7 +46,7 @@ public final class AvReceiverControlHandler {
 			case PAUSE -> receiver.pause();
 			case STOP -> receiver.stop();
 			case SEEK -> receiver.seek(payload.value());
-			case SET_VOLUME -> receiver.setVolume(payload.value());
+			case SET_VOLUME_DB -> receiver.setVolumeDb(payload.value());
 			case SET_MUTED -> receiver.setMuted(payload.value() >= 0.5);
 		}
 	}
@@ -64,10 +60,6 @@ public final class AvReceiverControlHandler {
 		}
 		if (payload.mediaSize() < 0 || payload.durationSeconds() < 0) {
 			error(player, "Invalid media metadata");
-			return;
-		}
-		if (AvReceiverBlockEntity.isAnotherReceiverActive(player.serverLevel(), receiver.getBlockPos())) {
-			error(player, "Another AV receiver is already active; stop it first");
 			return;
 		}
 		String sha256 = payload.mediaSha256() == null ? "" : payload.mediaSha256();

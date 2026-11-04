@@ -23,6 +23,8 @@ import com.example.cinema.client.render.ProjectorOptics;
 import com.example.cinema.client.render.ScreenBlockEntityRenderer;
 import com.example.cinema.client.render.ScreenGeometry;
 import com.example.cinema.client.render.ScreenLimits;
+import com.example.cinema.client.render.SeatEntityRenderer;
+import com.example.cinema.client.render.SpeakerLocator;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -30,6 +32,7 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.BlockEntityRendererRegistry;
+import net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.minecraft.client.Minecraft;
@@ -125,22 +128,26 @@ public class CinemaClient implements ClientModInitializer {
 			CinemaPlayer.stopActive(client);
 			AvReceiverPlaybackManager.shutdown();
 			ProjectorOptics.clearCache();
+			SpeakerLocator.clear();
 		});
 		ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
 			CinemaPlayer.stopActive(client);
 			AvReceiverPlaybackManager.shutdown();
 			ProjectorOptics.clearCache();
+			SpeakerLocator.clear();
 			spikeEnvironmentPrepared = false;
 			fixedPlayerPos = null;
 		});
 
 		BlockEntityRendererRegistry.register(Cinema.screenBlockEntity, ScreenBlockEntityRenderer::new);
+		EntityRendererRegistry.register(Cinema.seatEntityType, SeatEntityRenderer::new);
 		WorldRenderEvents.START.register(context -> ScreenGeometry.beginFrame());
 		WorldRenderEvents.AFTER_ENTITIES.register(context -> {
 			AvReceiverPlaybackManager.presentFrames();
 			CinemaPlayer.presentActiveFrame();
 		});
 		ClientTickEvents.END_CLIENT_TICK.register(AvReceiverPlaybackManager::tick);
+		ClientTickEvents.END_CLIENT_TICK.register(SpeakerLocator::tick);
 
 		Cinema.LOGGER.info(
 			"cinema screen: max rendered size {}x{} ({})",

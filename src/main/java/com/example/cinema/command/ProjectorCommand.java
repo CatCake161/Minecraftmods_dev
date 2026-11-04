@@ -35,8 +35,9 @@ public final class ProjectorCommand {
 				.executes(context -> {
 					ProjectorBlockEntity projector = nearest(context.getSource());
 					context.getSource().sendSuccess(() -> Component.literal(String.format(
-						"projector %s: throw=%s focus=%s keystone=%.1f/%.1f brightness=%.2f wash=%.2f power=%s lamp=%.2f",
+						"projector %s: name=%s throw=%s focus=%s keystone=%.1f/%.1f brightness=%.2f wash=%.2f power=%s lamp=%.2f",
 						projector.getBlockPos(),
+						projector.name().isEmpty() ? "unnamed" : projector.name(),
 						projector.throwRatio() < 0.0 ? "auto"
 							: String.format("%.2f", projector.throwRatio()),
 						projector.focusDistance() < 0.0

@@ -15,7 +15,7 @@ public final class ClientHelpCommand {
 			"§6Cinema 使用帮助 §7(1/7) §fAV 接收器与播放",
 			"§e/cinema_play <媒体库相对路径>§f  选片并播放，例如 movies/demo.mp4",
 			"§e/cinema_pause§f  暂停 / 继续；§e/cinema_stop§f  停止",
-			"§e/cinema_seek <秒>§f  跳转；§e/cinema_volume <0-1>§f  音量",
+			"§e/cinema_seek <秒>§f  跳转；§e/cinema_volume <-60..+6 dBFS>§f  音量",
 			"§e/cinema_mute§f  静音切换",
 			"§e/cinema_receiver info§f  查看接收器状态",
 			"§7命令作用于 64 格内最近的 AV 接收器；默认库 cinema/media/，外部库在接收器 GUI 的 Settings 添加。"
@@ -59,7 +59,7 @@ public final class ClientHelpCommand {
 			"§6Cinema 使用帮助 §7(6/7) §f常见问题",
 			"§7视频停在最后一帧：/cinema_seek 0 重播。",
 			"§7屏幕没画面：确认接收器正在播放、投影仪已配对、屏幕朝向投影仪。",
-			"§7同一时间只允许一个接收器占用音频；先 /cinema_stop 再切换。",
+			"§7每个接收器独立播放；多个接收器可同时播放，音量/静音/seek 互不影响。",
 			"§7外部媒体库：接收器 GUI → Settings → 输入文件夹绝对路径 → Add library。",
 			"§7Media 页左上角 Library 按钮切换默认库与外部库。",
 			"§7真实方块用 /cinema_projector；客户端调参用 /cinema_projector_client。",

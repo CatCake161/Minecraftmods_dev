@@ -4,6 +4,8 @@ import com.example.cinema.Cinema;
 import com.example.cinema.block.entity.AvReceiverBlockEntity;
 import com.example.cinema.block.entity.ProjectorBlockEntity;
 import com.example.cinema.block.entity.SpeakerBlockEntity;
+import com.example.cinema.block.entity.SpeakerRole;
+import com.example.cinema.block.entity.SpeakerType;
 import com.example.cinema.client.config.CinemaClientConfig;
 import com.example.cinema.client.media.AvReceiverPlayback;
 import com.example.cinema.client.media.AvReceiverPlaybackManager;
@@ -11,13 +13,20 @@ import com.example.cinema.client.media.CinemaPlayer;
 import com.example.cinema.client.media.LibraryRegistry;
 import com.example.cinema.client.media.MediaLibrary;
 import com.example.cinema.client.network.AvReceiverControlClient;
+import com.example.cinema.client.network.DeviceNameClient;
+import com.example.cinema.client.network.SpeakerLevelClient;
+import com.example.cinema.client.render.SpeakerLocator;
 import com.example.cinema.network.AvReceiverControlPayload;
+import com.example.cinema.util.CinemaNames;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.resources.sounds.SimpleSoundInstance;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.level.ChunkPos;
@@ -30,6 +39,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -47,7 +58,10 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class AvReceiverConfigScreen extends Screen {
 	private static final int TAB_HEIGHT = 18;
 	private static final int ROW_HEIGHT = 11;
+	private static final int SPEAKER_ROW_HEIGHT = 19;
 	private static final int PROBE_LIMIT = 30;
+	private static final long SPEAKER_LEVEL_DEBOUNCE_MS = 150L;
+	private static final long NAME_SAVE_DEBOUNCE_MS = 250L;
 
 	private static String rememberedLibraryId = LibraryRegistry.DEFAULT_ID;
 	private static String rememberedFolder = "";
@@ -62,6 +76,10 @@ public final class AvReceiverConfigScreen extends Screen {
 	private Tab tab = Tab.MEDIA;
 	private final List<EntryView> entries = new ArrayList<>();
 	private final List<String> speakerLines = new ArrayList<>();
+	private final List<SpeakerRow> linkedSpeakers = new ArrayList<>();
+	private final Map<BlockPos, SpeakerLevelSlider> speakerLevelSliders = new LinkedHashMap<>();
+	private String speakerRowsKey = "";
+	private String builtSpeakerRowsKey = "";
 
 	private int left;
 	private int top;
@@ -84,6 +102,7 @@ public final class AvReceiverConfigScreen extends Screen {
 	private String selectedLibraryId = rememberedLibraryId;
 	private int scroll;
 	private int libraryScroll;
+	private int speakerScroll;
 	private boolean scanning;
 	private boolean folderLoaded;
 	private int scanGeneration;
@@ -98,6 +117,10 @@ public final class AvReceiverConfigScreen extends Screen {
 	private boolean receiverProbePending;
 
 	private EditBox searchBox;
+	private EditBox receiverNameBox;
+	private boolean receiverNameDirty;
+	private long receiverNameDirtyAtMillis;
+	private boolean syncingReceiverName;
 	private Button libraryButton;
 	private Button playPauseButton;
 	private Button stopButton;
@@ -110,7 +133,7 @@ public final class AvReceiverConfigScreen extends Screen {
 	private VolumeSlider volumeSlider;
 	private double pendingSeekSeconds = Double.NaN;
 	private long pendingSeekUntilMillis;
-	private float pendingVolume = Float.NaN;
+	private double pendingVolumeDb = Double.NaN;
 	private long pendingVolumeUntilMillis;
 
 	public AvReceiverConfigScreen(AvReceiverBlockEntity receiver) {
@@ -127,6 +150,7 @@ public final class AvReceiverConfigScreen extends Screen {
 	@Override
 	protected void init() {
 		super.init();
+		speakerLevelSliders.clear();
 		panelWidth = Math.min(width - 12, 420);
 		panelHeight = Math.min(height - 12, 300);
 		left = (width - panelWidth) / 2;
@@ -138,6 +162,18 @@ public final class AvReceiverConfigScreen extends Screen {
 		transportTop = top + panelHeight - 62;
 		contentBottom = transportTop - 4;
 		footerY = top + panelHeight - 22;
+
+		int nameX = left + Math.min(160, panelWidth / 2);
+		int nameWidth = Math.max(80, panelWidth - (nameX - left) - 12);
+		receiverNameBox = new EditBox(font, nameX, top + 2, nameWidth, 16,
+			Component.literal("Receiver name"));
+		receiverNameBox.setMaxLength(CinemaNames.MAX_LENGTH);
+		receiverNameBox.setHint(Component.literal("Receiver name"));
+		syncingReceiverName = true;
+		receiverNameBox.setValue(receiver.name());
+		syncingReceiverName = false;
+		receiverNameBox.setResponder(value -> onReceiverNameChanged());
+		addRenderableWidget(receiverNameBox);
 
 		Tab[] tabs = Tab.values();
 		tabWidth = (contentWidth - 6) / tabs.length;
@@ -198,6 +234,10 @@ public final class AvReceiverConfigScreen extends Screen {
 			if (!folderLoaded && !scanning) {
 				loadFolder(libraryId, folder, false);
 			}
+		} else if (tab == Tab.SPEAKERS) {
+			refreshSpeakers();
+			addSpeakerLevelWidgets();
+			builtSpeakerRowsKey = speakerRowsKey;
 		} else if (tab == Tab.SETTINGS) {
 			addRenderableWidget(Button.builder(Component.literal("Refresh library"),
 					button -> loadFolder(libraryId, folder, true))
@@ -228,10 +268,18 @@ public final class AvReceiverConfigScreen extends Screen {
 		}
 		super.tick();
 		syncWidgets();
+		if (receiverNameDirty && System.currentTimeMillis() >= receiverNameDirtyAtMillis) {
+			flushReceiverName();
+		}
 		if (minecraft != null && minecraft.level != null && minecraft.level.getGameTime() % 20L == 0L) {
 			refreshWarnings();
 			refreshSpeakers();
 			ensureReceiverProbe();
+			if (tab == Tab.SPEAKERS
+				&& !speakerRowsKey.equals(builtSpeakerRowsKey)
+				&& !hasDraggingSpeakerLevel()) {
+				rebuildWidgets();
+			}
 		}
 	}
 
@@ -257,7 +305,17 @@ public final class AvReceiverConfigScreen extends Screen {
 		// are not covered by a second blur pass.
 		super.render(graphics, mouseX, mouseY, partialTick);
 		drawTabAccent(graphics);
-		if (tab == Tab.MEDIA || tab == Tab.SETTINGS) {
+		if (receiverNameBox != null
+			&& mouseX >= receiverNameBox.getX()
+			&& mouseX < receiverNameBox.getX() + receiverNameBox.getWidth()
+			&& mouseY >= receiverNameBox.getY()
+			&& mouseY < receiverNameBox.getY() + receiverNameBox.getHeight()) {
+			renderWrappedTooltip(graphics,
+				"Custom AV receiver name shown in the projector status and commissioning output. "
+					+ "Max " + CinemaNames.MAX_LENGTH + " characters.", mouseX, mouseY);
+			return;
+		}
+		if (tab == Tab.MEDIA || tab == Tab.SPEAKERS || tab == Tab.SETTINGS) {
 			drawHoverTooltip(graphics, mouseX, mouseY);
 		}
 	}
@@ -302,6 +360,16 @@ public final class AvReceiverConfigScreen extends Screen {
 
 	@Override
 	public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+		if (tab == Tab.SPEAKERS && inSpeakerList(mouseX, mouseY)) {
+			int visibleRows = visibleSpeakerRows();
+			int maxScroll = Math.max(0, linkedSpeakers.size() - visibleRows);
+			if (maxScroll > 0) {
+				speakerScroll = Math.max(0, Math.min(maxScroll,
+					speakerScroll - (int) Math.signum(scrollY)));
+				rebuildWidgets();
+			}
+			return true;
+		}
 		if (tab == Tab.SETTINGS
 			&& mouseX >= contentLeft && mouseX < contentLeft + contentWidth
 			&& mouseY >= contentTop + 98 && mouseY < contentBottom - 22) {
@@ -326,6 +394,7 @@ public final class AvReceiverConfigScreen extends Screen {
 	@Override
 	public void onClose() {
 		flushPendingControls();
+		flushReceiverName();
 		scanGeneration++;
 		Cinema.LOGGER.info("cinema receiver gui: closed {}", receiver.getBlockPos().toShortString());
 		super.onClose();
@@ -340,9 +409,15 @@ public final class AvReceiverConfigScreen extends Screen {
 		}
 		if (volumeSlider != null && volumeSlider.dragging) {
 			volumeSlider.dragging = false;
-			pendingVolume = (float) volumeSlider.currentValue();
+			pendingVolumeDb = volumeSlider.currentDb();
 			pendingVolumeUntilMillis = System.currentTimeMillis() + 1_500L;
-			sendVolume(volumeSlider.currentValue());
+			sendVolume(pendingVolumeDb);
+		}
+		for (SpeakerLevelSlider slider : speakerLevelSliders.values()) {
+			if (slider.dragging) {
+				slider.dragging = false;
+				slider.sendCurrentLevel();
+			}
 		}
 	}
 
@@ -467,6 +542,7 @@ public final class AvReceiverConfigScreen extends Screen {
 	}
 
 	private void syncWidgets() {
+		syncReceiverName();
 		if (playPauseButton != null) {
 			playPauseButton.setMessage(Component.literal(
 				receiver.state() == AvReceiverBlockEntity.State.PLAYING ? "Pause" : "Play"));
@@ -489,14 +565,43 @@ public final class AvReceiverConfigScreen extends Screen {
 			seekSlider.setExternal(currentPosition());
 		}
 		if (volumeSlider != null) {
-			volumeSlider.setExternal(receiver.volume());
+			volumeSlider.setExternal(receiver.volumeDb());
 		}
+		syncSpeakerLevels();
 		if (playSelectedButton != null) {
 			playSelectedButton.active = selectedFile() != null && !pendingPlay;
 		}
 		if (backButton != null) {
 			backButton.active = !folder.isEmpty();
 		}
+	}
+
+	private void onReceiverNameChanged() {
+		if (syncingReceiverName) {
+			return;
+		}
+		receiverNameDirty = true;
+		receiverNameDirtyAtMillis = System.currentTimeMillis() + NAME_SAVE_DEBOUNCE_MS;
+	}
+
+	private void flushReceiverName() {
+		if (!receiverNameDirty || receiverNameBox == null) {
+			return;
+		}
+		receiverNameDirty = false;
+		DeviceNameClient.setReceiverName(receiver.getBlockPos(), receiverNameBox.getValue());
+	}
+
+	private void syncReceiverName() {
+		if (receiverNameBox == null || receiverNameBox.isFocused() || receiverNameDirty) {
+			return;
+		}
+		if (receiverNameBox.getValue().equals(receiver.name())) {
+			return;
+		}
+		syncingReceiverName = true;
+		receiverNameBox.setValue(receiver.name());
+		syncingReceiverName = false;
 	}
 
 	private void drawStatus(GuiGraphics graphics) {
@@ -515,11 +620,16 @@ public final class AvReceiverConfigScreen extends Screen {
 		} else if (mediaMissing) {
 			line2 = "Media file missing from its library";
 		} else {
-			String video = receiver.videoTarget() == null
-				? "Video: none"
-				: "Video: " + receiver.videoTarget().toShortString() + (projectorOnline() ? " online" : " offline");
+			String video = videoTargetLabel();
 			AvReceiverPlayback playback = AvReceiverPlaybackManager.playbackAt(receiver.getBlockPos());
-			String audio = playback != null && playback.player() != null ? "Audio: 5.1 active" : "Audio: idle";
+			String audio;
+			if (playback == null || playback.player() == null) {
+				audio = "Audio: idle";
+			} else if (playback.physicalChannels() > 0) {
+				audio = "Audio: 5.1 physical " + playback.physicalChannels() + "/6";
+			} else {
+				audio = "Audio: virtual 5.1";
+			}
 			line2 = video + "  |  " + audio;
 		}
 		graphics.drawString(font, truncate(line2, contentWidth), contentLeft, y + 10,
@@ -602,22 +712,53 @@ public final class AvReceiverConfigScreen extends Screen {
 
 	private void drawSpeakersTab(GuiGraphics graphics) {
 		int y = contentTop;
-		graphics.drawString(font, "Speaker routing (M4)", contentLeft, y, 0xE8E8E8, false);
-		graphics.drawString(font, "M1/M2 output: virtual 5.1 through six OpenAL sources.",
-			contentLeft, y + 12, 0x9A9A9A, false);
-		graphics.drawString(font, "Detected speaker blocks within 48 blocks: " + speakerLines.size()
-			+ "  ·  linked: " + receiver.speakerTargets().size(),
-			contentLeft, y + 28, 0xB8B8B8, false);
-		int lineY = y + 44;
-		for (int i = 0; i < Math.min(7, speakerLines.size()); i++) {
-			graphics.drawString(font, truncate(speakerLines.get(i), contentWidth), contentLeft, lineY,
-				0xB8B8B8, false);
-			lineY += 10;
+		AvReceiverPlayback playback = AvReceiverPlaybackManager.playbackAt(receiver.getBlockPos());
+		int physical = playback == null ? 0 : playback.physicalChannels();
+		graphics.drawString(font, "Speaker levels", contentLeft, y, 0xE8E8E8, false);
+		graphics.drawString(font, "Linked " + receiver.speakerTargets().size()
+			+ "  ·  routing " + (playback == null ? "idle" : "physical " + physical + "/6")
+			+ "  ·  detected " + speakerLines.size(),
+			contentLeft, y + 11, 0x9A9A9A, false);
+		graphics.drawString(font, "Channel trim "
+			+ formatDb(SpeakerBlockEntity.MIN_LEVEL_DB) + " .. "
+			+ formatDb(SpeakerBlockEntity.MAX_LEVEL_DB)
+			+ " dB; changes save immediately.",
+			contentLeft, y + 22, 0x808080, false);
+		if (linkedSpeakers.isEmpty()) {
+			graphics.drawString(font, "No linked speakers. Use the Cinema Cable on this receiver, then a speaker.",
+				contentLeft, y + 40, 0x9A9A9A, false);
+			return;
 		}
-		graphics.drawString(font, "Right-click a speaker block to edit its speaker specs.",
-			contentLeft, contentBottom - 42, 0x9A9A9A, false);
-		graphics.drawString(font, "Use the Cinema Cable on this receiver, then a speaker, to link it.",
-			contentLeft, contentBottom - 30, 0x9A9A9A, false);
+		int visibleRows = visibleSpeakerRows();
+		int labelWidth = speakerLabelWidth();
+		for (int i = 0; i < visibleRows && speakerScroll + i < linkedSpeakers.size(); i++) {
+			SpeakerRow row = linkedSpeakers.get(speakerScroll + i);
+			SpeakerLevelSlider slider = speakerLevelSliders.get(row.pos());
+			if (slider == null) {
+				continue;
+			}
+			String label = row.name().isEmpty()
+				? row.role().label() + " " + speakerTypeShortLabel(row.type())
+					+ " " + row.pos().toShortString()
+				: row.name() + " (" + row.role().label() + ")";
+			graphics.drawString(font, truncate(label, labelWidth - 4),
+				contentLeft, slider.getY() + 4, 0xB8B8B8, false);
+		}
+		int maxScroll = Math.max(0, linkedSpeakers.size() - visibleRows);
+		if (maxScroll > 0) {
+			int trackTop = speakerRowsTop();
+			int trackBottom = contentBottom - 20;
+			int trackHeight = Math.max(1, trackBottom - trackTop);
+			int thumbHeight = Math.max(8,
+				trackHeight * visibleRows / linkedSpeakers.size());
+			int thumbY = trackTop
+				+ (trackHeight - thumbHeight) * speakerScroll / maxScroll;
+			int scrollbarX = contentLeft + contentWidth - 3;
+			graphics.fill(scrollbarX, trackTop, contentLeft + contentWidth, trackBottom,
+				0x50000000);
+			graphics.fill(scrollbarX, thumbY, contentLeft + contentWidth,
+				thumbY + thumbHeight, 0xFFAAAAAA);
+		}
 	}
 
 	private void drawSignalTab(GuiGraphics graphics) {
@@ -636,7 +777,7 @@ public final class AvReceiverConfigScreen extends Screen {
 			"Receiver: " + receiver.state().name().toLowerCase(Locale.ROOT)
 				+ "  " + String.format(Locale.ROOT, "%.1f", currentPosition())
 				+ " / " + String.format(Locale.ROOT, "%.1f", receiver.durationSeconds()) + " s",
-			"Volume: " + Math.round(receiver.volume() * 100.0) + "%"
+			"Volume: " + formatSignedDb(receiver.volumeDb()) + " dBFS"
 				+ (receiver.isMuted() ? " (muted)" : ""),
 			"Projector: " + (receiver.videoTarget() == null ? "none"
 				: receiver.videoTarget().toShortString() + (projectorOnline() ? " online" : " offline")),
@@ -688,6 +829,28 @@ public final class AvReceiverConfigScreen extends Screen {
 	}
 
 	private void drawHoverTooltip(GuiGraphics graphics, int mouseX, int mouseY) {
+		if (tab == Tab.SPEAKERS) {
+			if (!inSpeakerList(mouseX, mouseY)) {
+				return;
+			}
+			int rowIndex = speakerScroll
+				+ (int) ((mouseY - speakerRowsTop()) / SPEAKER_ROW_HEIGHT);
+			if (rowIndex < 0 || rowIndex >= linkedSpeakers.size()) {
+				return;
+			}
+			SpeakerRow row = linkedSpeakers.get(rowIndex);
+			double distance = Math.sqrt(Vec3.atCenterOf(row.pos())
+				.distanceToSqr(Vec3.atCenterOf(receiver.getBlockPos())));
+			String title = row.name().isEmpty() ? "(unnamed)" : row.name();
+			renderWrappedTooltip(graphics,
+				title + "\nRole: " + row.role().label() + " · " + speakerTypeLabel(row.type())
+					+ "\nBlock: " + row.pos().toShortString()
+					+ "\nDistance from receiver: " + String.format(Locale.ROOT, "%.1f m", distance)
+					+ "\nLevel: " + formatSignedDb(row.levelDb()) + " dB"
+					+ "\nPing plays a sound and a particle marker at this block.",
+				mouseX, mouseY);
+			return;
+		}
 		if (tab == Tab.SETTINGS) {
 			if (libraryPathBox != null
 				&& mouseX >= libraryPathBox.getX() && mouseX < libraryPathBox.getX() + libraryPathBox.getWidth()
@@ -905,9 +1068,9 @@ public final class AvReceiverConfigScreen extends Screen {
 		setStatus("Seek requested: " + formatTime(seconds));
 	}
 
-	private void sendVolume(double value) {
+	private void sendVolume(double volumeDb) {
 		AvReceiverControlClient.sendValue(receiver.getBlockPos(),
-			AvReceiverControlPayload.Action.SET_VOLUME, value);
+			AvReceiverControlPayload.Action.SET_VOLUME_DB, volumeDb);
 	}
 
 	private void toggleMute() {
@@ -933,8 +1096,10 @@ public final class AvReceiverConfigScreen extends Screen {
 
 	private void refreshSpeakers() {
 		speakerLines.clear();
+		linkedSpeakers.clear();
 		Level level = receiver.getLevel();
 		if (level == null) {
+			speakerRowsKey = "";
 			return;
 		}
 		BlockPos center = receiver.getBlockPos();
@@ -957,10 +1122,99 @@ public final class AvReceiverConfigScreen extends Screen {
 					boolean linked = receiver.speakerTargets().contains(speaker.getBlockPos());
 					speakerLines.add((linked ? "LINKED " : "       ") + speaker.role().label() + "  "
 						+ speaker.type().id() + "  " + speaker.getBlockPos().toShortString());
+					if (linked) {
+						linkedSpeakers.add(new SpeakerRow(speaker.getBlockPos(), speaker.name(),
+							speaker.role(), speaker.type(), speaker.levelDb()));
+					}
 				}
 			}
 		}
 		speakerLines.sort(String.CASE_INSENSITIVE_ORDER);
+		linkedSpeakers.sort(Comparator.comparingInt(row -> row.role().ordinal()));
+		StringBuilder key = new StringBuilder();
+		for (SpeakerRow row : linkedSpeakers) {
+			key.append(row.pos().asLong()).append(':').append(row.name()).append(':')
+				.append(row.role().name()).append(':').append(row.type().id()).append(';');
+		}
+		speakerRowsKey = key.toString();
+	}
+
+	private void addSpeakerLevelWidgets() {
+		int visibleRows = visibleSpeakerRows();
+		int maxScroll = Math.max(0, linkedSpeakers.size() - visibleRows);
+		speakerScroll = Math.max(0, Math.min(maxScroll, speakerScroll));
+		boolean scrollable = linkedSpeakers.size() > visibleRows;
+		int labelWidth = speakerLabelWidth();
+		int pingWidth = 34;
+		int pingX = contentLeft + labelWidth;
+		int sliderX = pingX + pingWidth + 2;
+		int sliderWidth = Math.max(60,
+			contentLeft + contentWidth - (scrollable ? 6 : 0) - sliderX);
+		for (int i = 0; i < visibleRows && speakerScroll + i < linkedSpeakers.size(); i++) {
+			SpeakerRow row = linkedSpeakers.get(speakerScroll + i);
+			int rowY = speakerRowsTop() + i * SPEAKER_ROW_HEIGHT;
+			addRenderableWidget(Button.builder(Component.literal("Ping"),
+					button -> pingSpeaker(row))
+				.bounds(pingX, rowY, pingWidth, 16).build());
+			SpeakerLevelSlider slider = new SpeakerLevelSlider(sliderX, rowY, sliderWidth, 16,
+				row.pos(), row.levelDb());
+			addRenderableWidget(slider);
+			speakerLevelSliders.put(row.pos(), slider);
+		}
+	}
+
+	private int speakerRowsTop() {
+		return contentTop + 38;
+	}
+
+	private int speakerLabelWidth() {
+		return Math.max(90, Math.min(150, contentWidth * 2 / 5));
+	}
+
+	private int visibleSpeakerRows() {
+		int available = contentBottom - 20 - speakerRowsTop();
+		return Math.max(1, available / SPEAKER_ROW_HEIGHT);
+	}
+
+	private boolean inSpeakerList(double mouseX, double mouseY) {
+		return mouseX >= contentLeft && mouseX < contentLeft + contentWidth
+			&& mouseY >= speakerRowsTop() && mouseY < contentBottom - 20;
+	}
+
+	private void syncSpeakerLevels() {
+		if (speakerLevelSliders.isEmpty()) {
+			return;
+		}
+		Level level = receiver.getLevel();
+		if (level == null) {
+			return;
+		}
+		for (Map.Entry<BlockPos, SpeakerLevelSlider> entry : speakerLevelSliders.entrySet()) {
+			if (level.getBlockEntity(entry.getKey()) instanceof SpeakerBlockEntity speaker) {
+				entry.getValue().setExternal(speaker.levelDb());
+			}
+		}
+	}
+
+	private boolean hasDraggingSpeakerLevel() {
+		for (SpeakerLevelSlider slider : speakerLevelSliders.values()) {
+			if (slider.dragging) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private void pingSpeaker(SpeakerRow row) {
+		if (minecraft == null || minecraft.level == null) {
+			return;
+		}
+		minecraft.getSoundManager().play(new SimpleSoundInstance(
+			SoundEvents.NOTE_BLOCK_PLING.value(), SoundSource.BLOCKS, 1.0f, 1.0f,
+			minecraft.level.random, row.pos()));
+		SpeakerLocator.highlight(minecraft, row.pos());
+		String label = row.name().isEmpty() ? row.role().label() : row.name();
+		setStatus("Ping " + label + " @ " + row.pos().toShortString());
 	}
 
 	private void ensureReceiverProbe() {
@@ -994,6 +1248,20 @@ public final class AvReceiverConfigScreen extends Screen {
 			return false;
 		}
 		return receiver.getLevel().getBlockEntity(receiver.videoTarget()) instanceof ProjectorBlockEntity;
+	}
+
+	private String videoTargetLabel() {
+		BlockPos target = receiver.videoTarget();
+		if (target == null) {
+			return "Video: none";
+		}
+		String pos = target.toShortString();
+		if (receiver.getLevel() != null
+			&& receiver.getLevel().getBlockEntity(target) instanceof ProjectorBlockEntity projector) {
+			return "Video: " + (projector.name().isEmpty()
+				? pos : projector.name() + " (" + pos + ")") + " online";
+		}
+		return "Video: " + pos + " offline";
 	}
 
 	private double currentPosition() {
@@ -1147,6 +1415,48 @@ public final class AvReceiverConfigScreen extends Screen {
 		return String.format(Locale.ROOT, "%.2f GB", bytes / (1024.0 * 1024.0 * 1024.0));
 	}
 
+	private static double volumeToValue(double volumeDb) {
+		double clamped = AvReceiverBlockEntity.clampVolumeDb(volumeDb);
+		return (clamped - AvReceiverBlockEntity.MIN_VOLUME_DB)
+			/ (AvReceiverBlockEntity.MAX_VOLUME_DB - AvReceiverBlockEntity.MIN_VOLUME_DB);
+	}
+
+	private static double levelToValue(double levelDb) {
+		double clamped = SpeakerBlockEntity.clampLevelDb(levelDb);
+		return (clamped - SpeakerBlockEntity.MIN_LEVEL_DB)
+			/ (SpeakerBlockEntity.MAX_LEVEL_DB - SpeakerBlockEntity.MIN_LEVEL_DB);
+	}
+
+	private static String formatDb(double db) {
+		return String.format(Locale.ROOT, "%.1f", db);
+	}
+
+	private static String formatSignedDb(double db) {
+		return String.format(Locale.ROOT, "%+.1f", db);
+	}
+
+	private static String speakerTypeLabel(SpeakerType type) {
+		return switch (type) {
+			case FLOORSTANDING -> "Floorstanding";
+			case BOOKSHELF -> "Bookshelf";
+			case CENTER -> "Center";
+			case SUBWOOFER -> "Subwoofer";
+		};
+	}
+
+	private static String speakerTypeShortLabel(SpeakerType type) {
+		return switch (type) {
+			case FLOORSTANDING -> "Floor";
+			case BOOKSHELF -> "Shelf";
+			case CENTER -> "Center";
+			case SUBWOOFER -> "Sub";
+		};
+	}
+
+	private record SpeakerRow(BlockPos pos, String name, SpeakerRole role, SpeakerType type,
+							  double levelDb) {
+	}
+
 	private record FolderCacheKey(String libraryId, Path root, String folder) {
 	}
 
@@ -1233,13 +1543,13 @@ public final class AvReceiverConfigScreen extends Screen {
 		private boolean dragging;
 
 		private VolumeSlider(int x, int y, int width, int height) {
-			super(x, y, width, height, Component.empty(), receiver.volume());
+			super(x, y, width, height, Component.empty(), volumeToValue(receiver.volumeDb()));
 			updateMessage();
 		}
 
 		@Override
 		protected void updateMessage() {
-			setMessage(Component.literal("Volume " + Math.round(value * 100.0) + "%"));
+			setMessage(Component.literal("Volume " + formatSignedDb(currentDb()) + " dBFS"));
 		}
 
 		@Override
@@ -1250,7 +1560,7 @@ public final class AvReceiverConfigScreen extends Screen {
 		@Override
 		public void onClick(double mouseX, double mouseY) {
 			dragging = true;
-			pendingVolume = Float.NaN;
+			pendingVolumeDb = Double.NaN;
 			super.onClick(mouseX, mouseY);
 		}
 
@@ -1263,28 +1573,106 @@ public final class AvReceiverConfigScreen extends Screen {
 		@Override
 		public void onRelease(double mouseX, double mouseY) {
 			dragging = false;
-			pendingVolume = (float) value;
+			pendingVolumeDb = currentDb();
 			pendingVolumeUntilMillis = System.currentTimeMillis() + 1_500L;
-			sendVolume(value);
+			sendVolume(pendingVolumeDb);
 			super.onRelease(mouseX, mouseY);
 		}
 
-		private double currentValue() {
-			return value;
+		private double currentDb() {
+			return AvReceiverBlockEntity.MIN_VOLUME_DB
+				+ value * (AvReceiverBlockEntity.MAX_VOLUME_DB - AvReceiverBlockEntity.MIN_VOLUME_DB);
 		}
 
-		private void setExternal(float volume) {
+		private void setExternal(double volumeDb) {
 			if (dragging) {
 				return;
 			}
-			if (!Float.isNaN(pendingVolume)) {
-				boolean matches = Math.abs(volume - pendingVolume) <= 0.01f;
+			if (!Double.isNaN(pendingVolumeDb)) {
+				boolean matches = Math.abs(volumeDb - pendingVolumeDb) <= 0.1;
 				if (System.currentTimeMillis() < pendingVolumeUntilMillis && !matches) {
 					return;
 				}
-				pendingVolume = Float.NaN;
+				pendingVolumeDb = Double.NaN;
 			}
-			value = Math.max(0.0, Math.min(1.0, volume));
+			value = volumeToValue(volumeDb);
+			updateMessage();
+		}
+	}
+
+	private final class SpeakerLevelSlider extends AbstractSliderButton {
+		private final BlockPos speakerPos;
+		private boolean dragging;
+		private double pendingLevelDb = Double.NaN;
+		private long pendingUntilMillis;
+		private long lastSentAtMillis;
+
+		private SpeakerLevelSlider(int x, int y, int width, int height, BlockPos speakerPos,
+								   double levelDb) {
+			super(x, y, width, height, Component.empty(), levelToValue(levelDb));
+			this.speakerPos = speakerPos;
+			updateMessage();
+		}
+
+		@Override
+		protected void updateMessage() {
+			setMessage(Component.literal("Level " + formatSignedDb(currentDb()) + " dB"));
+		}
+
+		@Override
+		protected void applyValue() {
+			updateMessage();
+			if (dragging
+				&& System.currentTimeMillis() - lastSentAtMillis >= SPEAKER_LEVEL_DEBOUNCE_MS) {
+				sendCurrentLevel();
+			}
+		}
+
+		@Override
+		public void onClick(double mouseX, double mouseY) {
+			dragging = true;
+			pendingLevelDb = Double.NaN;
+			super.onClick(mouseX, mouseY);
+		}
+
+		@Override
+		protected void onDrag(double mouseX, double mouseY, double dragX, double dragY) {
+			dragging = true;
+			super.onDrag(mouseX, mouseY, dragX, dragY);
+		}
+
+		@Override
+		public void onRelease(double mouseX, double mouseY) {
+			dragging = false;
+			sendCurrentLevel();
+			super.onRelease(mouseX, mouseY);
+		}
+
+		private double currentDb() {
+			return SpeakerBlockEntity.MIN_LEVEL_DB
+				+ value * (SpeakerBlockEntity.MAX_LEVEL_DB - SpeakerBlockEntity.MIN_LEVEL_DB);
+		}
+
+		private void sendCurrentLevel() {
+			double db = SpeakerBlockEntity.clampLevelDb(currentDb());
+			lastSentAtMillis = System.currentTimeMillis();
+			pendingLevelDb = db;
+			pendingUntilMillis = lastSentAtMillis + 1_500L;
+			SpeakerLevelClient.setLevel(receiver.getBlockPos(), speakerPos, db);
+		}
+
+		private void setExternal(double levelDb) {
+			if (dragging) {
+				return;
+			}
+			if (!Double.isNaN(pendingLevelDb)) {
+				boolean matches = Math.abs(levelDb - pendingLevelDb) <= 0.05;
+				if (System.currentTimeMillis() < pendingUntilMillis && !matches) {
+					return;
+				}
+				pendingLevelDb = Double.NaN;
+			}
+			value = levelToValue(levelDb);
 			updateMessage();
 		}
 	}

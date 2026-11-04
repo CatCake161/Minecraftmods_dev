@@ -12,10 +12,10 @@
 
 目标：
 
-- 在现有 5.1 回放上加入**客户端本地**的房间声学层：直达声校准、一阶早期反射、晚期混响、距离/空气吸收、扬声器指向性。
+- 在现有 5.1 回放上加入**客户端本地**的房间声学层：直达声距离/空气吸收、一阶早期反射、晚期混响、扬声器指向性。
 - 保持接收器对媒体/播放状态的权威；声学计算不改变播放位置、音画时钟或服务端状态。
-- 可开关、可调试、可回退：没有 EFX、没有扬声器方块、没有 Seat 时仍能正常播放。
-- 为后续 M4 扬声器 5.1 路由和 Seat 皇帝位提供声学数据接口。
+- 可开关、可调试、可回退：没有 EFX、没有扬声器方块时仍能正常播放；Seat 不参与声学，只作可乘坐装饰。
+- 为后续 M4 扬声器 5.1 路由提供声学数据接口；听者始终是玩家实际耳朵位置/朝向，不做皇帝位或固定监听点。
 
 非目标：
 
@@ -74,7 +74,7 @@
    更高阶反射迅速扩散，用晚期混响统计近似更合理。
 3. **晚期混响不需要逐反射计算。** 用 EAXReverb 的 late tail 或小型 FDN 提供扩散能量即可；关键是 RT60、频响和 wet/dry 合理。
 4. **指向性应作用于“声源到反射点”的辐射角，以及必要时的听者侧角度。** 首版只做前者，并只把指向性用于反射相对增益；
-   直达声在皇帝位近似 on-axis，暂不额外滤波，避免双重处理。
+   直达声按玩家实际听者位置计算，不假设固定皇帝位；首版只把指向性用于反射相对增益，避免双重处理。
 5. **低频不能用几何声学解释。** LFE/低频的波长与房间尺寸相当，模态、驻波和边界干涉占主导；首版不建模，明确这是限制。
 6. **材质数据是近似。** Minecraft 方块没有吸声系数；用 block/tag 映射到低/中/高频吸收，必须允许调试和覆盖。
 7. **只做扬声器指向性，不做原始声源指向性。** 对话讨论的是人声/乐器等原始声源的辐射指向性；
@@ -98,25 +98,23 @@
 ```
 
 - `StreamingAudioDecoder` 通过 `-map 0:a:0 -ac 6 -ar 48000 -channel_layout 5.1 -f s16le` 调外部 FFmpeg；chunk 为 24,000 帧（0.5 s），`ChunkSink` 遇到引擎满队列会反压 FFmpeg。
-- `CinemaAudioEngine` 在当前线程创建自己的 OpenAL context，6 个 source 固定相对位置，`SOFTDeviceClock` + `SOFTSourceStartDelay` 对齐启动，`SOFTSourceLatency` 发布 `audiblePts`。
+- `CinemaAudioEngine` 在当前线程创建自己的 OpenAL context，6 个 source 默认使用虚拟相对位置；M4 可通过 `setChannelLayout()` 换成已配对扬声器相对听者的位置与增益。`SOFTDeviceClock` + `SOFTSourceStartDelay` 对齐启动，`SOFTSourceLatency` 发布 `audiblePts`。
 - 4 buffer/source × 0.5 s ≈ 2 s 缓冲；一阶反射的 80 ms 延迟完全放得下，但不能在这条链路上再加额外 lookahead。
-- `AvReceiverPlayback` 根据接收器状态开/停本地解码器，按 `MAX_DRIFT_SECONDS` 做漂移校正；`AvReceiverPlaybackManager` 目前共享一个引擎，服务端拒绝第二个接收器同时播放。
-- **当前 5.1 是虚拟布局**：6 个 source 不绑定 `SpeakerBlockEntity` 的位置/朝向；实体扬声器 5.1 路由（M4）尚未实现。因此声学层不能假设“已有物理扬声器位置”，M4 是 A2/A2d 的前置。
+- `AvReceiverPlayback` 根据接收器状态开/停本地解码器，按 `MAX_DRIFT_SECONDS` 做漂移校正；M3 起每个接收器持有独立 `CinemaAudioEngine`/OpenAL context，多个接收器可同时播放。
+- **M4 已接入物理布局**：`AvReceiverPlayback` 将已配对 `SpeakerBlockEntity` 的角色/位置/电平映射到六个 source；听者始终是玩家实际耳朵位置/朝向，已删除 Seat/皇帝位与声场校正，未配对声道回退虚拟 5.1。声学层仍不能假设房间几何/材质数据。
 - 当前没有 EFX、没有房间声学、没有 Spinorama 指向性数据。
 
 ### 4.2 当前实现约束
 
-- `CinemaAudioEngine`：6 个 mono OpenAL source，在 Minecraft 的 OpenAL device 上创建自己的 context；48 kHz；固定相对位置；`AL_INVERSE_DISTANCE_CLAMPED`；目前没有 EFX。
+- `CinemaAudioEngine`：6 个 mono OpenAL source，在 Minecraft 的 OpenAL device 上创建自己的 context；48 kHz；默认虚拟相对位置，M4 可按已配对扬声器更新位置/增益；`AL_INVERSE_DISTANCE_CLAMPED`；目前没有 EFX。
 - 该 context 目前用默认属性创建，没有请求 `ALC_MAX_AUXILIARY_SENDS`；EFX aux send 数量/默认值需要在 spike 中确认。
-- 音频线程通过 `AL.setCurrentThread(previousProcessCaps)` 复用 Minecraft 的函数指针；需要确认这种 setup 下 EFX 函数/扩展位是否可用，必要时改用当前 context 的 capabilities。
+- 音频线程优先用 `EXTThreadLocalContext.alcSetThreadContext` 设置/清空自己的 context，回退到 `alcMakeContextCurrent`；并复用 Minecraft 的函数指针。不要在音频线程调用 `alcMakeContextCurrent(NULL)`，否则会清掉 Minecraft 的全局/线程 context，导致 SoundEngine 报 `Allocate new source: Invalid operation`。
 - `MinecraftOpenAl`：复用 Minecraft 的 device；设备切换/资源重载尚未完整处理。
-- `AvReceiverBlockEntity`：目前只有媒体、播放、音量/静音、视频目标；没有声学字段。
-- `SpeakerBlockEntity`：有 `role`、`gain`、`type`；`SpeakerBlock` 有 `FACING`；落地式为两格高，block entity 在下半格。接收器→扬声器路由尚未实现（M4）。
-- `Seat` 方块尚未实现。
-- `AvReceiverPlaybackManager`：M1/M2 共用一个音频引擎；M3 才拆每接收器独立引擎。
-- 六个 source 目前都是 `AL_SOURCE_RELATIVE = AL_TRUE`，位置相对听者固定。M4 实体扬声器布局需要二选一：
-  继续用“听者相对坐标”（每帧把世界坐标转成相对坐标）或改为世界坐标 + 显式 listener pose。
-  两种方式都必须通过音频线程快照更新，不能在音频线程读世界/玩家状态。
+- `AvReceiverBlockEntity`：只有媒体、播放、音量(dBFS)/静音、视频目标；没有声学字段。
+- `SpeakerBlockEntity`：有 `role`、`levelDb`、`type`；`SpeakerBlock` 有 `FACING`；落地式为两格高，block entity 在下半格。M4 接收器→扬声器路由已接入。
+- `Seat` 方块已实现（`SeatBlock`/`SeatBlockEntity`/不可见 `SeatEntity`），可右键乘坐；**不提供皇帝位/听者参考，不参与声学**。
+- `AvReceiverPlaybackManager`：M3 每个接收器独立持有音频引擎/OpenAL context；停止或移除接收器时释放对应 context。
+- 六个 source 仍是 `AL_SOURCE_RELATIVE = AL_TRUE`；M4 每个 sync 把物理扬声器世界坐标转换为听者相对坐标并通过 `setChannelLayout()` 快照更新，音频线程不读世界/玩家状态。
 - `StreamingAudioDecoder` 的 FFmpeg stderr 没有单独消费（`redirectErrorStream(false)`，靠 `-loglevel error` 降低输出）；极端情况下仍可能因 stderr 管道填满而阻塞，后续可加 drain 线程。
 - `CinemaPlayer` 的 A/V 时钟使用音频设备时钟/PTS；声学处理不得改变 chunk 的 `startPtsSeconds` 或引入不可控 lookahead。
 
@@ -125,7 +123,11 @@
 - **A0（EFX 能力 spike）** 可以在 M2/M3 之后提前做，不依赖扬声器路由。
 - **A2（一阶反射/指向性）** 依赖 M4 的扬声器角色/位置/朝向；没有 M4 时只能用当前虚拟 6 source 布局做原型，不能验收真实指向性。
 - **A4（接收器 GUI 开关/校准）** 依赖 M4 的 Speakers/Settings 页。
-- Seat 不是绝对阻塞项，但没有 Seat 时“皇帝位”只能用玩家位置，影院校准不稳定。
+- 听者策略已确定：始终跟随玩家实际耳朵/朝向，不做 Seat 皇帝位、固定监听点或声场校正；Seat 仅是可乘坐座位。
+
+### 4.4 未来可变声道布局
+
+当前声学层仍假设 5.1。未来 mono/stereo/2.1/3.1/5.1/7.1/5.1.2/5.1.4/7.1.2/7.1.4 需要把早期反射、遮挡和指向性计算从固定 6 声道泛化到布局声道；天空/吸顶音响是吸顶式、向下发声的扬声器，声学层按天花板安装位置/朝向处理。路由/布局规划见 [CHANNEL-LAYOUTS.md](CHANNEL-LAYOUTS.md)；声学原型仍在 `acoustic-simulation` 分支开发。
 
 ## 5. 目标音频图
 
@@ -135,7 +137,7 @@ FFmpeg 5.1 PCM（48 kHz, FL/FR/FC/LFE/BL/BR）
         ▼
 [5.1 channel bus]
         │
-        ├─► 直达声校准：距离/空气吸收/遮挡/（可选）指向性
+        ├─► 直达声：距离/空气吸收/遮挡/（可选）指向性（听者按玩家实际位置）
         │
         ├─► 一阶早期反射：镜像源 + 材质吸收 + 扬声器指向性
         │        └─ 稀疏 delay/gain/low-pass taps，按 5.1 声道路由
@@ -193,9 +195,8 @@ SpeakerSpecsProfile
   is3D               是否有完整 3D/球面数据
 
 AcousticListener
-  position           座位/玩家眼睛
-  facing             房间前方/屏幕方向
-  seated             是否使用皇帝位
+  position           玩家实际眼睛位置
+  facing             玩家实际朝向（或房间前方，仅用于可视调试，不做锁定校正）
 
 ReflectionTap
   sourceChannel      0..5
@@ -259,7 +260,7 @@ RT60  ≈ 0.161 · V / (-S · ln(1 - α_avg)) // Eyring，高吸收
 - 若继续使用固定虚拟布局，则在 Java 侧按扬声器到听者的距离计算增益，并关闭/固定 OpenAL 的距离模型，二者只能选一个。
 - **空气吸收**：高频随距离衰减；可用一阶低通/高频 shelf 近似，或 EFX 的 air absorption 参数。首版可先只对反射/混响做，直达声保持中性。
 - **遮挡**：直达声 raycast；被挡住时低通 + 衰减。EFX 可用 `AL_DIRECT_FILTER`；没有 EFX 时在 Java 侧对相应声道滤波。
-- **指向性**：见 7.4。首版只用于反射相对增益；皇帝位直达声近似 on-axis。
+- **指向性**：见 7.4。首版只用于反射相对增益；直达声按玩家实际位置计算，不假设固定皇帝位或 on-axis。
 
 ### 7.3 一阶早期反射（镜像源）
 
@@ -331,7 +332,7 @@ R_p = sqrt(1 - α_p)
 
 - 首版建议 3 频带（例如 <300 Hz / 300–2k / >2k）增益 + 可选 HF shelf；用 Linkwitz-Riley 或相位兼容分频，避免分频点染色。
 - 每个反射 tap 的 `bandGains` 由该反射角查表得到；再乘材质 `sqrt(1-α)`、距离 `d/L` 和散射修正。
-- 直达声：皇帝位通常 on-axis，暂不额外滤波；如果做离轴听者，再用同一 profile 的带增益（可选）。
+- 直达声：按玩家实际听者位置/角度计算，不假设固定皇帝位；首版可不额外滤波，避免双重处理，离轴情况再用同一 profile 的带增益（可选）。
 - 不建议直接用一个“低通截止频率”概括指向性；实测曲线可能有轴向隆起/分频 lobing，3 频带是最低限度，1/3 octave/短 FIR 更忠实但更贵。
 - 如果 3 频带不够，升级到 1/3 octave 多频带（例如 10 段）或 32–64 tap FIR；CPU/延迟在 A2d 测量后决定。
 
@@ -518,12 +519,11 @@ for t in data:
 
 ### 7.7 听者 / 座位
 
-- 有 Seat 时优先使用 Seat 的皇帝位（位置 + 朝向屏幕）。
-- 没有 Seat 时用玩家眼睛位置；玩家移动时更新，但建议房间声学仍以屏幕前方为参考，避免 5.1 声场随头部转动。
-- OpenAL listener 策略需明确：
-  - 影院模式：listener 固定在皇帝位/房间坐标，朝向屏幕，source 固定在扬声器位置，声场稳定；
-  - 自由模式：listener 跟随玩家位置，但朝向仍以屏幕前方为基准，避免 5.1 声场随头部转动；适合走动。
-- 首版建议：有 Seat 时锁定皇帝位；没有 Seat 时跟随玩家位置、朝向屏幕。两种模式都只影响客户端空间化，不影响服务端。
+- **不做皇帝位、不做固定监听点、不做声场校正**。Seat 只是可乘坐装饰，不参与音频。
+- listener 使用玩家实际耳朵位置和实际朝向；玩家走动或转头时按物理扬声器方向重新计算，因此走出影院后空间定位仍然正确。
+- 不把 listener 锁定到屏幕/座位坐标，也不在玩家离开影院时重新居中或旋转 5.1 声场；这些做法会让离场听者的定位明显错误。
+- 声学反射/混响也以实际玩家位置为听者；若未来需要房间统计，可使用房间中心作为近似，但不能改变直达声的听者位置。
+- 听者策略只影响客户端空间化，不影响服务端。
 
 ### 7.8 线程、延迟、性能
 
@@ -536,7 +536,7 @@ for t in data:
 - 1/3 octave 多频带或 32–64 tap FIR 会明显增加成本，先做 3 频带并实测。
 - 参数平滑：增益/滤波系数一阶平滑；延迟变化交叉淡化。
 - EFX 生命周期：context/reset/device switch 时重建 effect/slot/filter；失败则禁用混响，不影响干声。
-- M3 每接收器独立引擎后，需要决定共享 context + 每接收器 slot，还是每引擎独立 context；首版先按单引擎设计。
+- M3 已选择每接收器独立引擎/context；声学 effect/slot 也按接收器 context 隔离。后续若要跨接收器共享 aux slot，需要重新评估资源与隔离。
 
 ## 8. 参数默认与 UI
 
@@ -568,7 +568,7 @@ UI 归属：
 | 阶段 | 内容 | 依赖 | 验收 |
 |---|---|---|---|
 | A0 | EFX/EAXReverb 能力 spike：aux send、wet return、设备布局、CPU/延迟、reset | 无（可在 M2/M3 后提前） | 能听到/关闭混响，无 OpenAL 错误，干声不受影响 |
-| A1 | 声学数据模型、材质映射、房间检测、直达声距离/空气吸收 | M4 扬声器位置/Seat 更佳 | dump 出正确的房间尺寸/RT60；干声电平一致 |
+| A1 | 声学数据模型、材质映射、房间检测、直达声距离/空气吸收 | M4 扬声器位置更佳 | dump 出正确的房间尺寸/RT60；干声电平一致 |
 | A1d | Spinorama 数据管线：选 4 类代表型号、抓取 H/V（或 3D）、归一化/降采样、生成资源和 metadata | 无（可提前） | 每类有一张可追溯的 speaker specs 数据表；来源/许可证/质量记录完整 |
 | A1e | 数据许可决策：CC BY-NC-SA 4.0 非商业/相同方式共享，或改宽松数据/用户本地导入 | A1d | 发布包与仓库的许可证/attribution 明确，不违反 NC/SA |
 | A2 | 一阶镜像源早期反射 + 5.1 路由 + 平滑 | M4 | 矩形房间反射延迟/方向合理；开关可辨；无爆音 |
@@ -582,12 +582,12 @@ UI 归属：
 
 - 几何/单元：镜像源延迟与增益、房间体积/表面积、Sabine/Eyring、指向性插值、FDN 稳定性。
 - 指向性数据：Spinorama 表归一化/角度方向/插值正确；3 频带近似与 1/3 octave/FIR 的 A/B；profile 来源/许可证记录完整。
-- 游戏内：10×6×4 m 与 20×10×6 m 矩形房间；吸声/反射材质切换；扬声器旋转；听者移动；Seat 皇帝位。
+- 游戏内：10×6×4 m 与 20×10×6 m 矩形房间；吸声/反射材质切换；扬声器旋转；听者移动（含走出影院）；Seat 仅验证可乘坐，不参与声学。
 - A/B：干声、仅早期反射、仅晚期混响、两者；确认没有双早期反射/梳状滤波。
 - A/V：播放/暂停/seek 后无漂移；音频时钟/PTS 不变；视频帧选择不受影响。
 - 性能：4K HEVC/AV1 + BSL + 声学；无 audio dropout；CPU/内存记录。
 - 兼容：EFX 不可用、设备切换、资源重载、世界卸载、M3 多接收器。
-- 边界：室外/非矩形/无天花板、无扬声器、LFE-only、单声道/立体声源、玩家远离皇帝位。
+- 边界：室外/非矩形/无天花板、无扬声器、LFE-only、单声道/立体声源、玩家远离影院/背对屏幕。
 - 最终由用户游戏内验收，不以截图/日志代替听感。
 
 ## 11. 风险与未决
@@ -600,9 +600,9 @@ UI 归属：
 - **Spinorama 数据质量/角度**：不同测量来源、平滑、测量轴、缺失角度/低频数据会影响结果；H/V 两切面不能完全代表 3D 指向性，分频 lobing 可能被简化。
 - **Spinorama 许可**：默认 CC BY-NC-SA 4.0（非商业/相同方式共享），与项目 CC0 代码不同；发布前必须做许可决策/attribution，不能默认打包。
 - **房间检测**：矩形假设；非矩形/开放空间可能误判；需要 fallback 和调试可视化。
-- **听者策略**：影院锁定皇帝位 vs. 玩家自由移动；需要产品决策。
+- **听者策略（已决定）**：不做影院锁定/皇帝位/声场校正；listener 跟随玩家实际耳朵和朝向，保证玩家在影院外也有正确的空间定位。
 - **5.1 vs. 耳机**：EAXReverb wet return 在 stereo/HRTF/5.1 设备上的表现不同；可能需要 FDN 或多次 send。
-- **多接收器（M3）**：共享 context/effect slot 还是每引擎独立；影响资源与声学隔离。
+- **多接收器（M3）**：已改为每接收器独立 context/effect slot；多接收器同时播放的 CPU/设备性能仍需实测。
 - **低频管理**：单低音炮的房间模态未建模；后续需要多低音炮/模态 EQ/测量 RIR。
 - **性能**：Java DSP + EFX + 4K 视频 + shader 的叠加需要实测；音频线程不能卡。
 - **设置归属**：声学开关/电平建议存接收器 block entity；几何是客户端本地。需确认是否要 LAN 同步。
@@ -618,6 +618,6 @@ UI 归属：
 
 1. 先做 **A1d Spinorama 数据 spike**（不依赖 M4）：选 4 类代表型号，抓取 H/V（或 3D）数据，归一化/降采样，确认格式、质量、source/license；同时做 **A1e 许可决策**。
 2. 做 **A0 EFX spike**（不依赖 M4）：确认 EAXReverb 在自定义 context 中可用，验证 aux send/wet return/reset，记录 OpenAL Soft 1.23.1 行为。
-3. M4 扬声器路由/Seat 完成后，再做 **A1–A2**：房间检测 + 一阶镜像源 + 5.1 路由。
+3. M4 扬声器路由完成后，再做 **A1–A2**：房间检测 + 一阶镜像源 + 5.1 路由。
 4. 做 **A2d–A4**：Spinorama 指向性渲染、遮挡、晚期混响参数映射；用 A/B 试听决定 early/late 默认电平。
 5. 如果 EFX spike 失败，改用小型 FDN 或暂时只做早期反射 + 无混响；不要为了混响阻塞 M4。

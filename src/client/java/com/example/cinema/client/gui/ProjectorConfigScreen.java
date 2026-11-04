@@ -2,17 +2,21 @@ package com.example.cinema.client.gui;
 
 import com.example.cinema.block.entity.AvReceiverBlockEntity;
 import com.example.cinema.block.entity.ProjectorBlockEntity;
+import com.example.cinema.block.entity.ScreenBlockEntity;
 import com.example.cinema.client.config.CinemaClientConfig;
 import com.example.cinema.client.media.AvReceiverPlayback;
 import com.example.cinema.client.media.AvReceiverPlaybackManager;
 import com.example.cinema.client.media.CinemaPlayer;
+import com.example.cinema.client.network.DeviceNameClient;
 import com.example.cinema.client.network.ProjectorSettingsClient;
 import com.example.cinema.client.render.ProjectorOptics;
 import com.example.cinema.client.render.ScreenGeometry;
+import com.example.cinema.util.CinemaNames;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -38,6 +42,7 @@ public final class ProjectorConfigScreen extends Screen {
 	private static final double DEFAULT_FOCUS_DISTANCE = 8.0;
 	private static final double DEFAULT_BRIGHTNESS = 1.0;
 	private static final double DEFAULT_AMBIENT_WASH = 0.18;
+	private static final long NAME_SAVE_DEBOUNCE_MS = 250L;
 
 	private final ProjectorBlockEntity projector;
 	private boolean throwAuto;
@@ -69,6 +74,13 @@ public final class ProjectorConfigScreen extends Screen {
 	private int contentBottom;
 
 	private final List<String> statusLines = new ArrayList<>();
+	private EditBox projectorNameBox;
+	private EditBox screenNameBox;
+	private boolean projectorNameDirty;
+	private boolean screenNameDirty;
+	private long projectorNameDirtyAtMillis;
+	private long screenNameDirtyAtMillis;
+	private boolean syncingNames;
 	private ProjectorSlider throwSlider;
 	private ProjectorSlider focusSlider;
 	private ProjectorSlider keystoneVerticalDegreesSlider;
@@ -110,7 +122,7 @@ public final class ProjectorConfigScreen extends Screen {
 	protected void init() {
 		super.init();
 		panelWidth = Math.min(width - 12, 420);
-		panelHeight = Math.min(height - 12, 220);
+		panelHeight = Math.min(height - 12, 250);
 		left = (width - panelWidth) / 2;
 		top = (height - panelHeight) / 2;
 		contentLeft = left + 10;
@@ -126,7 +138,29 @@ public final class ProjectorConfigScreen extends Screen {
 
 		int half = (contentWidth - 4) / 2;
 		int rightX = contentLeft + half + 4;
-		int row1 = top + 54;
+		int nameY = top + 56;
+
+		projectorNameBox = new EditBox(font, contentLeft + 62, nameY, half - 62, 16,
+			Component.literal("Projector name"));
+		projectorNameBox.setMaxLength(CinemaNames.MAX_LENGTH);
+		projectorNameBox.setHint(Component.literal("Projector name"));
+		syncingNames = true;
+		projectorNameBox.setValue(projector.name());
+		syncingNames = false;
+		projectorNameBox.setResponder(value -> onNameChanged(true));
+		addRenderableWidget(projectorNameBox);
+
+		screenNameBox = new EditBox(font, rightX + 46, nameY, half - 46, 16,
+			Component.literal("Screen name"));
+		screenNameBox.setMaxLength(CinemaNames.MAX_LENGTH);
+		syncingNames = true;
+		screenNameBox.setValue(linkedScreenName());
+		syncingNames = false;
+		screenNameBox.setResponder(value -> onNameChanged(false));
+		addRenderableWidget(screenNameBox);
+		syncNameWidgets();
+
+		int row1 = top + 78;
 		int row2 = row1 + 20;
 		int row3 = row2 + 20;
 
@@ -204,7 +238,7 @@ public final class ProjectorConfigScreen extends Screen {
 			},
 			value -> String.format(Locale.ROOT, "Wash %.0f%%", value * 100.0));
 
-		int simY = top + 130;
+		int simY = top + 152;
 		int simWidth = (contentWidth - 6) / 4;
 		simFocusButton = addSimButton(contentLeft, simY, simWidth, "Focus",
 			() -> draftSimFocus, value -> draftSimFocus = value);
@@ -353,8 +387,11 @@ public final class ProjectorConfigScreen extends Screen {
 			ScreenGeometry screen = optics.screen();
 			screenDistance = optics.lens().distanceTo(optics.screenCenter());
 			resolvedThrowRatio = optics.throwRatio();
-			statusLines.add(String.format(Locale.ROOT, "Screen: %d×%d @ %s · %.1f m · linked",
-				screen.width(), screen.height(), screen.master().toShortString(), screenDistance));
+			String screenName = linkedScreenName();
+			String screenLabel = screenName.isEmpty() ? "" : screenName + " · ";
+			statusLines.add(String.format(Locale.ROOT, "Screen: %s%d×%d @ %s · %.1f m · linked",
+				screenLabel, screen.width(), screen.height(), screen.master().toShortString(),
+				screenDistance));
 			if (throwAuto && throwSlider != null) {
 				throwSlider.setActual(resolvedThrowRatio);
 			}
@@ -386,11 +423,12 @@ public final class ProjectorConfigScreen extends Screen {
 			return;
 		}
 		String state = receiver.state().name().toLowerCase(Locale.ROOT);
+		String receiverLabel = receiver.name().isEmpty() ? "" : receiver.name() + " · ";
 		if (player != null) {
-			statusLines.add(String.format(Locale.ROOT, "AV: %s · %d×%d",
-				state, player.width(), player.height()));
+			statusLines.add(String.format(Locale.ROOT, "AV: %s%s · %d×%d",
+				receiverLabel, state, player.width(), player.height()));
 		} else {
-			statusLines.add("AV: " + state + " · no signal");
+			statusLines.add("AV: " + receiverLabel + state + " · no signal");
 		}
 	}
 
@@ -404,6 +442,7 @@ public final class ProjectorConfigScreen extends Screen {
 		if (minecraft != null && minecraft.level != null
 			&& minecraft.level.getGameTime() % 10L == 0L) {
 			refreshStatus();
+			syncNameWidgets();
 		}
 	}
 
@@ -426,7 +465,10 @@ public final class ProjectorConfigScreen extends Screen {
 			graphics.drawString(font, truncate(line, contentWidth), contentLeft,
 				top + 22 + i * 11, color, false);
 		}
-		graphics.drawString(font, "Simulation", contentLeft, top + 118, 0xB8B8B8, false);
+		int half = (contentWidth - 4) / 2;
+		graphics.drawString(font, "Projector", contentLeft, top + 60, 0xB8B8B8, false);
+		graphics.drawString(font, "Screen", contentLeft + half + 4, top + 60, 0xB8B8B8, false);
+		graphics.drawString(font, "Simulation", contentLeft, top + 140, 0xB8B8B8, false);
 		if (panelHeight >= 200) {
 			graphics.drawString(font, "Changes apply immediately. Close when done.",
 				contentLeft, contentBottom - 14, 0x707070, false);
@@ -440,6 +482,23 @@ public final class ProjectorConfigScreen extends Screen {
 	}
 
 	private void drawHoverTooltip(GuiGraphics graphics, int mouseX, int mouseY) {
+		if (projectorNameBox != null && inBox(mouseX, mouseY, projectorNameBox.getX(),
+			projectorNameBox.getY(), projectorNameBox.getWidth(), projectorNameBox.getHeight())) {
+			renderWrappedTooltip(graphics,
+				"Custom projector name. It is shown in status lines and commissioning labels. "
+					+ "Max " + CinemaNames.MAX_LENGTH + " characters.",
+				mouseX, mouseY);
+			return;
+		}
+		if (screenNameBox != null && inBox(mouseX, mouseY, screenNameBox.getX(),
+			screenNameBox.getY(), screenNameBox.getWidth(), screenNameBox.getHeight())) {
+			renderWrappedTooltip(graphics,
+				hasLinkedScreen()
+					? "Custom name for the linked screen. It is applied to every connected screen cell."
+					: "Link a screen with the Cinema Cable before naming it.",
+				mouseX, mouseY);
+			return;
+		}
 		if (powerButton != null && inBox(mouseX, mouseY, powerButton.getX(), powerButton.getY(),
 			powerButton.getWidth(), powerButton.getHeight())) {
 			renderWrappedTooltip(graphics,
@@ -461,7 +520,7 @@ public final class ProjectorConfigScreen extends Screen {
 				mouseX, mouseY);
 			return;
 		}
-		if (mouseY >= top + 126 && mouseY < top + 150
+		if (mouseY >= top + 146 && mouseY < top + 170
 			&& mouseX >= contentLeft && mouseX < contentLeft + contentWidth) {
 			renderWrappedTooltip(graphics,
 				"Simulation toggles only affect rendering: focus blur, keystone warp, ambient wash, and lamp warm-up. Changes apply immediately.",
@@ -496,6 +555,85 @@ public final class ProjectorConfigScreen extends Screen {
 		if (dirty && System.currentTimeMillis() - lastChangeMillis >= 200L) {
 			flushNow();
 		}
+		long now = System.currentTimeMillis();
+		if ((projectorNameDirty && now >= projectorNameDirtyAtMillis)
+			|| (screenNameDirty && now >= screenNameDirtyAtMillis)) {
+			flushNames();
+		}
+	}
+
+	private void onNameChanged(boolean projectorName) {
+		if (syncingNames) {
+			return;
+		}
+		long due = System.currentTimeMillis() + NAME_SAVE_DEBOUNCE_MS;
+		if (projectorName) {
+			projectorNameDirty = true;
+			projectorNameDirtyAtMillis = due;
+		} else {
+			screenNameDirty = true;
+			screenNameDirtyAtMillis = due;
+		}
+	}
+
+	private void flushNames() {
+		if (projectorNameDirty && projectorNameBox != null) {
+			projectorNameDirty = false;
+			DeviceNameClient.setProjectorName(projector.getBlockPos(), projectorNameBox.getValue());
+		}
+		if (screenNameDirty) {
+			screenNameDirty = false;
+			if (screenNameBox != null && hasLinkedScreen()) {
+				DeviceNameClient.setLinkedScreenName(projector.getBlockPos(),
+					screenNameBox.getValue());
+			}
+		}
+	}
+
+	private boolean hasLinkedScreen() {
+		Minecraft client = Minecraft.getInstance();
+		return client.level != null && projector.screenPos() != null
+			&& client.level.getBlockEntity(projector.screenPos()) instanceof ScreenBlockEntity;
+	}
+
+	private String linkedScreenName() {
+		Minecraft client = Minecraft.getInstance();
+		if (client.level == null || projector.screenPos() == null) {
+			return "";
+		}
+		return client.level.getBlockEntity(projector.screenPos()) instanceof ScreenBlockEntity screen
+			? screen.name() : "";
+	}
+
+	private void syncNameWidgets() {
+		if (projectorNameBox != null && !projectorNameBox.isFocused() && !projectorNameDirty
+			&& !projectorNameBox.getValue().equals(projector.name())) {
+			syncingNames = true;
+			projectorNameBox.setValue(projector.name());
+			syncingNames = false;
+		}
+		if (screenNameBox == null) {
+			return;
+		}
+		boolean linked = hasLinkedScreen();
+		screenNameBox.setEditable(linked);
+		screenNameBox.setHint(Component.literal(linked ? "Screen name" : "Screen not linked"));
+		if (!linked) {
+			screenNameDirty = false;
+			if (!screenNameBox.getValue().isEmpty()) {
+				syncingNames = true;
+				screenNameBox.setValue("");
+				syncingNames = false;
+			}
+			return;
+		}
+		String actual = linkedScreenName();
+		if (!screenNameBox.isFocused() && !screenNameDirty
+			&& !screenNameBox.getValue().equals(actual)) {
+			syncingNames = true;
+			screenNameBox.setValue(actual);
+			syncingNames = false;
+		}
 	}
 
 	private void flushNow() {
@@ -517,6 +655,7 @@ public final class ProjectorConfigScreen extends Screen {
 		}
 		closing = true;
 		flushNow();
+		flushNames();
 		super.onClose();
 	}
 

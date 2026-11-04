@@ -2,6 +2,7 @@ package com.example.cinema.block.entity;
 
 import com.example.cinema.Cinema;
 import com.example.cinema.block.ProjectorBlock;
+import com.example.cinema.util.CinemaNames;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.HolderLookup;
@@ -9,10 +10,12 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.Objects;
@@ -53,6 +56,7 @@ public class ProjectorBlockEntity extends BlockEntity {
 	private boolean simKeystone = true;
 	private boolean simWash = true;
 	private boolean simWarmup = true;
+	private String name = "";
 	private BlockPos receiverPos;
 	/** Explicitly linked screen block; {@code null} means the projector has no screen. */
 	private BlockPos screenPos;
@@ -82,6 +86,15 @@ public class ProjectorBlockEntity extends BlockEntity {
 		} else if (lampLevel > target) {
 			lampLevel = Math.max(target, lampLevel - step);
 		}
+	}
+
+	public String name() {
+		return name;
+	}
+
+	public void setName(String value) {
+		name = CinemaNames.sanitize(value);
+		markUpdated();
 	}
 
 	/** The receiver that currently feeds this projector, or {@code null}. */
@@ -139,9 +152,32 @@ public class ProjectorBlockEntity extends BlockEntity {
 		if (level.isClientSide || screenPos == null || level.getGameTime() % 20L != 0L) {
 			return;
 		}
-		if (level.isLoaded(screenPos) && !level.getBlockState(screenPos).is(Cinema.SCREEN_BLOCK)) {
-			setScreenPos(null);
+		if (!level.isLoaded(screenPos)) {
+			return;
 		}
+		if (!level.getBlockState(screenPos).is(Cinema.SCREEN_BLOCK)) {
+			setScreenPos(null);
+			return;
+		}
+
+		BlockPos owner = ScreenBlockEntity.findOwner(level, screenPos);
+		if (owner == null) {
+			ScreenBlockEntity.applyOwnerToConnected(level, screenPos, worldPosition);
+			return;
+		}
+		if (owner.equals(worldPosition) || !level.isLoaded(owner)) {
+			return;
+		}
+		if (level.getBlockEntity(owner) instanceof ProjectorBlockEntity other
+			&& other.screenPos() != null
+			&& ScreenBlockEntity.isSameScreen(level, other.screenPos(), screenPos)) {
+			Cinema.LOGGER.info("cinema pairing: cleared duplicate projector {} from screen {}",
+				worldPosition.toShortString(), screenPos.toShortString());
+			setScreenPos(null);
+			return;
+		}
+		// The stored owner is stale (removed projector or re-linked elsewhere).
+		ScreenBlockEntity.applyOwnerToConnected(level, screenPos, worldPosition);
 	}
 
 	/** World-space lens center. The lens sits just in front of the block face. */
@@ -301,6 +337,28 @@ public class ProjectorBlockEntity extends BlockEntity {
 	}
 
 	@Override
+	public void setRemoved() {
+		// Chunk unload also calls setRemoved(); only release the screen group
+		// when the projector block itself was actually broken.
+		if (wasActuallyRemoved() && screenPos != null && level.isLoaded(screenPos)) {
+			ScreenBlockEntity.clearOwnerFor(level, screenPos, worldPosition);
+		}
+		super.setRemoved();
+	}
+
+	private boolean wasActuallyRemoved() {
+		if (level == null || level.isClientSide) {
+			return false;
+		}
+		ChunkPos chunkPos = new ChunkPos(worldPosition);
+		LevelChunk chunk = level.getChunkSource().getChunkNow(chunkPos.x, chunkPos.z);
+		if (chunk == null) {
+			return false;
+		}
+		return !chunk.getBlockState(worldPosition).is(Cinema.PROJECTOR_BLOCK);
+	}
+
+	@Override
 	protected void saveAdditional(CompoundTag tag, HolderLookup.Provider registries) {
 		super.saveAdditional(tag, registries);
 		tag.putDouble("throwRatio", throwRatio);
@@ -314,6 +372,7 @@ public class ProjectorBlockEntity extends BlockEntity {
 		tag.putBoolean("simKeystone", simKeystone);
 		tag.putBoolean("simWash", simWash);
 		tag.putBoolean("simWarmup", simWarmup);
+		tag.putString("name", name);
 		if (receiverPos != null) {
 			tag.putLong("receiverPos", receiverPos.asLong());
 		}
@@ -348,6 +407,7 @@ public class ProjectorBlockEntity extends BlockEntity {
 		simKeystone = !tag.contains("simKeystone") || tag.getBoolean("simKeystone");
 		simWash = !tag.contains("simWash") || tag.getBoolean("simWash");
 		simWarmup = !tag.contains("simWarmup") || tag.getBoolean("simWarmup");
+		name = CinemaNames.sanitize(tag.getString("name"));
 		receiverPos = tag.contains("receiverPos") ? BlockPos.of(tag.getLong("receiverPos")) : null;
 		screenPos = tag.contains("screenPos") ? BlockPos.of(tag.getLong("screenPos")) : null;
 	}

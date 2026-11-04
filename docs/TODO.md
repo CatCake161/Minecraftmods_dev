@@ -22,6 +22,7 @@
 - [x] M2 投影仪 GUI 光学/wash 编辑：投掷比（自动/手动）、焦距（自动/手动）、梯形、亮度、wash、Power ON/OFF；改动即保存（按钮立即/滑块 debounce，Close/Esc flush）
 - [x] GUI 只放光学/灯泡/wash/配对；不放解码、播放、文件选择
 - [x] 投影仪 GUI 游戏内验收：scale 1..4、边界值、自动投掷比/焦距、改动即保存/Close、拆投影仪/屏幕、Sodium/Iris
+- [x] 修复 throw auto 裁切：按屏幕四角与视频宽高比拟合，保留约 2% 边缘余量，适配斜向安装
 - [x] M3 GUI 内物理模拟独立开关：对焦模糊、梯形、环境光洗白、灯泡预热；block entity 持久化/同步，渲染路径跳过
 - [x] M3 验收：四个开关分别关闭后画面效果确实变化；专用服务器同步
 - [ ] 改进对焦模糊的物理观感（当前 mipmap/LOD 近似一般；后续可评估多级采样/卷积/景深，不阻塞）
@@ -35,8 +36,11 @@
 - [x] 验收 Speaker GUI 配对状态：标题显示 `Receiver: linked @ pos` / `Receiver: not linked` / `Receiver: link missing @ pos`，无绿色高亮
 - [ ] 修复 64×64 屏幕配对/尺寸显示错误：`maxSize=64` 时填充 4096 方块后投影仪能配对但尺寸/坐标错误；复现时记录 GUI 整行、fill 坐标、投影仪坐标/朝向与屏幕 facing
 - [ ] 修复 BSL 下 ambient wash 某些值导致画面异常：确认是白色 overlay 的 bloom/exposure 问题，还是 alpha 曲线问题
-- [ ] 遥控器工具：在观众席远程调整投影仪/接收器
+- [ ] 遥控器绑定与使用：绑定投影仪/接收器后，在观众席远程打开同一 GUI，调整光学/音量/播放/配对；明确绑定方式、距离/视线/维度限制、潜行解绑与多人权限
+- [ ] 远程设备配对：不跑到设备旁也能建立/解除投影仪↔屏幕、接收器↔投影仪、接收器↔扬声器；候选方案包括遥控器选择目标、接收器 GUI 内选择附近设备、或专用“对码器”；保留线材作为近距物理配对 fallback
 - [x] 配对工具（线材/配对器）：投影仪↔屏幕、接收器↔投影仪、接收器↔扬声器（已通过游戏内验收；自动配对已取消）
+- [x] 修复同一屏幕被多个投影仪占用：屏幕组记录唯一 `ownerProjector`；第二投影仪配对被拒绝；拆投影仪/解除连接/改配释放；旧存档重复链接自动清理
+- [x] 设备命名系统：投影仪和 AV 接收器在各自 GUI 顶部编辑名称；屏幕名称在投影仪 GUI 编辑，写入所有连通屏幕格；名称服务端持久化/同步，并显示在状态行、命令诊断和关联设备 GUI
 - [x] 验收 AV 接收器媒体库缓存：首次打开扫描/探测，关闭再打开不重复扫描；Refresh 强制刷新；添加/移除库后缓存失效
 - [ ] 风扇声（随功率变化）
 - [ ] 屏幕增益/离轴变暗
@@ -50,11 +54,16 @@
 - [x] AV Receiver 方块 + block entity（状态字段/持久化/同步骨架）
 - [x] M1：解码/播放状态/音画时钟从全局 `CinemaPlayer` 迁入接收器
 - [x] M1：接收器向投影仪输出视频信号（投影仪不再直接持有播放器）
-- [ ] 接收器向扬声器分配 5.1 声道（扬声器不做解码；M4）
+- [x] 接收器向扬声器分配 5.1 声道（扬声器不做解码；M4 已实现，待游戏内验收）
 - [x] 接收器 GUI 信息架构与页签规格（媒体/扬声器/信号/设置，见 AV-RECEIVER.md §10）
 - [x] M2 接收器 GUI：媒体文件、播放/暂停/seek、音量/静音、信号/设置页
-- [ ] 接收器 GUI 延迟/混响设置（M4）
-- [ ] 每接收器独立播放器/状态（M3）
+- [ ] 接收器 GUI 延迟/混响设置（M4 后续）
+- [x] 每接收器独立播放器/状态/音频引擎（M3，已实现，待游戏内验收）
+- [ ] M3 验收：两个接收器同时播放/暂停/seek/音量/静音互不影响；第二个接收器不再被拒绝
+- [ ] M4 验收：六只已配对扬声器按 FL/FR/FC/LFE/BL/BR 角色出声；接收器 Speakers 页可调每只扬声器电平；未配对声道回退虚拟 5.1；玩家在影院内外移动时空间定位仍正确（不依赖 Seat/皇帝位）
+- [x] M4 后续修正：删除皇帝位/固定听者参考；听者改为玩家实际耳朵/朝向；Seat 改为可右键乘坐的普通座位
+- [x] 接收器电平/单位：Speakers 页每扬声器 `Level`（-12.0..+6.0 dB）服务端同步；主音量改用 dBFS（-60..+6），命令/GUI/诊断统一
+- [x] Speakers 页滚动：同一角色允许多只扬声器链接，超过可视行数时滚轮查看并显示滚动条；标题不再用 `linked N/6` 限制显示
 - [x] 固定媒体库 `cinema/media/` + 相对 key + SHA-256/时长
 - [x] M2 外部媒体库：Settings 添加/移除文件夹；`lib/<id>/...` key；Media 页切换；记住上次库/文件夹
 - [x] M2 接收器 GUI 媒体列表选择（双击 / Play file）
@@ -75,25 +84,43 @@
 
 ## P1：扬声器 / 座位
 
-- [x] Speaker 四种箱体（落地式/书架式/中置/低音炮）+ 角色限制（右键手动循环；接收器分配未接）
+- [x] Speaker 四种箱体（落地式/书架式/中置/低音炮）+ 角色限制（GUI 选择；接收器 5.1 路由已接入）
 - [x] 落地式两格高、书架式一格高；上下半格联动放置/破坏，只掉一个物品
-- [ ] Seat 方块 + 皇帝位坐标
-- [x] 接收器-扬声器配对与距离计算（双向链接；实际 5.1 音频路由仍见“接收器向扬声器分配 5.1 声道”）
-- [ ] 立体声 upmix / 5.1 downmix 纯函数 + 测试
+- [x] Seat 方块可乘坐（空手右键生成不可见 seat vehicle，潜行/下车键离开）；不参与声场校准、不做皇帝位或听者参考
+- [x] 修复座椅第一人称视角平滑/滞后：`LocalPlayerSeatMixin` 在乘坐 `SeatEntity` 时让相机 yaw 使用实时 body yaw，不再走载具的插值 head yaw
+- [x] 接收器-扬声器配对与距离计算（双向链接；M4 已参与实际 5.1 音频路由）
+- [x] 扬声器命名系统：Speaker GUI 可编辑名称（最长 32 字符，服务端同步）；Receiver Speakers 列表优先显示自定义名称，未命名时显示角色/箱体/坐标
+- [x] Speaker 定位：Receiver Speakers 每行 `Ping` 按钮播放定位音并生成 8 秒粒子光柱；悬停行显示完整名称/角色/坐标/与接收器距离/Level
+- [x] 立体声自动上混 5.1：源 ≤2 声道时 FFmpeg 输出 stereo，Java 上混为 FL/FR 原样、FC=(L+R)/2、LFE=120 Hz 低通中置、BL/BR=±(L-R)/2
+- [ ] 5.1 downmix 纯函数 + 测试
 - [ ] 扬声器遮挡 / 材料 low-pass
 - [ ] EFX 房间混响参数化（仅晚期尾音；早期反射见下方“音频计算 / 房间声学”）
 - [ ] LFE/低频管理
 
+## P2：可变声道布局 / 天空声道（规划）
+
+> 详细方案见 [CHANNEL-LAYOUTS.md](design/CHANNEL-LAYOUTS.md)。本阶段不改当前固定 5.1。
+
+- [x] L0 规划文档：布局列表（mono/stereo/2.1/3.1/5.1/7.1/5.1.2/5.1.4/7.1.2/7.1.4）、声道标签、天空/吸顶音响方向、分阶段计划
+- [ ] L1 `AudioLayout` / 声道枚举 / 上混下混矩阵纯函数 + 单元测试（含 LFE 低通、7.1 侧/后区分）
+- [ ] L2 `CinemaAudioEngine` 动态 source 数、`AudioChunk` 携带布局；现有 5.1 零回归
+- [ ] L3 接收器布局选择（AUTO/显式）+ 7.1 `SL/SR` 角色 + 缺失声道 fallback/状态显示
+- [ ] L4 天空声道 `TFL/TFR/TRL/TRR` + 虚拟顶部位置 + 5.1.2/5.1.4/7.1.2/7.1.4
+- [ ] L5 天空/吸顶音响（`ceiling_speaker`，吸顶向下发声）：方块/模型/放置/角色限制/GUI
+- [ ] L6 布局 GUI 打磨、自动角色建议、多接收器/4K/BSL 下的 7.1.4 性能与听感验收
+- [ ] L7 声学模拟接入：高度声道/指向性/反射加入 `acoustic-simulation` 分支，听感验收后再合并
+- [ ] 验证 FFmpeg `5.1.2/5.1.4/7.1.2/7.1.4` 的 channel layout 名称、输出顺序与可用性；不可用时准备 `pan`/自定义映射
+
 ## P1：音频计算 / 房间声学（M4 后）
 
 > 方案、可行性/声学判断见 [AUDIO-ACOUSTICS.md](design/AUDIO-ACOUSTICS.md)。
-> 依赖 M4 扬声器路由/Seat；A0 EFX spike、A1d Spinorama 数据/许可可提前做。
+> 依赖 M4 扬声器路由；A0 EFX spike、A1d Spinorama 数据/许可可提前做。
 
 - [x] Spike：`cinema/speaker_specs/profiles/` 本地 JSON 导入/客户端 GUI；低音炮内置 omni + cardioid；空手右键扬声器打开 per-speaker GUI，角色选择也在 GUI（C2S `SpeakerRolePayload`）；简单参数 range/SPL gain 可编辑；`assignments.json` 按维度+坐标保存；measured profile 读取水平/垂直指向性 + 轴上响应三组数据；打开 GUI 不暂停游戏
 - [ ] A0 EFX/EAXReverb spike：在自定义 OpenAL context 中检测 `ALC_EXT_EFX`/`AL_EXT_EFX`；创建 aux slot；验证 per-source send、wet return、stereo/5.1/HRTF 设备、reset/设备切换、CPU/延迟
 - [ ] A0b EFX 不可用回退：禁用 late reverb 或最小 Java FDN；干声/播放不受影响
 - [ ] A0c 决策门：按 spike 结果选择 EAXReverb late tail / FDN / 无混响，并把结论回写 AUDIO-ACOUSTICS.md
-- [ ] A1 声学数据模型：房间平面/包围盒、体积/表面积、材质吸收、扬声器位置/朝向/高度、听者/Seat
+- [ ] A1 声学数据模型：房间平面/包围盒、体积/表面积、材质吸收、扬声器位置/朝向/高度、玩家听者位置/朝向
 - [ ] A1b 材质映射：block/tag → 低/中/高频吸收 + 散射；屏幕/羊毛/地毯/木板/石砖/玻璃/树叶/水默认值；数据驱动
 - [ ] A1c 房间检测：6 方向 raycast + 凸盒验证；缓存/失效；非矩形/室外 fallback
 - [ ] A1d Spinorama 数据管线：申请 API Bearer key（`pierre@spinorama.org`，key 仅本地 env）；实现 Plotly `bdata` 解码 + `SPL Horizontal`/`SPL Vertical`/`On Axis` → `speaker_specs` 转换器；选 4 类代表型号；用轴上响应归一化/1/3 octave 降采样/量化；生成 speaker specs 资源与 metadata（source/version/changes/quality/license）
@@ -105,7 +132,7 @@
 - [ ] A3 晚期混响：EAXReverb 仅 late tail（`REFLECTIONS_GAIN=0`、`ECHO_DEPTH=0`）、RT60 Sabine/Eyring、HF/LF ratio、density/diffusion、modulation、air absorption
 - [ ] A3b 自定义 FDN 回退（可选）：8 线 FDN、吸收滤波、6 声道 wet、稳定性限制
 - [ ] A4 接收器集成：Speakers/Settings 页声学开关、early/late 电平、房间预设/重扫；服务端字段/网络包
-- [ ] A4b Seat/听者策略：Seat 皇帝位优先；未坐下时玩家位置；影院锁定 vs. 自由模式
+- [ ] A4b 听者策略（决策已定，待 A4 接入）：始终使用玩家实际耳朵位置/朝向；不做 Seat 皇帝位、固定监听点或声场校正
 - [ ] A5 调试/验收：dump 房间/RT60/taps；A/B 开关；矩形房间、材质、旋转、移动、5.1、4K/BSL、设备切换
 - [ ] A6 后续：低频模态/多低音炮/模态 EQ、衍射/散射、测量 RIR/卷积、HRTF
 
@@ -136,7 +163,7 @@
 - [x] M2 外部媒体库：`cinema/libraries.json`、`lib/<id>/...` key、添加/移除/切换库、记住上次库与文件夹
 - [x] M2 GUI 修复：长文本省略号、tooltip 自动换行、Settings 布局、库列表滚动、seek/音量滑块回弹、ESC 暂停循环、文字图层
 - [x] 用户验收通过：M2 界面无溢出、截断/tooltip 正常、4K HEVC 不再 1 秒重启、关闭 GUI 后记住库/文件夹
-- [x] M1 接收器播放管线：媒体库/相对 key/SHA-256、C2S 控制包、客户端播放代理、视频路由、投影仪配对（后改为线材显式）、单音频引擎
+- [x] M1 接收器播放管线：媒体库/相对 key/SHA-256、C2S 控制包、客户端播放代理、视频路由、投影仪配对（后改为线材显式）、单音频引擎（M3 已拆为每接收器独立引擎）
 - [x] 用户验收通过：M1 选片/播放/暂停/seek/音量/静音、拆接收器/投影仪/屏幕后的停止与恢复、缺文件提示
 - [x] 2026-11-04 取消自动配对：投影仪不再扫描最近屏幕，接收器不再扫描最近投影仪；线材显式配对新增接收器↔投影仪
 - [x] AV Receiver / Speaker 方块、block entity、模型、掉落表
