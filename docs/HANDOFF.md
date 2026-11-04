@@ -116,6 +116,7 @@
 4. **媒体能力扩展**：音轨/视频轨/字幕选择与渲染、AV Receiver Video Processing、拖放导入媒体库
 5. **M4 扬声器 5.1 路由、Seat、LAN、资源重载、长片测试、GUI 进一步打磨**
 6. **音频计算/房间声学（M4 后）**
+   - **分支**：所有声学模拟原型/实验代码在 `acoustic-simulation` 分支开发，避免影响 `main`；只有通过游戏内听感验收的部分才分段合并回 `main`。
    - 见 `docs/design/AUDIO-ACOUSTICS.md`；A1d Spinorama 数据 spike、A0 EFX/EAXReverb spike 可在 M2/M3 之后提前做。
    - 只做扬声器指向性，不做原始声源指向性；指向性用 Spinorama 实测水平/垂直指向性 + 轴上响应，映射到四类箱体；API 需要人工申请 key，转换工具只在本地使用。
    - 早期反射用一阶镜像源 + Spinorama 指向性；EAXReverb 只取晚期尾音，关闭其固定 5 m 早期反射。

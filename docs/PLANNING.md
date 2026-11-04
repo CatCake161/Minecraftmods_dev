@@ -41,6 +41,8 @@ M1 已把解码、播放状态、媒体选择和音画时钟迁入 AV Receiver�
 
 计划中的客户端声学层（M4 后，详见 [AUDIO-ACOUSTICS.md](design/AUDIO-ACOUSTICS.md)）：
 
+> 声学模拟（EFX/早期反射/晚期混响/Spinorama 指向性原型）统一在 `acoustic-simulation` 分支开发，`main` 保持可玩的稳定基线；只有通过游戏内听感验收的部分才分段合并回 `main`。
+
 ```text
 5.1 PCM → 直达声校准 → 一阶早期反射（镜像源 + 指向性）
         → 晚期混响（EAXReverb 仅 late tail / FDN 回退）

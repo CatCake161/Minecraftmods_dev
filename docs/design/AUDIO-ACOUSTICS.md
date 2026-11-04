@@ -1,5 +1,9 @@
 # 影院音频计算与房间声学设计
 
+> **分支策略（2026-11-04）**：声学模拟的全部原型与实验代码在 `acoustic-simulation` 分支开发；
+> `main` 只保留已稳定、已验收的接口与文档。未经游戏内听感验收的 EFX/早期反射/Spinorama
+> 实验代码不得直接合并回 `main`。
+>
 > 状态：分析与规划，尚未实现。本文评估 OpenAL EFX / EAXReverb、早期反射与扬声器指向性方案，
 > 并给出与当前 Cinema 音频管线（`CinemaAudioEngine` + AV Receiver + Speaker）的集成计划。
 > 相关文档：[项目规划](../PLANNING.md)、[待办](../TODO.md)、[AV Receiver](AV-RECEIVER.md)、[指令](../COMMANDS.md)。
