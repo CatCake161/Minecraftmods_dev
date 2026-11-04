@@ -52,15 +52,6 @@ public final class AvReceiverControlHandler {
 			case SEEK -> receiver.seek(payload.value());
 			case SET_VOLUME -> receiver.setVolume(payload.value());
 			case SET_MUTED -> receiver.setMuted(payload.value() >= 0.5);
-			case LINK_PROJECTOR -> {
-				BlockPos target = receiver.pairNearestProjector(level);
-				if (target == null) {
-					error(player, "No cinema projector within 48 blocks");
-				} else {
-					player.displayClientMessage(Component.literal(
-						"AV receiver linked to projector " + target.toShortString()), false);
-				}
-			}
 		}
 	}
 

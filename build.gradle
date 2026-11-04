@@ -11,6 +11,12 @@ repositories {
 	// See https://docs.gradle.org/current/userguide/declaring_repositories.html
 	// for more information about repositories.
 	mavenCentral()
+
+	// Mod Menu is a soft dependency: only its API is compiled against.
+	maven {
+		name = 'TerraformersMC'
+		url = 'https://maven.terraformersmc.com/releases/'
+	}
 }
 
 loom {
@@ -32,6 +38,9 @@ dependencies {
 
 	// Fabric API. This is technically optional, but you probably want it anyway.
 	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+	// Reviewed at compile time only; Mod Menu remains optional at runtime.
+	modCompileOnly "com.terraformersmc:modmenu:${project.modmenu_version}"
 
 	// Cinema uses an external FFmpeg full build (ffmpeg.exe/ffprobe.exe) placed
 	// under <game>/mods/. It is not bundled with the mod.

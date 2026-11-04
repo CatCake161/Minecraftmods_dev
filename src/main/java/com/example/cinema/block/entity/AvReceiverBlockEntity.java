@@ -1,6 +1,7 @@
 package com.example.cinema.block.entity;
 
 import com.example.cinema.Cinema;
+import com.example.cinema.block.SpeakerBlock;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
@@ -14,8 +15,10 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
-import net.minecraft.world.phys.Vec3;
 
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 
@@ -46,6 +49,8 @@ public class AvReceiverBlockEntity extends BlockEntity {
 	private float volume = 0.8f;
 	private boolean muted;
 	private BlockPos videoTarget;
+	/** Explicitly linked speakers. Speakers store the matching receiver position. */
+	private final List<BlockPos> speakerTargets = new ArrayList<>();
 	private long stateChangedGameTime;
 	/** Server-only: reset the playback clock on the first tick after loading. */
 	private transient boolean resyncClock;
@@ -75,6 +80,7 @@ public class AvReceiverBlockEntity extends BlockEntity {
 		}
 		if (level.getGameTime() % 20L == 0L) {
 			receiver.refreshProjectorLink(level);
+			receiver.refreshSpeakerLinks(level);
 		}
 	}
 
@@ -114,6 +120,41 @@ public class AvReceiverBlockEntity extends BlockEntity {
 		return videoTarget;
 	}
 
+	/** Immutable snapshot of the speakers explicitly linked to this receiver. */
+	public List<BlockPos> speakerTargets() {
+		return List.copyOf(speakerTargets);
+	}
+
+	public void addSpeaker(BlockPos pos) {
+		if (pos == null || speakerTargets.contains(pos)) {
+			return;
+		}
+		speakerTargets.add(pos);
+		markUpdated();
+	}
+
+	public void removeSpeaker(BlockPos pos) {
+		if (speakerTargets.remove(pos)) {
+			markUpdated();
+		}
+	}
+
+	public void clearSpeakers() {
+		if (speakerTargets.isEmpty()) {
+			return;
+		}
+		speakerTargets.clear();
+		markUpdated();
+	}
+
+	/** Clears {@code videoTarget} only when it still points at {@code expected}. */
+	public void clearProjectorTarget(BlockPos expected) {
+		if (expected != null && expected.equals(videoTarget)) {
+			videoTarget = null;
+			markUpdated();
+		}
+	}
+
 	public long stateChangedGameTime() {
 		return stateChangedGameTime;
 	}
@@ -129,7 +170,6 @@ public class AvReceiverBlockEntity extends BlockEntity {
 		positionSeconds = 0.0;
 		state = State.PLAYING;
 		stateChangedGameTime = level.getGameTime();
-		pairNearestProjector(level);
 		markUpdated();
 		return true;
 	}
@@ -137,9 +177,6 @@ public class AvReceiverBlockEntity extends BlockEntity {
 	public boolean play() {
 		if (mediaKey.isEmpty() || level == null || isAnotherReceiverActive(level, worldPosition)) {
 			return false;
-		}
-		if (videoTarget == null) {
-			pairNearestProjector(level);
 		}
 		state = State.PLAYING;
 		stateChangedGameTime = level.getGameTime();
@@ -191,63 +228,55 @@ public class AvReceiverBlockEntity extends BlockEntity {
 	}
 
 	/**
-	 * Chooses the nearest loaded projector within 48 blocks and links both block
-	 * entities. Returns the chosen position, or {@code null} when none exists.
+	 * Keeps the explicit projector link healthy. There is no automatic
+	 * nearest-projector search: an unlinked or broken link stays empty until
+	 * the player pairs a projector with the Cinema Cable.
 	 */
-	public BlockPos pairNearestProjector(Level level) {
-		if (level == null || level.isClientSide) {
-			return videoTarget;
+	private void refreshProjectorLink(Level level) {
+		if (videoTarget == null) {
+			return;
 		}
-		ProjectorBlockEntity best = null;
-		double bestDistance = 48.0 * 48.0;
-		ChunkPos center = new ChunkPos(worldPosition);
-		int radiusChunks = (int) Math.ceil(48.0 / 16.0);
-		Vec3 origin = Vec3.atCenterOf(worldPosition);
-		for (int chunkX = center.x - radiusChunks; chunkX <= center.x + radiusChunks; chunkX++) {
-			for (int chunkZ = center.z - radiusChunks; chunkZ <= center.z + radiusChunks; chunkZ++) {
-				LevelChunk chunk = level.getChunkSource().getChunkNow(chunkX, chunkZ);
-				if (chunk == null) {
-					continue;
-				}
-				for (BlockEntity blockEntity : chunk.getBlockEntities().values()) {
-					if (!(blockEntity instanceof ProjectorBlockEntity projector)) {
-						continue;
-					}
-					double distance = Vec3.atCenterOf(projector.getBlockPos()).distanceToSqr(origin);
-					if (distance < bestDistance) {
-						bestDistance = distance;
-						best = projector;
-					}
-				}
-			}
+		if (!level.isLoaded(videoTarget)) {
+			// Keep the link while the projector's chunk is unloaded; otherwise a
+			// chunk unload would silently unlink the devices.
+			return;
 		}
-		BlockPos target = best == null ? null : best.getBlockPos();
-		if (!Objects.equals(videoTarget, target)) {
-			clearProjectorLink();
-			videoTarget = target;
-			if (best != null) {
-				best.setReceiverPos(worldPosition);
-			}
-			markUpdated();
-		} else if (best != null && !worldPosition.equals(best.receiverPos())) {
-			best.setReceiverPos(worldPosition);
+		BlockEntity blockEntity = level.getBlockEntity(videoTarget);
+		if (blockEntity instanceof ProjectorBlockEntity projector
+			&& worldPosition.equals(projector.receiverPos())) {
+			return;
 		}
-		return target;
+		clearProjectorLink();
+		videoTarget = null;
+		markUpdated();
 	}
 
-	private void refreshProjectorLink(Level level) {
-		if (videoTarget != null) {
-			BlockEntity blockEntity = level.getBlockEntity(videoTarget);
-			if (blockEntity instanceof ProjectorBlockEntity projector
-				&& worldPosition.equals(projector.receiverPos())) {
-				return;
+	/** Drops speakers that were broken or re-linked to another receiver. */
+	private void refreshSpeakerLinks(Level level) {
+		if (speakerTargets.isEmpty()) {
+			return;
+		}
+		boolean changed = false;
+		for (Iterator<BlockPos> iterator = speakerTargets.iterator(); iterator.hasNext(); ) {
+			BlockPos pos = iterator.next();
+			if (!level.isLoaded(pos)) {
+				continue;
+			}
+			if (!(level.getBlockState(pos).getBlock() instanceof SpeakerBlock)
+				|| !(level.getBlockEntity(pos) instanceof SpeakerBlockEntity speaker)
+				|| !worldPosition.equals(speaker.receiverPos())) {
+				iterator.remove();
+				changed = true;
 			}
 		}
-		pairNearestProjector(level);
+		if (changed) {
+			markUpdated();
+		}
 	}
 
 	private void clearProjectorLink() {
-		if (videoTarget == null || level == null || level.isClientSide) {
+		if (videoTarget == null || level == null || level.isClientSide
+			|| !level.isLoaded(videoTarget)) {
 			return;
 		}
 		if (level.getBlockEntity(videoTarget) instanceof ProjectorBlockEntity projector) {
@@ -285,8 +314,32 @@ public class AvReceiverBlockEntity extends BlockEntity {
 
 	@Override
 	public void setRemoved() {
-		clearProjectorLink();
+		// Chunk unload also calls setRemoved(). Only clear links when the block
+		// was actually removed, otherwise leaving the area would unpair devices.
+		if (wasActuallyRemoved()) {
+			for (BlockPos pos : List.copyOf(speakerTargets)) {
+				if (level.isLoaded(pos)
+					&& level.getBlockEntity(pos) instanceof SpeakerBlockEntity speaker) {
+					speaker.clearReceiver(worldPosition);
+				}
+			}
+			speakerTargets.clear();
+			clearProjectorLink();
+		}
 		super.setRemoved();
+	}
+
+	private boolean wasActuallyRemoved() {
+		if (level == null || level.isClientSide) {
+			return false;
+		}
+		ChunkPos chunkPos = new ChunkPos(worldPosition);
+		LevelChunk chunk = level.getChunkSource().getChunkNow(chunkPos.x, chunkPos.z);
+		if (chunk == null) {
+			// The chunk is already gone; this is an unload, not a block break.
+			return false;
+		}
+		return !chunk.getBlockState(worldPosition).is(Cinema.AV_RECEIVER_BLOCK);
 	}
 
 	public Component status() {
@@ -321,7 +374,10 @@ public class AvReceiverBlockEntity extends BlockEntity {
 		tag.putBoolean("muted", muted);
 		if (videoTarget != null) {
 			tag.putLong("videoTarget", videoTarget.asLong());
+			tag.putBoolean("videoTargetExplicit", true);
 		}
+		tag.putLongArray("speakerTargets",
+			speakerTargets.stream().mapToLong(BlockPos::asLong).toArray());
 		tag.putLong("stateGameTime", stateChangedGameTime);
 	}
 
@@ -337,7 +393,12 @@ public class AvReceiverBlockEntity extends BlockEntity {
 		volume = (float) Math.max(MIN_VOLUME, Math.min(MAX_VOLUME,
 			tag.contains("volume") ? tag.getDouble("volume") : 0.8));
 		muted = tag.getBoolean("muted");
-		videoTarget = tag.contains("videoTarget") ? BlockPos.of(tag.getLong("videoTarget")) : null;
+		videoTarget = tag.getBoolean("videoTargetExplicit") && tag.contains("videoTarget")
+			? BlockPos.of(tag.getLong("videoTarget")) : null;
+		speakerTargets.clear();
+		for (long packed : tag.getLongArray("speakerTargets")) {
+			speakerTargets.add(BlockPos.of(packed));
+		}
 		stateChangedGameTime = tag.getLong("stateGameTime");
 		resyncClock = state == State.PLAYING;
 	}

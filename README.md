@@ -2,6 +2,8 @@
 
 基于 **Minecraft 1.21.1 + Fabric + Java 21** 的影院模组。第一版目标是把影院拆成真实的物理单元：屏幕、投影仪、AV 接收器、5.1 扬声器和座位。
 
+当前版本：**Alpha 0.0.1**。
+
 当前状态：**P1 投影仪光学第一版可运行**；4K60/HDR、投影对齐、对焦/梯形等已通过用户游戏内验收；**AV Receiver M1/M2 已完成并验收**（播放管线、接收器 GUI、外部媒体库），四种扬声器（落地式/书架式/中置/低音炮）、线材、遥控器已创建；扬声器 5.1 路由、座位、每接收器独立播放与媒体轨/字幕选择仍待实现。
 
 ## 环境要求
@@ -38,8 +40,10 @@ run/mods/ffmpeg/bin/ffprobe.exe
 -Dcinema.ffmpeg.path=C:\path\to\ffmpeg.exe
 ```
 
-默认 HDR 缩到 720p、SDR 缩到 1080p；要保留原生分辨率使用 `-Dcinema.video.maxHeight=0`。
+默认 HDR 缩到 720p、SDR 缩到 1080p；视频输出高度/缩放属于未来的 AV Receiver `Video Processing` 模块，暂不放在 Mod Menu。调试时仍可用启动参数 `-Dcinema.video.maxHeight=N` 覆盖；`0` 保留原生分辨率。
 硬件解码默认 `auto`；驱动有问题时用 `-Dcinema.ffmpeg.hwaccel=none` 关闭。
+屏幕默认最大 16×16；可在 Mod Menu → Cinema → Config 中调整（1..64，硬上限 64×64），或启动参数 `-Dcinema.screen.maxSize=N` 覆盖。设置保存在 `config/cinema.json`。
+同一设置页还提供原版行为开关：设备 GUI 是否暂停游戏（默认关）、空手右键是否打开设备 GUI（默认开）、spike 测试是否修改世界（默认开）。
 
 ## 构建与运行
 

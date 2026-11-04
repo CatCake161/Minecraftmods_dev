@@ -59,8 +59,7 @@ public record AvReceiverControlPayload(BlockPos avReceiverPos, Action action, St
 		STOP,
 		SEEK,
 		SET_VOLUME,
-		SET_MUTED,
-		LINK_PROJECTOR;
+		SET_MUTED;
 
 		public static Action byOrdinal(int ordinal) {
 			Action[] values = values();

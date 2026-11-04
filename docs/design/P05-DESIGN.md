@@ -364,8 +364,11 @@ C/D 需要投影仪深度图/自定义 shader/光影包适配，和 Sodium/Iris 
 
 ### 可选集成
 
-- **Cloth Config + Mod Menu**：客户端配置和模组列表入口。不是必须；
-  如果不想增加依赖，可以用自己的 JSON 配置 + 原版 Screen。
+- **Mod Menu**：模组列表里的设置入口（软依赖，`modCompileOnly`）。我们使用
+  自己的 `config/cinema.json` + 原版 `Screen`，不引入 Cloth Config；没有安装
+  Mod Menu 时模组照常运行。设置页包含屏幕尺寸与三项原版行为开关：设备 GUI
+  是否暂停、空手右键是否打开设备 GUI、spike 测试是否修改世界。视频输出高度/
+  缩放不在 Mod Menu，归未来 AV Receiver `Video Processing` 模块。
 - **LambDynamicLights**：可选的屏幕/投影仪动态点光。只能近似“附近变亮”，
   不是真正的投影聚光灯；用 `compileOnly` + 软依赖，缺失时降级。
 - **Sodium / Iris**：**测试用**，不作为依赖。P0.5 必须在装/不装两种情况下测。

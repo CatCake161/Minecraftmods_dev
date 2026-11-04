@@ -16,6 +16,9 @@
 		],
 		"client": [
 			"com.example.cinema.client.CinemaClient"
+		],
+		"modmenu": [
+			"com.example.cinema.client.config.CinemaModMenuIntegration"
 		]
 	},
 	"mixins": [

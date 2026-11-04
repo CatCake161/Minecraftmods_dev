@@ -15,11 +15,9 @@ import net.minecraft.world.level.block.state.StateDefinition;
 import net.minecraft.world.level.block.state.properties.DirectionProperty;
 
 /**
- * A wall-mounted cinema screen. The static block model is the dark frame; the
- * block entity renderer paints the live video surface on its front face.
- *
- * <p>This first slice is one block in size. Multi-block screens will share the
- * same block entity texture in a later step.
+ * A wall-mounted cinema screen. The static block model is the dark frame; each
+ * screen block entity paints its own cell of the live video surface on its
+ * front face. Adjacent same-facing blocks form the multi-block screen.
  */
 public class ScreenBlock extends Block implements EntityBlock {
 	public static final DirectionProperty FACING = HorizontalDirectionalBlock.FACING;

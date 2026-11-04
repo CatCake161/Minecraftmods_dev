@@ -1,5 +1,6 @@
 package com.example.cinema.block;
 
+import com.example.cinema.block.entity.SpeakerBlockEntity;
 import com.example.cinema.block.entity.SpeakerType;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -70,6 +71,9 @@ public class FloorstandingSpeakerBlock extends SpeakerBlock {
 		// Speakers placed before the block became two blocks tall load as a
 		// lone lower half. Extend them upward once there is room.
 		return (tickLevel, pos, tickState, blockEntity) -> {
+			if (blockEntity instanceof SpeakerBlockEntity speaker) {
+				speaker.serverTick(tickLevel);
+			}
 			BlockState above = tickLevel.getBlockState(pos.above());
 			if (above.is(this) && above.getValue(HALF) == DoubleBlockHalf.UPPER) {
 				return;

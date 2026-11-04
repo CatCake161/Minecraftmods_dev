@@ -6,13 +6,16 @@ import com.example.cinema.block.entity.SpeakerType;
 import com.example.cinema.client.audio.speakerspecs.SpeakerSpecsAssignments;
 import com.example.cinema.client.audio.speakerspecs.SpeakerSpecsProfile;
 import com.example.cinema.client.audio.speakerspecs.SpeakerSpecsRegistry;
+import com.example.cinema.client.config.CinemaClientConfig;
 import com.example.cinema.client.network.SpeakerRoleClient;
+import com.example.cinema.block.entity.AvReceiverBlockEntity;
 import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.FormattedCharSequence;
 
@@ -26,12 +29,14 @@ import java.util.Locale;
  * Spike GUI for client-local speaker specs profiles.
  *
  * <p>Profiles are loaded from {@code <game>/cinema/speaker_specs/profiles/}.
- * Drop a JSON profile onto this screen to import it. Done saves the selected
- * profile and simple parameters; Cancel discards the draft.
+ * Drop a JSON profile onto this screen to import it. Changes save immediately;
+ * Close flushes any debounced field edit. Use Defaults to restore the selected
+ * profile's defaults.
  */
 public final class SpeakerSpecsConfigScreen extends Screen {
 	private static final int ROW_HEIGHT = 16;
 	private static final int TYPE_ROW_HEIGHT = 18;
+	private static final long FIELD_SAVE_DEBOUNCE_MS = 250L;
 
 	private final Screen parent;
 	private final SpeakerBlockEntity speaker;
@@ -67,6 +72,9 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 	private String status = "";
 	private long statusUntil;
 	private boolean closing;
+	private boolean fieldsDirty;
+	private long fieldsDirtyAtMillis;
+	private boolean syncingFields;
 
 	public SpeakerSpecsConfigScreen(Screen parent) {
 		this(parent, null);
@@ -136,10 +144,10 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 
 		addRenderableWidget(Button.builder(Component.literal("Open folder"), button -> openFolder())
 			.bounds(contentLeft, contentBottom, 80, 18).build());
-		addRenderableWidget(Button.builder(Component.literal("Done"), button -> applyAndClose())
-			.bounds(contentLeft + contentWidth - 122, contentBottom, 56, 18).build());
-		addRenderableWidget(Button.builder(Component.literal("Cancel"), button -> onClose())
-			.bounds(contentLeft + contentWidth - 62, contentBottom, 62, 18).build());
+		addRenderableWidget(Button.builder(Component.literal("Defaults"), button -> resetDefaults())
+			.bounds(contentLeft + 84, contentBottom, 64, 18).build());
+		addRenderableWidget(Button.builder(Component.literal("Close"), button -> onClose())
+			.bounds(contentLeft + contentWidth - 60, contentBottom, 60, 18).build());
 
 		syncFields();
 	}
@@ -147,8 +155,26 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 	private EditBox addField(int x, int y, int width) {
 		EditBox box = new EditBox(font, x, y, width, ROW_HEIGHT, Component.empty());
 		box.setMaxLength(12);
+		box.setResponder(value -> onFieldChanged());
 		addRenderableWidget(box);
 		return box;
+	}
+
+	private void onFieldChanged() {
+		if (syncingFields) {
+			return;
+		}
+		fieldsDirty = true;
+		fieldsDirtyAtMillis = System.currentTimeMillis() + FIELD_SAVE_DEBOUNCE_MS;
+	}
+
+	@Override
+	public void tick() {
+		super.tick();
+		if (fieldsDirty && System.currentTimeMillis() >= fieldsDirtyAtMillis) {
+			fieldsDirty = false;
+			applyDraftSettings(false);
+		}
 	}
 
 	private void selectType(SpeakerType type) {
@@ -178,16 +204,22 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 	}
 
 	private void syncFields() {
-		if (lowBox != null) {
-			lowBox.setValue(format(draftLowHz, 1));
-			highBox.setValue(format(draftHighHz, 1));
-			gainBox.setValue(format(draftGainDb, 2));
-		}
-		if (profileButton != null) {
-			profileButton.setMessage(profileLabel());
-		}
-		if (roleButton != null) {
-			roleButton.setMessage(roleLabel());
+		syncingFields = true;
+		fieldsDirty = false;
+		try {
+			if (lowBox != null) {
+				lowBox.setValue(format(draftLowHz, 1));
+				highBox.setValue(format(draftHighHz, 1));
+				gainBox.setValue(format(draftGainDb, 2));
+			}
+			if (profileButton != null) {
+				profileButton.setMessage(profileLabel());
+			}
+			if (roleButton != null) {
+				roleButton.setMessage(roleLabel());
+			}
+		} finally {
+			syncingFields = false;
 		}
 	}
 
@@ -220,7 +252,8 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 		if (roleButton != null) {
 			roleButton.setMessage(roleLabel());
 		}
-		setStatus("Role: " + draftRole.label() + " (Done applies)");
+		SpeakerRoleClient.setRole(speaker.getBlockPos(), draftRole);
+		setStatus("Role: " + draftRole.label() + " (saved)");
 	}
 
 	private void cycleProfile() {
@@ -243,7 +276,9 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 		draftHighHz = defaults.highHz();
 		draftGainDb = defaults.gainDb();
 		syncFields();
-		setStatus("Profile: " + next.name());
+		if (applyDraftSettings(true)) {
+			setStatus("Profile: " + next.name() + " (saved)");
+		}
 	}
 
 	private SpeakerSpecsRegistry.SpeakerSettings settingsForProfile(String profileId) {
@@ -281,17 +316,39 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 		}
 	}
 
-	private void applyAndClose() {
-		if (!readFields()) {
+	private void resetDefaults() {
+		SpeakerSpecsRegistry.SpeakerSettings defaults = SpeakerSpecsRegistry.settings(selectedType);
+		if (defaults == null) {
+			setStatus("No profile available for this type");
 			return;
+		}
+		draftProfileId = defaults.profileId();
+		draftLowHz = defaults.lowHz();
+		draftHighHz = defaults.highHz();
+		draftGainDb = defaults.gainDb();
+		syncFields();
+		if (applyDraftSettings(true)) {
+			setStatus("Defaults applied");
+		}
+	}
+
+	private boolean applyDraftSettings(boolean quiet) {
+		if (!readFields(quiet)) {
+			return false;
 		}
 		SpeakerSpecsRegistry.SpeakerSettings settings =
 			new SpeakerSpecsRegistry.SpeakerSettings(draftProfileId, draftLowHz,
 				draftHighHz, draftGainDb);
-		if (speaker != null) {
-			if (draftRole != speaker.role()) {
-				SpeakerRoleClient.setRole(speaker.getBlockPos(), draftRole);
+		SpeakerSpecsRegistry.SpeakerSettings current = speaker != null
+			? SpeakerSpecsAssignments.settingsFor(speaker)
+			: SpeakerSpecsRegistry.settings(selectedType);
+		if (settings.equals(current)) {
+			if (!quiet) {
+				setStatus("Saved");
 			}
+			return true;
+		}
+		if (speaker != null) {
 			SpeakerSpecsAssignments.apply(speaker, settings);
 			// Also write type defaults in the current format so the first
 			// spike settings.json is migrated after a speaker edit.
@@ -300,12 +357,17 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 			SpeakerSpecsRegistry.applySettings(selectedType, settings);
 			SpeakerSpecsRegistry.saveSettings();
 		}
-		onClose();
+		if (!quiet) {
+			setStatus("Saved");
+		}
+		return true;
 	}
 
-	private boolean readFields() {
+	private boolean readFields(boolean quiet) {
 		if (selectedProfile() == null) {
-			setStatus("Select a profile first");
+			if (!quiet) {
+				setStatus("Select a profile first");
+			}
 			return false;
 		}
 		try {
@@ -316,7 +378,9 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 				throw new NumberFormatException("not finite");
 			}
 			if (low < 1.0 || high > 24_000.0 || high <= low) {
-				setStatus("Frequency range must satisfy 1 <= low < high <= 24000");
+				if (!quiet) {
+					setStatus("Frequency range must satisfy 1 <= low < high <= 24000");
+				}
 				return false;
 			}
 			draftLowHz = low;
@@ -324,7 +388,9 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 			draftGainDb = clamp(gain, -60.0, 60.0);
 			return true;
 		} catch (NumberFormatException e) {
-			setStatus("Enter valid numbers in all fields");
+			if (!quiet) {
+				setStatus("Enter valid numbers in all fields");
+			}
 			return false;
 		}
 	}
@@ -345,6 +411,7 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 					draftHighHz = defaults.highHz();
 					draftGainDb = defaults.gainDb();
 					syncFields();
+					applyDraftSettings(true);
 				}
 			} catch (Exception e) {
 				errors.add(path.getFileName() + ": " + e.getMessage());
@@ -369,7 +436,8 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 		graphics.fill(left, top + panelHeight - 1, left + panelWidth, top + panelHeight, 0xFF707070);
 		graphics.fill(left, top, left + 1, top + panelHeight, 0xFF404040);
 		graphics.fill(left + panelWidth - 1, top, left + panelWidth, top + panelHeight, 0xFF404040);
-		graphics.drawString(font, title, left + 10, top + 7, 0xE8E8E8, false);
+		graphics.drawString(font, truncate(titleLabel().getString(), panelWidth - 20),
+			left + 10, top + 7, titleColor(), false);
 
 		if (!fixedType) {
 			SpeakerType[] types = SpeakerType.values();
@@ -423,7 +491,7 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 
 		String statusText = System.currentTimeMillis() < statusUntil && !status.isEmpty()
 			? status
-			: "Done saves locally; Cancel discards the draft.";
+			: "Changes save immediately. Close when done.";
 		int statusY = compact ? top + 116 : contentBottom - 14;
 		graphics.drawString(font, truncate(statusText, contentWidth),
 			contentLeft, statusY, System.currentTimeMillis() < statusUntil
@@ -440,7 +508,7 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 		if (roleButton != null && inBox(mouseX, mouseY, roleButton.getX(), roleButton.getY(),
 			roleButton.getWidth(), roleButton.getHeight())) {
 			renderWrappedTooltip(graphics,
-				"Click to cycle the roles allowed by this cabinet. Done applies the role to the server.",
+				"Click to cycle the roles allowed by this cabinet. Applies immediately to the server.",
 				mouseX, mouseY);
 			return;
 		}
@@ -491,6 +559,34 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 			profile.gainDb(180, 0, 1000));
 	}
 
+	private Component titleLabel() {
+		if (speaker == null) {
+			return title;
+		}
+		BlockPos receiver = speaker.receiverPos();
+		if (receiver == null) {
+			return Component.literal("Speaker Specs · Receiver: not linked");
+		}
+		return Component.literal("Speaker Specs · Receiver: "
+			+ (receiverLinkMissing() ? "link missing @ " : "linked @ ")
+			+ receiver.toShortString());
+	}
+
+	private int titleColor() {
+		return receiverLinkMissing() ? 0xFFD54F : 0xE8E8E8;
+	}
+
+	private boolean receiverLinkMissing() {
+		if (speaker == null || speaker.receiverPos() == null) {
+			return false;
+		}
+		BlockPos receiver = speaker.receiverPos();
+		if (speaker.getLevel() == null || !speaker.getLevel().isLoaded(receiver)) {
+			return false;
+		}
+		return !(speaker.getLevel().getBlockEntity(receiver) instanceof AvReceiverBlockEntity);
+	}
+
 	private void setStatus(String message) {
 		status = message == null ? "" : message;
 		statusUntil = System.currentTimeMillis() + 6_000L;
@@ -530,13 +626,17 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 
 	@Override
 	public boolean isPauseScreen() {
-		return false;
+		return CinemaClientConfig.get().pauseGameInDeviceGuis();
 	}
 
 	@Override
 	public void onClose() {
 		if (closing) {
 			return;
+		}
+		if (fieldsDirty) {
+			fieldsDirty = false;
+			applyDraftSettings(true);
 		}
 		closing = true;
 		if (parent != null && minecraft != null) {

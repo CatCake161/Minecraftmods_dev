@@ -1,6 +1,6 @@
 # 投影仪 GUI 开发大纲
 
-> 状态：M1 只读状态页 + M2 光学/wash 编辑 + M3 物理模拟开关已通过游戏内验收；对焦模糊物理观感一般，后续改进；M4 配对/诊断、M5 遥控器未做。
+> 状态：M1 只读状态页 + M2 光学/wash 编辑 + M3 物理模拟开关已通过游戏内验收；线材显式配对（M4 一部分）已实现，待游戏内验收；配对诊断/重新扫描与 M5 遥控器未做；对焦模糊物理观感一般，后续改进。
 > 相关文档：[项目规划](../PLANNING.md)、[待办](../TODO.md)、[指令](../COMMANDS.md)。
 
 ## 1. 目标
@@ -62,9 +62,9 @@ AV Receiver 才负责：媒体文件、FFmpeg、播放状态、音画时钟、�
 
 ### 打开方式
 
-- 右键投影仪方块打开 GUI。
+- 空手右键投影仪方块打开 GUI。
 - 后续增加**遥控器工具**：在远处右键投影仪/接收器也能打开同一 GUI。
-- 配对工具（线材/配对器）独立于 GUI，用于建立投影仪↔屏幕、接收器↔扬声器关系。
+- 配对工具（线材/配对器）独立于 GUI，用于建立投影仪↔屏幕、接收器↔投影仪、接收器↔扬声器关系。
 
 ### 数值编辑
 
@@ -133,6 +133,7 @@ simFocus          boolean
 simKeystone       boolean
 simWash           boolean
 simWarmup         boolean
+screenPos         optional BlockPos  (null = 未连接)
 ```
 
 后续：
@@ -140,7 +141,6 @@ simWarmup         boolean
 ```text
 lampMode          eco/normal/high
 lensShiftX/Y
-screenPos         optional BlockPos
 controlledBy      optional player UUID / remote item
 ```
 
@@ -173,13 +173,13 @@ controlledBy      optional player UUID / remote item
 
 ### M1：只读状态页（已实现）
 
-- 右键打开 GUI。
+- 空手右键打开 GUI。
 - 状态区显示：
   - 配对屏幕尺寸/坐标/距离；
   - 灯泡亮度 + warming/on/cooling/off；
   - AV 接收器连接状态、播放状态、可用时的分辨率。
 - 不显示媒体文件、codec、丢帧、seek 等 AV 专属信息。
-- GUI 不暂停游戏；投影仪被拆除时自动关闭。
+- GUI 是否暂停游戏由 Mod Menu 的 `Pause game in device GUIs` 控制（默认关）；投影仪被拆除时自动关闭。
 
 ### M2：光学与 wash 编辑（已实现）
 
@@ -203,10 +203,12 @@ controlledBy      optional player UUID / remote item
 - GUI 使用一行紧凑开关（Focus/Keystone/Wash/Warmup），不阻塞 M4 配对功能。
 - 对焦模糊当前基于 mipmap/LOD，物理观感一般；后续可评估多级采样、卷积或景深，暂不作为当前阻塞项。
 
-### M4：配对/诊断（未做）
+### M4：配对/诊断（配对已实现，诊断未做）
 
-- 重新扫描屏幕；显示当前配对原因（距离/朝向/遮挡）。
-- 配对工具（线材/配对器）入口。
+- 线材显式配对已实现：先右键投影仪再右键屏幕（或反向）写入 `screenPos`；再次右键同一设备取消配对选择，点击不兼容设备会改为选择新设备；解除连接为潜行右键设备 A、再潜行右键设备 B，只解除两者连接。选择状态 60 秒超时/断线清除。
+- 显式链接允许斜向安装，但仍要求屏幕位于投影仪前方且距离不超过 48 格；`screenPos` 无效时 GUI 显示 `linked target missing`，不会退回自动扫描。
+- GUI 状态行显示 `linked`；未连接显示 `not linked`。
+- 诊断仍未做：显示配对失败原因（距离/朝向/遮挡）与遮挡检查。
 - 显示 AV 输入信号状态，不显示解码细节。
 
 ### M5：遥控器（未做）

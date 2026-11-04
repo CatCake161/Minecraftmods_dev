@@ -12,7 +12,7 @@
 
 > M1：媒体解码/播放状态/音画时钟归 **AV Receiver**。客户端命令只负责选择本机媒体并发送控制包；投影仪只消费接收器的视频输出，扬声器只消费音频输出。
 
-默认媒体库为 `<game>/cinema/media/`；可在接收器 GUI 的 **Settings → Add library** 添加外部文件夹。默认库使用相对 key，外部库使用 `lib/<id>/<相对路径>`；粘贴已注册库内的绝对路径也会自动转成 key。绝对路径不会写入接收器状态或网络包。同一时间只允许一个接收器处于播放/暂停状态。
+默认媒体库为 `<game>/cinema/media/`；可在接收器 GUI 的 **Settings → Add library** 添加外部文件夹。默认库使用相对 key，外部库使用 `lib/<id>/<相对路径>`；粘贴已注册库内的绝对路径也会自动转成 key。绝对路径不会写入接收器状态或网络包。媒体列表首次打开时扫描并探测元数据，之后在当前游戏会话内缓存；**Refresh / Refresh library** 强制重新扫描。同一时间只允许一个接收器处于播放/暂停状态。
 
 | 指令 | 说明 |
 |---|---|
@@ -22,7 +22,6 @@
 | `/cinema_stop` | 停止播放并释放视频纹理 |
 | `/cinema_volume <0-1>` | 设置接收器主音量 |
 | `/cinema_mute` | 切换静音 |
-| `/cinema_link` | 重新扫描并配对 48 格内最近的投影仪 |
 | `/cinema_receiver info` | 查看最近接收器的媒体/状态/音量/投影仪 |
 
 ```text
@@ -74,24 +73,28 @@
 
 ## 4. 屏幕与配对
 
-- 屏幕由同朝向、同平面的屏幕方块组成，最大 16×16。
-- 投影仪自动寻找前方 48 格内最近的屏幕；屏幕正面必须朝向投影仪。
-- 接收器每 20 tick 自动配对/重连 48 格内最近的投影仪；投影仪上的 `receiverPos` 会随方块实体同步。`/cinema_link` 仅用于立即强制重扫，正常流程不需要。
-- 右键投影仪打开正式 GUI：状态区显示屏幕/灯泡/AV 输入；自动/手动投掷比、自动/手动焦距、梯形、亮度、wash、Power ON/OFF、Focus/Keystone/Wash/Warmup 模拟开关都**改动即保存**（按钮立即，滑块约 200ms debounce；Close/Esc 前 flush）。命令 `/cinema_projector[_client]` 仍可用于调试。
-- 拆掉投影仪后屏幕保持黑屏，接收器音频继续；重新放回后等待自动重连或执行 `/cinema_link`。
+- 屏幕由同朝向、同平面的屏幕方块组成；默认绘制上限 16×16。可在 Mod Menu → Cinema → Config 中调整（1..64，硬上限 64×64），保存到 `config/cinema.json`；启动参数 `-Dcinema.screen.maxSize=N` 仍优先。超过当前上限的部分不绘制。
+- 投影仪不再自动寻找屏幕；未配对时保持无画面。
+- 显式配对（影院线材）：右键投影仪再右键屏幕，或反向顺序；成功后投影仪保存屏幕链接，GUI 状态显示 `linked`。显式链接允许斜向安装，但仍要求屏幕在投影仪前方且距离不超过 48 格。再次右键同一设备取消配对选择；点击不兼容设备会改为选择新设备；选择状态 60 秒超时，玩家断线时清除。
+- 解除连接：潜行右键设备 A，再潜行右键设备 B；只解除 A↔B 这一条连接（支持任意屏幕方块）。同一设备再次潜行右键取消解除选择；两者没有连接时提示。解除选择同样 60 秒超时/断线清除。
+- 接收器不再自动配对投影仪。显式配对（影院线材）：右键接收器再右键投影仪，或反向顺序；接收器保存 `videoTarget`，投影仪保存 `receiverPos`。
+- 显式配对（影院线材）：右键接收器再右键扬声器，或反向顺序；双方保存双向链接，接收器 Speakers 页以 `LINKED` 标记已连接扬声器。当前链接只用于配对/gui 展示，实际 5.1 音频路由仍属 M4。
+- 空手右键投影仪打开正式 GUI：状态区显示屏幕/灯泡/AV 输入；自动/手动投掷比、自动/手动焦距、梯形、亮度、wash、Power ON/OFF、Focus/Keystone/Wash/Warmup 模拟开关都**改动即保存**（按钮立即，滑块约 200ms debounce；Close/Esc 前 flush）。手持物品时保留原版物品/方块交互，不打开 GUI。命令 `/cinema_projector[_client]` 仍可用于调试。
+- AV 接收器与四种扬声器同样只有空手右键打开 GUI；手持物品时保留原版交互。AV 接收器不再向聊天栏打印状态，状态可用 `/cinema_receiver` 查看。
+- 拆掉投影仪后屏幕保持黑屏，接收器音频继续；重新放回后需要再用线材配对投影仪与接收器/屏幕。
 - 拆掉接收器后屏幕立即黑屏、音频停止。
 - `/time set midnight` / `/time set noon` 可测试环境光洗白。
 
-影院设备物品（第一版占位）：
+影院设备物品：
 
 | 物品 | ID | 当前行为 |
 |---|---|---|
-| AV 接收器 | `cinema:av_receiver` | 空手右键显示媒体/状态/音量/视频输出 |
+| AV 接收器 | `cinema:av_receiver` | 空手右键打开接收器 GUI（媒体/扬声器/信号/设置）；手持物品保留原版交互 |
 | 落地式扬声器 | `cinema:floorstanding_speaker` | 两格高；空手右键打开 speaker specs GUI；角色在 GUI 内选择 `NONE/FL/FR/BL/BR` |
 | 书架式扬声器 | `cinema:bookshelf_speaker` | 一格高；空手右键打开 speaker specs GUI；角色在 GUI 内选择 `NONE/FL/FR/BL/BR` |
 | 中置扬声器 | `cinema:center_speaker` | 一格高；空手右键打开 speaker specs GUI；角色在 GUI 内选择 `NONE/FC` |
 | 低音炮 | `cinema:subwoofer` | 一格高；空手右键打开 speaker specs GUI；角色在 GUI 内选择 `NONE/LFE` |
-| 影院线材 | `cinema:cable` | 仅物品与提示，连接行为未接 |
+| 影院线材 | `cinema:cable` | 两次右键配对：投影仪↔屏幕、接收器↔投影仪、接收器↔扬声器；潜行右键两个设备解除它们之间的连接 |
 | 影院遥控器 | `cinema:remote_controller` | 仅物品与提示，遥控行为未接 |
 
 创造模式位置：接收器/扬声器在 Functional Blocks，线材/遥控器在 Tools & Utilities。
@@ -113,7 +116,7 @@ $env:JAVA_TOOL_OPTIONS="-Dcinema.spike.video=$video -Dcinema.spike.manual=true"
 ## 6. 常见问题
 
 - 视频停在最后一帧：`/cinema_seek 0` 重播。
-- 屏幕没有画面：确认接收器正在播放、投影仪已配对、屏幕正面朝向投影仪、距离在 48 格内、光路没有不透明方块遮挡。
+- 屏幕没有画面：确认接收器正在播放、投影仪已用线材配对（`linked`）、屏幕正面朝向投影仪、距离在 48 格内、光路没有不透明方块遮挡。
 - `/cinema_play` 提示找不到文件：文件必须放在默认库或 Settings 添加的外部库；参数用库内 key，或粘贴已注册库内的绝对路径。
 - 第二个接收器无法播放：M1 只允许一个接收器占用音频引擎；先对前一个执行 `/cinema_stop`。
 - `/cinema_projector_client` 没反应：它是客户端命令；真实方块用 `/cinema_projector`。
@@ -134,5 +137,5 @@ $env:JAVA_TOOL_OPTIONS="-Dcinema.spike.video=$video -Dcinema.spike.manual=true"
 -Dcinema.ffmpeg.path=C:\path\to\ffmpeg.exe
 ```
 
-默认 HDR 缩到 720p、SDR 缩到 1080p；`-Dcinema.video.maxHeight=0` 保留原生。
+默认 HDR 缩到 720p、SDR 缩到 1080p；视频输出高度/缩放归未来 AV Receiver `Video Processing`，暂不放在 Mod Menu。调试可用 `-Dcinema.video.maxHeight=N` 覆盖，`0` 保留原生。
 硬件解码默认 `auto`；`-Dcinema.ffmpeg.hwaccel=none` 可关闭。

@@ -11,6 +11,7 @@ import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.blockentity.BlockEntityRenderer;
 import net.minecraft.client.renderer.blockentity.BlockEntityRendererProvider;
 import net.minecraft.client.renderer.texture.OverlayTexture;
+import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
@@ -24,6 +25,8 @@ import java.util.List;
  *
  * <p>Each screen block is one quad. Its corners are projected through the
  * projector lens, keystone-warped, then clipped to the 0..1 image rectangle.
+ * Every block entity draws only its own cell, so a screen no longer disappears
+ * when the section containing the nominal master block is frustum-culled.
  * Doing the mapping per block keeps the per-quad distortion small and gives
  * correct black borders when the throw cone is smaller or larger than the
  * screen. A screen without a paired projector stays dark; there is no flat
@@ -42,15 +45,22 @@ public final class ScreenBlockEntityRenderer implements BlockEntityRenderer<Scre
 	}
 
 	@Override
+	public int getViewDistance() {
+		// Large screens can put individual cells far from the camera even when
+		// the middle of the screen is close; keep every cell rendered.
+		return 512;
+	}
+
+	@Override
 	public void render(ScreenBlockEntity blockEntity, float tickDelta, PoseStack poseStack,
 					   MultiBufferSource bufferSource, int light, int overlay) {
 		Level level = blockEntity.getLevel();
 		if (level == null) {
 			return;
 		}
-		ScreenGeometry geometry = ScreenGeometry.find(
-			level, blockEntity.getBlockPos(), blockEntity.getBlockState());
-		if (!blockEntity.getBlockPos().equals(geometry.master())) {
+		BlockPos pos = blockEntity.getBlockPos();
+		ScreenGeometry geometry = ScreenGeometry.find(level, pos, blockEntity.getBlockState());
+		if (!geometry.contains(pos)) {
 			return;
 		}
 
@@ -76,7 +86,9 @@ public final class ScreenBlockEntityRenderer implements BlockEntityRenderer<Scre
 
 		ProjectorOptics optics = probe;
 		if (Math.abs(player.aspect() - BASE_ASPECT) > 0.001f) {
-			optics = ProjectorOptics.resolve(level, probe.projector(), player.aspect());
+			// Use the cached pairing lookup instead of resolving per block; a
+			// 64x64 screen would otherwise rescan the chunk for every cell.
+			optics = ProjectorOptics.forScreen(level, geometry, player.aspect());
 			if (optics == null) {
 				return;
 			}
@@ -94,19 +106,19 @@ public final class ScreenBlockEntityRenderer implements BlockEntityRenderer<Scre
 
 		if (optics.brightness() > 0.01f) {
 			player.setFocusBlur(optics.blurLod());
-			drawProjected(bufferSource, poseStack, geometry, optics, player.textureId());
+			drawBlock(bufferSource, poseStack, geometry, optics, player.textureId(), pos);
 			drawAmbientWash(bufferSource, poseStack, geometry, optics.ambientWash());
 		}
 	}
 
-	private static void drawProjected(MultiBufferSource bufferSource, PoseStack poseStack,
-									  ScreenGeometry geometry, ProjectorOptics optics,
-									  ResourceLocation textureId) {
+	private static void drawBlock(MultiBufferSource bufferSource, PoseStack poseStack,
+								  ScreenGeometry geometry, ProjectorOptics optics,
+								  ResourceLocation textureId, BlockPos pos) {
 		Vec3 right = geometry.right();
 		Vec3 up = geometry.up();
 		Vec3 normal = geometry.normal();
-		Vec3 master = Vec3.atLowerCornerOf(geometry.master());
 		Vec3 base = geometry.localSurfaceOrigin().add(normal.scale(VIDEO_SURFACE_OFFSET));
+		Vec3 blockOrigin = Vec3.atLowerCornerOf(pos);
 		Matrix4f pose = poseStack.last().pose();
 		float gain = optics.brightness();
 		int brightness = Math.round(255.0f * Math.max(0.0f, Math.min(1.0f, gain)));
@@ -115,31 +127,27 @@ public final class ScreenBlockEntityRenderer implements BlockEntityRenderer<Scre
 		RenderType renderType = RenderType.entityCutoutNoCull(textureId);
 		VertexConsumer consumer = bufferSource.getBuffer(renderType);
 
-		for (int row = 0; row < geometry.height(); row++) {
-			for (int col = 0; col < geometry.width(); col++) {
-				Vec3 p0 = base.add(right.scale(col)).add(up.scale(row));
-				Vec3 p1 = p0.add(right);
-				Vec3 p2 = p1.add(up);
-				Vec3 p3 = p0.add(up);
+		Vec3 p0 = base;
+		Vec3 p1 = p0.add(right);
+		Vec3 p2 = p1.add(up);
+		Vec3 p3 = p0.add(up);
 
-				List<ProjectedPoint> polygon = new ArrayList<>(4);
-				addPoint(polygon, p0, master, optics);
-				addPoint(polygon, p1, master, optics);
-				addPoint(polygon, p2, master, optics);
-				addPoint(polygon, p3, master, optics);
+		List<ProjectedPoint> polygon = new ArrayList<>(4);
+		addPoint(polygon, p0, blockOrigin, optics);
+		addPoint(polygon, p1, blockOrigin, optics);
+		addPoint(polygon, p2, blockOrigin, optics);
+		addPoint(polygon, p3, blockOrigin, optics);
 
-				polygon = clip(polygon, false, true, 0.0f);
-				polygon = clip(polygon, false, false, 1.0f);
-				polygon = clip(polygon, true, true, 0.0f);
-				polygon = clip(polygon, true, false, 1.0f);
-				emitPolygon(consumer, pose, polygon, brightness, nx, nz);
-			}
-		}
+		polygon = clip(polygon, false, true, 0.0f);
+		polygon = clip(polygon, false, false, 1.0f);
+		polygon = clip(polygon, true, true, 0.0f);
+		polygon = clip(polygon, true, false, 1.0f);
+		emitPolygon(consumer, pose, polygon, brightness, nx, nz);
 	}
 
-	private static void addPoint(List<ProjectedPoint> polygon, Vec3 local, Vec3 master,
+	private static void addPoint(List<ProjectedPoint> polygon, Vec3 local, Vec3 blockOrigin,
 								 ProjectorOptics optics) {
-		Vec3 world = master.add(local);
+		Vec3 world = blockOrigin.add(local);
 		float[] uv = optics.uv(world);
 		polygon.add(new ProjectedPoint(local, uv[0], uv[1]));
 	}
@@ -229,9 +237,9 @@ public final class ScreenBlockEntityRenderer implements BlockEntityRenderer<Scre
 		Vec3 normal = geometry.normal();
 		Vec3 base = geometry.localSurfaceOrigin().add(normal.scale(OVERLAY_SURFACE_OFFSET));
 		Vec3 p0 = base;
-		Vec3 p1 = base.add(right.scale(geometry.width()));
-		Vec3 p2 = p1.add(up.scale(geometry.height()));
-		Vec3 p3 = base.add(up.scale(geometry.height()));
+		Vec3 p1 = base.add(right);
+		Vec3 p2 = p1.add(up);
+		Vec3 p3 = base.add(up);
 
 		int alpha = Math.round(255.0f * Math.max(0.0f, Math.min(1.0f, wash)));
 		Matrix4f pose = poseStack.last().pose();

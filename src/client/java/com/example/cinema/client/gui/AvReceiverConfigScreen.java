@@ -4,6 +4,7 @@ import com.example.cinema.Cinema;
 import com.example.cinema.block.entity.AvReceiverBlockEntity;
 import com.example.cinema.block.entity.ProjectorBlockEntity;
 import com.example.cinema.block.entity.SpeakerBlockEntity;
+import com.example.cinema.client.config.CinemaClientConfig;
 import com.example.cinema.client.media.AvReceiverPlayback;
 import com.example.cinema.client.media.AvReceiverPlaybackManager;
 import com.example.cinema.client.media.CinemaPlayer;
@@ -31,15 +32,17 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * M2 AV receiver front panel: media library, transport, outputs, diagnostics
  * and the future speaker setup page.
  *
  * <p>The screen reads the synced receiver block entity directly and sends all
- * changes through {@code AvReceiverControlPayload}. It never pauses the game:
- * opening the panel while a movie is playing must not stop the integrated
- * server.
+ * changes through {@code AvReceiverControlPayload}. Pausing follows the Mod
+ * Menu behavior setting; the default keeps the game running so a movie does
+ * not stop while the panel is open.
  */
 public final class AvReceiverConfigScreen extends Screen {
 	private static final int TAB_HEIGHT = 18;
@@ -48,6 +51,12 @@ public final class AvReceiverConfigScreen extends Screen {
 
 	private static String rememberedLibraryId = LibraryRegistry.DEFAULT_ID;
 	private static String rememberedFolder = "";
+	/**
+	 * Session cache of scanned folders. The first open probes up to
+	 * {@link #PROBE_LIMIT} files; later opens reuse the result until Refresh.
+	 */
+	private static final Map<FolderCacheKey, List<EntryView>> folderCache =
+		new ConcurrentHashMap<>();
 
 	private final AvReceiverBlockEntity receiver;
 	private Tab tab = Tab.MEDIA;
@@ -63,6 +72,7 @@ public final class AvReceiverConfigScreen extends Screen {
 	private int contentTop;
 	private int contentBottom;
 	private int transportTop;
+	private int footerY;
 	private int tabY;
 	private int tabWidth;
 
@@ -125,11 +135,9 @@ public final class AvReceiverConfigScreen extends Screen {
 		contentWidth = panelWidth - 16;
 		tabY = top + 20;
 		contentTop = top + 60;
-		transportTop = top + panelHeight - 42;
+		transportTop = top + panelHeight - 62;
 		contentBottom = transportTop - 4;
-
-		addRenderableWidget(Button.builder(Component.literal("Done"), button -> onClose())
-			.bounds(left + panelWidth - 48, top + 2, 40, 16).build());
+		footerY = top + panelHeight - 22;
 
 		Tab[] tabs = Tab.values();
 		tabWidth = (contentWidth - 6) / tabs.length;
@@ -191,12 +199,10 @@ public final class AvReceiverConfigScreen extends Screen {
 				loadFolder(libraryId, folder, false);
 			}
 		} else if (tab == Tab.SETTINGS) {
-			addRenderableWidget(Button.builder(Component.literal("Re-scan projector"), button -> requestLink())
-				.bounds(contentLeft, contentTop + 4, 124, 18).build());
 			addRenderableWidget(Button.builder(Component.literal("Refresh library"),
 					button -> loadFolder(libraryId, folder, true))
-				.bounds(contentLeft, contentTop + 24, 124, 18).build());
-			libraryPathBox = new EditBox(font, contentLeft, contentTop + 46, contentWidth, 16,
+				.bounds(contentLeft, contentTop + 4, 124, 18).build());
+			libraryPathBox = new EditBox(font, contentLeft, contentTop + 26, contentWidth, 16,
 				Component.literal("External library folder"));
 			libraryPathBox.setHint(Component.literal("External library folder path"));
 			libraryPathBox.setMaxLength(260);
@@ -204,11 +210,13 @@ public final class AvReceiverConfigScreen extends Screen {
 			libraryPathBox.setValue(libraryPathDraft);
 			addRenderableWidget(libraryPathBox);
 			addRenderableWidget(Button.builder(Component.literal("Add library"), button -> addLibrary())
-				.bounds(contentLeft, contentTop + 64, 92, 18).build());
+				.bounds(contentLeft, contentTop + 44, 92, 18).build());
 			removeLibraryButton = Button.builder(Component.literal("Remove library"), button -> removeLibrary())
-				.bounds(contentLeft + 96, contentTop + 64, 104, 18).build();
+				.bounds(contentLeft + 96, contentTop + 44, 104, 18).build();
 			addRenderableWidget(removeLibraryButton);
 		}
+		addRenderableWidget(Button.builder(Component.literal("Close"), button -> onClose())
+			.bounds(contentLeft + contentWidth - 60, contentBottom - 18, 60, 18).build());
 		syncWidgets();
 	}
 
@@ -238,6 +246,8 @@ public final class AvReceiverConfigScreen extends Screen {
 		graphics.drawString(font, title, left + 8, top + 4, 0xE8E8E8, false);
 		drawStatus(graphics);
 		drawContent(graphics, mouseX, mouseY);
+		graphics.drawString(font, truncate("Changes apply immediately. Close when done.",
+				contentWidth - 58), contentLeft, footerY + 5, 0x707070, false);
 	}
 
 	@Override
@@ -294,7 +304,7 @@ public final class AvReceiverConfigScreen extends Screen {
 	public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
 		if (tab == Tab.SETTINGS
 			&& mouseX >= contentLeft && mouseX < contentLeft + contentWidth
-			&& mouseY >= contentTop + 98 && mouseY < contentBottom - 2) {
+			&& mouseY >= contentTop + 98 && mouseY < contentBottom - 22) {
 			int maxScroll = Math.max(0, LibraryRegistry.libraries().size() - visibleLibraryRows());
 			libraryScroll = Math.max(0, Math.min(maxScroll,
 				libraryScroll - (int) Math.signum(scrollY) * 2));
@@ -310,14 +320,30 @@ public final class AvReceiverConfigScreen extends Screen {
 
 	@Override
 	public boolean isPauseScreen() {
-		return false;
+		return CinemaClientConfig.get().pauseGameInDeviceGuis();
 	}
 
 	@Override
 	public void onClose() {
+		flushPendingControls();
 		scanGeneration++;
 		Cinema.LOGGER.info("cinema receiver gui: closed {}", receiver.getBlockPos().toShortString());
 		super.onClose();
+	}
+
+	private void flushPendingControls() {
+		if (seekSlider != null && seekSlider.dragging && receiver.durationSeconds() > 0.0) {
+			seekSlider.dragging = false;
+			pendingSeekSeconds = seekSlider.draftSeconds;
+			pendingSeekUntilMillis = System.currentTimeMillis() + 1_500L;
+			sendSeek(seekSlider.draftSeconds);
+		}
+		if (volumeSlider != null && volumeSlider.dragging) {
+			volumeSlider.dragging = false;
+			pendingVolume = (float) volumeSlider.currentValue();
+			pendingVolumeUntilMillis = System.currentTimeMillis() + 1_500L;
+			sendVolume(volumeSlider.currentValue());
+		}
 	}
 
 	private void switchTab(Tab newTab) {
@@ -387,13 +413,15 @@ public final class AvReceiverConfigScreen extends Screen {
 			setStatus("The default library cannot be removed");
 			return;
 		}
-		if (LibraryRegistry.remove(selectedLibraryId)) {
-			if (libraryId.equals(selectedLibraryId)) {
+		String removedId = selectedLibraryId;
+		if (LibraryRegistry.remove(removedId)) {
+			invalidateLibraryCache(removedId);
+			if (libraryId.equals(removedId)) {
 				libraryId = LibraryRegistry.DEFAULT_ID;
 				folder = "";
 				folderLoaded = false;
 			}
-			if (rememberedLibraryId.equals(selectedLibraryId)) {
+			if (rememberedLibraryId.equals(removedId)) {
 				rememberedLibraryId = LibraryRegistry.DEFAULT_ID;
 				rememberedFolder = "";
 			}
@@ -427,7 +455,7 @@ public final class AvReceiverConfigScreen extends Screen {
 
 	private int libraryRowAt(double mouseX, double mouseY) {
 		if (mouseX < contentLeft || mouseX >= contentLeft + contentWidth
-			|| mouseY < contentTop + 98 || mouseY >= contentBottom - 2) {
+			|| mouseY < contentTop + 98 || mouseY >= contentBottom - 22) {
 			return -1;
 		}
 		int firstY = contentTop + 98;
@@ -577,7 +605,8 @@ public final class AvReceiverConfigScreen extends Screen {
 		graphics.drawString(font, "Speaker routing (M4)", contentLeft, y, 0xE8E8E8, false);
 		graphics.drawString(font, "M1/M2 output: virtual 5.1 through six OpenAL sources.",
 			contentLeft, y + 12, 0x9A9A9A, false);
-		graphics.drawString(font, "Detected speaker blocks within 48 blocks: " + speakerLines.size(),
+		graphics.drawString(font, "Detected speaker blocks within 48 blocks: " + speakerLines.size()
+			+ "  ·  linked: " + receiver.speakerTargets().size(),
 			contentLeft, y + 28, 0xB8B8B8, false);
 		int lineY = y + 44;
 		for (int i = 0; i < Math.min(7, speakerLines.size()); i++) {
@@ -586,6 +615,8 @@ public final class AvReceiverConfigScreen extends Screen {
 			lineY += 10;
 		}
 		graphics.drawString(font, "Right-click a speaker block to edit its speaker specs.",
+			contentLeft, contentBottom - 42, 0x9A9A9A, false);
+		graphics.drawString(font, "Use the Cinema Cable on this receiver, then a speaker, to link it.",
 			contentLeft, contentBottom - 30, 0x9A9A9A, false);
 	}
 
@@ -619,6 +650,8 @@ public final class AvReceiverConfigScreen extends Screen {
 
 	private void drawSettingsTab(GuiGraphics graphics) {
 		int y = contentTop;
+		graphics.drawString(font, "Link a projector with the Cinema Cable.",
+			contentLeft, y + 68, 0x9A9A9A, false);
 		graphics.drawString(font, "Libraries (hover for details):",
 			contentLeft, y + 88, 0xB8B8B8, false);
 		List<LibraryRegistry.Library> libraries = LibraryRegistry.libraries();
@@ -639,11 +672,11 @@ public final class AvReceiverConfigScreen extends Screen {
 				selected ? 0xFFFFFF : 0xB8B8B8, false);
 		}
 		if (maxScroll > 0) {
-			int trackHeight = Math.max(1, contentBottom - 2 - firstRow);
+			int trackHeight = Math.max(1, contentBottom - 22 - firstRow);
 			int thumbHeight = Math.max(8, trackHeight * rows / Math.max(rows, libraries.size()));
 			int thumbY = firstRow + (trackHeight - thumbHeight) * libraryScroll / maxScroll;
 			graphics.fill(contentLeft + contentWidth - 2, firstRow, contentLeft + contentWidth,
-				contentBottom - 2, 0x50000000);
+				contentBottom - 22, 0x50000000);
 			graphics.fill(contentLeft + contentWidth - 2, thumbY, contentLeft + contentWidth,
 				thumbY + thumbHeight, 0xFFAAAAAA);
 		}
@@ -705,8 +738,15 @@ public final class AvReceiverConfigScreen extends Screen {
 			return;
 		}
 		String targetLibrary = newLibraryId == null ? LibraryRegistry.DEFAULT_ID : newLibraryId;
-		if (LibraryRegistry.findById(targetLibrary) == null) {
+		LibraryRegistry.Library library = LibraryRegistry.findById(targetLibrary);
+		if (library == null) {
 			targetLibrary = LibraryRegistry.DEFAULT_ID;
+			library = LibraryRegistry.findById(targetLibrary);
+		}
+		if (library == null) {
+			scanning = false;
+			setStatus("Media library is unavailable");
+			return;
 		}
 		libraryId = targetLibrary;
 		folder = newFolder == null ? "" : newFolder;
@@ -722,6 +762,20 @@ public final class AvReceiverConfigScreen extends Screen {
 		}
 		int generation = ++scanGeneration;
 		String targetFolder = folder;
+		LibraryRegistry.Library cachedLibrary = library;
+
+		if (!force) {
+			List<EntryView> cached = cachedFolder(cachedLibrary, targetFolder);
+			if (cached != null) {
+				entries.clear();
+				entries.addAll(cached);
+				scanning = false;
+				folderLoaded = true;
+				syncWidgets();
+				return;
+			}
+		}
+
 		String finalLibrary = targetLibrary;
 		Thread thread = new Thread(() -> {
 			List<EntryView> loaded = new ArrayList<>();
@@ -746,6 +800,11 @@ public final class AvReceiverConfigScreen extends Screen {
 				error = e.getMessage();
 			}
 			String finalError = error;
+			if (finalError == null) {
+				// Cache even when the screen closed during the scan, so reopening
+				// does not start the same probe work again.
+				cacheFolder(cachedLibrary, targetFolder, loaded);
+			}
 			Minecraft.getInstance().execute(() -> {
 				if (generation != scanGeneration) {
 					return;
@@ -762,6 +821,20 @@ public final class AvReceiverConfigScreen extends Screen {
 		}, "cinema-media-scan");
 		thread.setDaemon(true);
 		thread.start();
+	}
+
+	private static List<EntryView> cachedFolder(LibraryRegistry.Library library, String folder) {
+		return folderCache.get(new FolderCacheKey(library.id(), library.root(), folder));
+	}
+
+	private static void cacheFolder(LibraryRegistry.Library library, String folder,
+									List<EntryView> entries) {
+		folderCache.put(new FolderCacheKey(library.id(), library.root(), folder),
+			List.copyOf(entries));
+	}
+
+	private static void invalidateLibraryCache(String libraryId) {
+		folderCache.keySet().removeIf(key -> key.libraryId().equals(libraryId));
 	}
 
 	private void playSelected() {
@@ -843,12 +916,6 @@ public final class AvReceiverConfigScreen extends Screen {
 			receiver.isMuted() ? 0.0 : 1.0);
 	}
 
-	private void requestLink() {
-		AvReceiverControlClient.sendSimple(receiver.getBlockPos(),
-			AvReceiverControlPayload.Action.LINK_PROJECTOR);
-		setStatus("Projector link requested");
-	}
-
 	private void refreshWarnings() {
 		if (receiver.mediaKey().isEmpty()) {
 			mediaMissing = false;
@@ -887,8 +954,9 @@ public final class AvReceiverConfigScreen extends Screen {
 					if (Vec3.atCenterOf(speaker.getBlockPos()).distanceToSqr(origin) > 48.0 * 48.0) {
 						continue;
 					}
-					speakerLines.add(speaker.role().label() + "  " + speaker.type().id()
-						+ "  " + speaker.getBlockPos().toShortString());
+					boolean linked = receiver.speakerTargets().contains(speaker.getBlockPos());
+					speakerLines.add((linked ? "LINKED " : "       ") + speaker.role().label() + "  "
+						+ speaker.type().id() + "  " + speaker.getBlockPos().toShortString());
 				}
 			}
 		}
@@ -952,7 +1020,7 @@ public final class AvReceiverConfigScreen extends Screen {
 	}
 
 	private int visibleLibraryRows() {
-		return Math.max(1, (contentBottom - 2 - (contentTop + 98)) / 11);
+		return Math.max(1, (contentBottom - 22 - (contentTop + 98)) / 11);
 	}
 
 	private boolean inList(double mouseX, double mouseY) {
@@ -1079,6 +1147,9 @@ public final class AvReceiverConfigScreen extends Screen {
 		return String.format(Locale.ROOT, "%.2f GB", bytes / (1024.0 * 1024.0 * 1024.0));
 	}
 
+	private record FolderCacheKey(String libraryId, Path root, String folder) {
+	}
+
 	private record EntryView(MediaLibrary.Entry entry, MediaLibrary.Probe probe, String error) {
 	}
 
@@ -1196,6 +1267,10 @@ public final class AvReceiverConfigScreen extends Screen {
 			pendingVolumeUntilMillis = System.currentTimeMillis() + 1_500L;
 			sendVolume(value);
 			super.onRelease(mouseX, mouseY);
+		}
+
+		private double currentValue() {
+			return value;
 		}
 
 		private void setExternal(float volume) {

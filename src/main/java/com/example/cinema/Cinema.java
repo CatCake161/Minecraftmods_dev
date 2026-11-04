@@ -13,6 +13,7 @@ import com.example.cinema.block.entity.SpeakerType;
 import com.example.cinema.command.ProjectorCommand;
 import com.example.cinema.item.CableItem;
 import com.example.cinema.item.RemoteControllerItem;
+import com.example.cinema.pairing.CinemaPairing;
 import com.example.cinema.network.ProjectorSettingsHandler;
 import com.example.cinema.network.ProjectorSettingsPayload;
 import com.example.cinema.network.AvReceiverControlHandler;
@@ -23,6 +24,7 @@ import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.itemgroup.v1.ItemGroupEvents;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -107,6 +109,8 @@ public class Cinema implements ModInitializer {
 
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
 			ProjectorCommand.register(dispatcher));
+		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) ->
+			CinemaPairing.clear(handler.getPlayer().getUUID()));
 
 		ItemGroupEvents.modifyEntriesEvent(CreativeModeTabs.FUNCTIONAL_BLOCKS).register(entries -> {
 			entries.accept(SCREEN_ITEM);

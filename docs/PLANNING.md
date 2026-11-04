@@ -71,7 +71,7 @@ M1 已把解码、播放状态、媒体选择和音画时钟迁入 AV Receiver�
 
 默认参数：
 
-- `-Dcinema.video.maxHeight=720`（HDR）/ `1080`（SDR）
+- 视频输出高度：归未来 AV Receiver `Video Processing`，不放在 Mod Menu；当前默认 HDR 720 / SDR 1080，调试可用 `-Dcinema.video.maxHeight` 覆盖，0 = 原生
 - `-Dcinema.ffmpeg.hwaccel=auto`
 - `-Dcinema.ffmpeg.path=...` 可覆盖 FFmpeg 位置
 - HDR10/HLG 自动 `zscale + tonemap` 到 BT.709；HDR 默认 720p
@@ -79,7 +79,8 @@ M1 已把解码、播放状态、媒体选择和音画时钟迁入 AV Receiver�
 ### 3.2 屏幕与投影仪
 
 - `ScreenBlock` / `ScreenBlockEntity` / `ScreenBlockEntityRenderer`
-- `ScreenGeometry`：扫描同朝向、同平面的连续矩形；master 是观众左/下角。
+- `ScreenGeometry`：扫描同朝向、同平面的连续矩形（硬上限 64×64，逐帧缓存）；master 是观众左/下角。实际宽高按 Mod Menu 设置（1..64，默认 16×16，保存到 `config/cinema.json`）裁剪；`-Dcinema.screen.maxSize` 覆盖保存值。
+- 每个屏幕方块实体只绘制自己那一格，避免 master 所在 section 被视锥剔除时整屏消失。
 - `ProjectorBlock` / `ProjectorBlockEntity`：投掷比、焦距、梯形、亮度、灯泡状态。
 - `ProjectorOptics`：自动找屏幕；镜头 view/projection；逐块 UV 投影与裁剪。
 
@@ -107,9 +108,9 @@ M1 已把解码、播放状态、媒体选择和音画时钟迁入 AV Receiver�
 | P0.5-C | 真实 720p30 + 5.1、有界队列、seek、预热 | ✅ |
 | P1-1 | 屏幕方块、多方块扫描、master 渲染 | ✅ |
 | P1-2 | 投影仪镜头、投掷比、对焦、梯形、环境光、灯泡 | ✅ 第一版 |
-| P1-3 | 投影仪 GUI（仅物理模拟/光学/灯泡/wash、配对） | ✅ M1/M2/M3 已验收；对焦模糊观感后续改进；M4 未做 |
+| P1-3 | 投影仪 GUI（仅物理模拟/光学/灯泡/wash、配对） | ✅ M1/M2/M3 已验收；线材显式配对已实现、待验收；诊断未做；对焦模糊观感后续改进 |
 | P1-4 | AV Receiver（解码、媒体、播放状态、视频/音频分发） | ✅ M1 |
-| P1-5 | Speaker + Seat（只接收 AV 的音频） | 🟡 Speaker 四种箱体/角色限制；Seat 未做 |
+| P1-5 | Speaker + Seat（只接收 AV 的音频） | 🟡 Speaker 四种箱体/角色限制、接收器↔扬声器线材链接；实际 5.1 路由/Seat 未做 |
 | P1-6 | 每接收器独立媒体、LAN 同步 | ⬜ |
 | P1-7 | 房间声学/音频计算（直达声、一阶反射、Spinorama 指向性、晚期混响） | ⬜ 规划（依赖 P1-5；见 [AUDIO-ACOUSTICS.md](design/AUDIO-ACOUSTICS.md)） |
 | P2 | 任意投影面、真实光照、HRTF、自动校准 | ⬜ |

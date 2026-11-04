@@ -69,11 +69,6 @@ public final class ClientReceiverCommand {
 				return 1;
 			}));
 
-		dispatcher.register(ClientCommandManager.literal("cinema_link")
-			.executes(context -> sendSimple(context.getSource(),
-				AvReceiverControlPayload.Action.LINK_PROJECTOR,
-				"cinema: projector link requested")));
-
 		dispatcher.register(ClientCommandManager.literal("cinema_receiver")
 			.executes(context -> info(context.getSource()))
 			.then(ClientCommandManager.literal("info")

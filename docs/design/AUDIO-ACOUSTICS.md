@@ -357,13 +357,13 @@ R_p = sqrt(1 - α_p)
 - **本地 profile**：`<game>/cinema/speaker_specs/profiles/*.json`；支持把 `.json` 拖到 GUI 导入，文件大小限制 1 MB。旧 `speaker_directivity` 文件夹会尝试一次性迁移。
 - **三组测量数据**：measured profile 包含水平指向性、垂直指向性、轴上响应（`onAxis`）；H/V 用轴上响应归一化，三者必须使用同一 SPL 尺度。
 - **简单参数**：客户端 GUI 可编辑频响范围 low/high Hz、`SPL gain dB`，并循环选择 profile；类型默认保存到 `settings.json`，具体扬声器保存到 `assignments.json`。
-- **角色选择**：per-speaker GUI 内直接循环合法角色；Done 通过 C2S `SpeakerRolePayload` 提交到服务端，服务端校验距离/方块/箱体类型后写入 block entity。
+- **角色选择**：per-speaker GUI 内直接循环合法角色；点击即通过 C2S `SpeakerRolePayload` 提交到服务端，服务端校验距离/方块/箱体类型后写入 block entity。
 - **按扬声器保存**：`assignments.json` 以“维度 + 方块坐标”为 key，保存该扬声器自己的 profile 和参数；没有 assignment 的扬声器回退到类型默认。
 - **求值**：`SpeakerSpecsProfile.gainDb(horizontal, vertical, frequency)`；measured profile 对 H/V 表做频率/角度插值，减去轴上响应，再以 separable（dB 相加）方式合成；结果 clamp 到 -60..+12 dB。
 - **入口**：空手右键扬声器方块打开该扬声器的 speaker specs GUI；角色选择在 GUI 内。`/cinema_speaker_specs` 是类型默认的调试入口；`reload` 重扫文件夹，`info` 打印每类当前 profile，`test <type> <h> <v> <hz>` 打印指定角度/频率的增益。
 - **示例**：`docs/examples/speaker_specs/`（含 synthetic 测试表和 cardioid 简单 profile）。
 - **边界**：这个 spike 不把 speaker specs 应用到 `CinemaAudioEngine` 的实际音频；A2d 才做反射/离轴渲染。`SPL gain dB` 目前只是保存/显示，尚未进入增益分配。
-- **暂停**：GUI 的 `isPauseScreen()` 为 false，单机打开面板不会暂停集成服务器/播放。
+- **暂停**：GUI 是否暂停由 Mod Menu 的 `Pause game in device GUIs` 控制，默认 false；单机打开面板不会暂停集成服务器/播放。
 - **许可**：内置 profile 和 synthetic 示例是项目自带/CC0；用户导入的真实 Spinorama 数据仍受其原始 license 约束，GUI 会显示 source/license。
 
 #### 7.4.2 Spinorama API 使用（2026-11 核对）

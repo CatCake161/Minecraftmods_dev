@@ -4,8 +4,6 @@ import com.example.cinema.Cinema;
 import com.example.cinema.block.entity.AvReceiverBlockEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.world.InteractionResult;
-import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
@@ -17,7 +15,6 @@ import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
 import net.minecraft.world.level.block.state.properties.DirectionProperty;
-import net.minecraft.world.phys.BlockHitResult;
 
 /** AV receiver chassis; media and playback state live in the block entity. */
 public class AvReceiverBlock extends Block implements EntityBlock {
@@ -55,14 +52,5 @@ public class AvReceiverBlock extends Block implements EntityBlock {
 				AvReceiverBlockEntity.tick(tickLevel, pos, tickState, receiver);
 			}
 		};
-	}
-
-	@Override
-	protected InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos, Player player,
-											   BlockHitResult hit) {
-		if (!level.isClientSide && level.getBlockEntity(pos) instanceof AvReceiverBlockEntity receiver) {
-			player.displayClientMessage(receiver.status(), false);
-		}
-		return InteractionResult.sidedSuccess(level.isClientSide);
 	}
 }

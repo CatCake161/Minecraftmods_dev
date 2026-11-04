@@ -56,7 +56,7 @@ class: AvReceiverBlock / AvReceiverBlockEntity
 
 - 水平朝向可选；接收器不参与光学，朝向只影响模型和后续扬声器配对。
 - 创造模式物品栏与屏幕/投影仪同组。
-- 右键打开接收器 GUI（M2）；M1 先用客户端命令控制。
+- 空手右键打开接收器 GUI（M2）；M1 先用客户端命令控制。
 - 拆除时停止播放、清理配对、通知客户端释放纹理。
 
 ### 3.2 `AvReceiverBlockEntity` 字段
@@ -71,6 +71,7 @@ positionSeconds   double      服务端权威播放位置
 volume            float       0..1
 muted             boolean
 videoTarget       BlockPos    配对的投影仪；空 = 无视频输出
+speakerTargets    long[]      线材显式配对的扬声器坐标列表
 stateChangedGameTime     long        服务端写入状态时的 game time（NBT key 仍为 stateGameTime）
 ```
 
@@ -89,10 +90,9 @@ stateChangedGameTime     long        服务端写入状态时的 game time（NBT
 receiverPos       Optional<BlockPos>
 ```
 
-- 接收器放置时扫描前方/附近 32 格内最近的投影仪，写入双方的配对。
-- 投影仪被拆除或接收器被拆除时清空对方引用。
-- M1 用“最近投影仪”自动配对；显式配对工具（线材/对码器）后续替换。
-- 屏幕配对保持现状：投影仪自动找前方屏幕。
+- 投影仪↔接收器使用影院线材显式配对：投影仪保存 `receiverPos`，接收器保存 `videoTarget`。不再扫描最近的投影仪。
+- 投影仪被拆除或接收器被拆除时清空对方引用；区块卸载不会清空链接。
+- 屏幕配对同样使用影院线材写入投影仪的 `screenPos`；不再自动寻找前方屏幕（见 PROJECTOR-GUI.md M4）。
 
 ## 4. 媒体标识与本地库
 
@@ -235,6 +235,7 @@ M1：
 M2+：
 
 - 接收器按角色把六个声道分配给已配对 Speaker 方块。
+- 当前进度：线材可在接收器与扬声器之间建立双向链接，接收器 `speakerTargets` / 扬声器 `receiverPos` 均持久化，Speakers 页显示 `LINKED`；实际声音仍走虚拟 5.1，链接尚未参与音频输出（M4）。
 - 箱体类型决定可用角色：落地式/书架式用于 FL/FR/BL/BR，中置用于 FC，低音炮用于 LFE；不合法角色回退 NONE。
 - 每个 Speaker 一个 mono source，位置/朝向来自方块；接收器只做路由。
 - Speaker 不做解码，不直接读文件。
@@ -301,7 +302,7 @@ duration, volume, muted, missing, CinemaPlayer player
 - **媒体**：选片、媒体库、播放状态。
 - **扬声器**：布局、角色、测试音、距离/电平/分频/混响（M4）。
 - **信号**：codec、分辨率、丢帧、延迟、指纹等诊断。
-- **设置**：媒体库位置、自动配对、默认音量、关于。
+- **设置**：媒体库位置、投影仪/扬声器配对状态、默认音量、关于。
 
 ### 10.2 常驻状态栏与播放条
 
@@ -332,7 +333,8 @@ duration, volume, muted, missing, CinemaPlayer player
 
 ### 10.4 扬声器页（M4）
 
-- 5.1 布局图 + 已发现扬声器列表：角色、箱体类型、距离、电平、在线状态。
+- 5.1 布局图 + 已发现扬声器列表：角色、箱体类型、距离、电平、在线状态；线材显式配对的条目带 `LINKED` 前缀。
+- 当前链接只是元数据：用线材连接接收器与扬声器后显示 `LINKED`，音频路由/测试音仍未接入（M4）。
 - 角色分配只显示合法项：中置仅 `FC`，低音炮仅 `LFE`，落地式/书架式仅 `NONE/FL/FR/BL/BR`。
 - 单只/全部测试音。
 - 每声道电平、距离/延迟、LFE 分频、聆听模式（5.1 直通/立体声下混/上混）。
@@ -353,7 +355,7 @@ duration, volume, muted, missing, CinemaPlayer player
 
 - 默认媒体库只读显示 `cinema/media/`。
 - **外部媒体库**：输入文件夹绝对路径 → Add library；列表可选中/Remove library（只删注册，不删文件）。
-- 自动配对投影仪开关。
+- 投影仪/扬声器配对状态（只读；连接由影院线材修改）。
 - 默认音量/最大音量。
 - 重新扫描设备。
 - 关于/版本。
@@ -372,7 +374,7 @@ duration, volume, muted, missing, CinemaPlayer player
 - GUI 控件走 `AvReceiverControlPayload` C2S；服务端校验距离/方块/路径/数值。
 - 媒体列表、哈希、时长不得在渲染线程同步执行。
 - 支持 GUI scale 1..4、键盘操作、tooltip、禁用态；文本走 lang。
-- Done 保存并关闭，Cancel/Esc 丢弃未提交的媒体/音量草稿。
+- Done/Cancel 已取消：改动即保存；Close/Esc 关闭并 flush 正在拖动的 seek/volume。
 
 ## 11. 分阶段实现
 
@@ -388,9 +390,9 @@ duration, volume, muted, missing, CinemaPlayer player
 M1 已完成并通过游戏内验收：
 
 - 固定媒体库 `<game>/cinema/media/` + 相对 key；客户端异步计算 SHA-256/时长。
-- `AvReceiverControlPayload`（C2S）统一处理选片/播放/暂停/停止/seek/音量/静音/重连投影仪。
+- `AvReceiverControlPayload`（C2S）统一处理选片/播放/暂停/停止/seek/音量/静音；投影仪由影院线材显式配对。
 - 客户端 `AvReceiverPlaybackManager` 每 10 tick 同步附近接收器；视频经 `ProjectorOptics` 路由到屏幕，音频进入共享 OpenAL 5.1 引擎。
-- 接收器每 20 tick 自动配对/重连 48 格内最近投影仪；`/cinema_link` 仅用于强制重扫。
+- 接收器每 20 tick 校验显式投影仪链接；自动配对/`/cinema_link` 已取消（2026-11-04）。
 - 单接收器占用音频引擎；第二个接收器在播放/暂停状态下会被拒绝，需先 `/cinema_stop`。
 - 缺文件时屏幕黑屏、命令/日志提示，不崩溃；拆接收器/投影仪/屏幕均能停止或恢复。
 
@@ -425,17 +427,19 @@ M2 已完成并通过游戏内验收：
 - 两个接收器：M1 明确拒绝第二个音频占用；M3 再测独立播放。
 - 资源重载、世界卸载、断线重连：无纹理/线程泄漏。
 - 4K60/HDR：接收器链路不改变现有解码性能；记录丢帧。
-- GUI scale 1/2/3/4、键盘操作、Esc/Done/Cancel 语义（M2）。
+- GUI scale 1/2/3/4、键盘操作、Esc/Close 语义（M2）。
 - 与 Sodium/Iris/BSL 同时运行不崩溃。
 
 ## 14. 待确认决策
 
 1. **媒体库位置**：固定 `<gameDir>/cinema/media/`（推荐，简单且不泄露绝对路径），还是可配置目录？
 2. **旧 `/cinema_play`**：M1 直接改为“选最近接收器 + 媒体库相对路径”（推荐，架构干净），还是保留绝对路径的临时旁路直到 M2？
-3. **接收器↔投影仪配对**：M1 自动配最近投影仪（推荐，和屏幕自动配对一致），还是先做显式 `link` 命令/配对器？
+3. **接收器↔投影仪配对（已决）**：影院线材显式配对，不再自动配最近投影仪（2026-11-04）。
 4. **状态同步**：M1 用原版 block entity 更新（推荐，改动小），还是直接上专用 S2C 包？
 5. **多接收器**：M1 只允许一个接收器占用音频引擎（推荐），还是从第一版就做每接收器独立引擎？
 
-M1 采用推荐值：默认媒体库、相对 key、自动配对最近投影仪、原版 block entity 状态同步、单音频引擎。`/cinema_play` 已改为操作 64 格内最近接收器；GUI 与每接收器独立引擎留到 M2/M3。
+M1 采用推荐值：默认媒体库、相对 key、原版 block entity 状态同步、单音频引擎。`/cinema_play` 已改为操作 64 格内最近接收器；GUI 与每接收器独立引擎留到 M2/M3。
+
+> 2026-11-04 更新：自动配对已取消。投影仪↔屏幕、接收器↔投影仪、接收器↔扬声器均改用影院线材显式配对。
 
 M2 采用：默认库 `cinema/media/` + 客户端外部库；外部库 key 为 `lib/<id>/<相对路径>`，绝对路径仅保存在客户端 `cinema/libraries.json`，不进入方块实体或网络包。LAN 客户端需要配置同名外部库才能解析同一 key。

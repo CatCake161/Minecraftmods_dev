@@ -1,14 +1,15 @@
 package com.example.cinema.client.render;
 
+import com.example.cinema.Cinema;
 import com.example.cinema.block.ProjectorBlock;
 import com.example.cinema.block.entity.ProjectorBlockEntity;
-import com.example.cinema.block.entity.ScreenBlockEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
@@ -22,14 +23,13 @@ import java.util.Map;
  * Resolved projector installation for one frame: lens pose, throw cone,
  * focus, keystone warp and ambient wash.
  *
- * <p>Geometry is recomputed on the render thread from the block entity and the
- * paired screen. Pairing searches loaded chunks around the screen, so moving or
- * replacing a screen is picked up without an explicit link item.
+ * <p>Geometry is recomputed on the render thread from the block entity and its
+ * explicitly linked screen. Projectors no longer search for the nearest screen;
+ * screens without a link stay dark until the Cinema Cable pairs them.
  */
 public final class ProjectorOptics {
 	private static final double MAX_RANGE = 48.0;
 	private static final long PAIRING_CACHE_MS = 250L;
-	private static final float MIN_FACING_DOT = 0.20f;
 	private static final float BASE_IMAGE_ASPECT = 16.0f / 9.0f;
 
 	private static final Map<PairingKey, PairingCache> pairingCache = new HashMap<>();
@@ -65,11 +65,7 @@ public final class ProjectorOptics {
 		this.ambientWash = ambientWash;
 	}
 
-	/**
-	 * Finds the projector that currently feeds this screen. A short cache keeps
-	 * the chunk scan out of the per-frame path while still reacting to block
-	 * changes quickly.
-	 */
+	/** Finds the projector explicitly linked to this screen, or null. */
 	public static ProjectorOptics forScreen(Level level, ScreenGeometry screen, float videoAspect) {
 		PairingKey key = new PairingKey(level.dimension(), screen.master(),
 			Float.floatToIntBits(videoAspect));
@@ -160,54 +156,31 @@ public final class ProjectorOptics {
 	}
 
 	private static ScreenGeometry findScreen(Level level, ProjectorBlockEntity projector) {
+		BlockPos explicit = projector.screenPos();
+		if (explicit == null) {
+			return null;
+		}
 		Direction facing = projector.getBlockState().getValue(ProjectorBlock.FACING);
 		Vec3 forward = new Vec3(facing.getStepX(), 0.0, facing.getStepZ());
 		Vec3 lens = projector.lensPosition();
-		BlockPos projectorPos = projector.getBlockPos();
-		ChunkPos centerChunk = new ChunkPos(projectorPos);
-		int radiusChunks = (int) Math.ceil(MAX_RANGE / 16.0);
-
-		ScreenGeometry best = null;
-		double bestScore = Double.MAX_VALUE;
-		for (int chunkX = centerChunk.x - radiusChunks; chunkX <= centerChunk.x + radiusChunks; chunkX++) {
-			for (int chunkZ = centerChunk.z - radiusChunks; chunkZ <= centerChunk.z + radiusChunks; chunkZ++) {
-				LevelChunk chunk = level.getChunkSource().getChunkNow(chunkX, chunkZ);
-				if (chunk == null) {
-					continue;
-				}
-				for (BlockEntity blockEntity : chunk.getBlockEntities().values()) {
-					if (!(blockEntity instanceof ScreenBlockEntity screenBlock)) {
-						continue;
-					}
-					ScreenGeometry geometry = ScreenGeometry.find(level,
-						screenBlock.getBlockPos(), screenBlock.getBlockState());
-					if (!geometry.master().equals(screenBlock.getBlockPos())) {
-						continue;
-					}
-					Vec3 center = geometry.center();
-					Vec3 toScreen = center.subtract(lens);
-					double distance = toScreen.length();
-					if (distance < 1.0 || distance > MAX_RANGE) {
-						continue;
-					}
-					Vec3 direction = toScreen.scale(1.0 / distance);
-					double facingDot = direction.dot(forward);
-					if (facingDot < MIN_FACING_DOT) {
-						continue;
-					}
-					// The projector must be in front of the screen, not behind it.
-					if (lens.subtract(center).dot(geometry.normal()) <= 0.05) {
-						continue;
-					}
-					double score = distance / Math.max(0.1, facingDot);
-					if (score < bestScore) {
-						bestScore = score;
-						best = geometry;
-					}
-				}
-			}
+		BlockState explicitState = level.getBlockState(explicit);
+		if (!explicitState.is(Cinema.SCREEN_BLOCK)) {
+			return null;
 		}
-		return best;
+		ScreenGeometry geometry = ScreenGeometry.find(level, explicit, explicitState);
+		Vec3 center = geometry.center();
+		Vec3 toScreen = center.subtract(lens);
+		double distance = toScreen.length();
+		if (distance < 1.0 || distance > MAX_RANGE) {
+			return null;
+		}
+		if (lens.subtract(center).dot(geometry.normal()) <= 0.05) {
+			return null;
+		}
+		if (center.subtract(lens).dot(forward) <= 0.05) {
+			return null;
+		}
+		return geometry;
 	}
 
 	/**

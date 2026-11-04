@@ -38,7 +38,7 @@ public final class ClientProjectorCommand {
 						projector, videoAspect());
 					String paired = optics == null ? "none" : optics.screen().master().toShortString();
 					context.getSource().sendFeedback(Component.literal(String.format(
-						"client projector %s: throw=%s focus=%s keystone=%.1f/%.1f brightness=%.2f wash=%.2f power=%s screen=%s",
+						"client projector %s: throw=%s focus=%s keystone=%.1f/%.1f brightness=%.2f wash=%.2f power=%s screen=%s link=%s",
 						projector.getBlockPos(),
 						projector.throwRatio() < 0.0 ? "auto"
 							: String.format("%.2f", projector.throwRatio()),
@@ -50,7 +50,8 @@ public final class ClientProjectorCommand {
 						projector.brightness(),
 						projector.ambientWash(),
 						projector.isPowered() ? "on" : "off",
-						paired)));
+						paired,
+						projector.screenPos() == null ? "none" : "explicit")));
 					return 1;
 				}))
 			.then(ClientCommandManager.literal("throw")

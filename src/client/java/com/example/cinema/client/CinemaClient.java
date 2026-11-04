@@ -12,6 +12,7 @@ import com.example.cinema.client.command.ClientHelpCommand;
 import com.example.cinema.client.command.ClientReceiverCommand;
 import com.example.cinema.client.command.ClientProjectorCommand;
 import com.example.cinema.client.command.ClientSpeakerSpecsCommand;
+import com.example.cinema.client.config.CinemaClientConfig;
 import com.example.cinema.client.gui.AvReceiverConfigScreen;
 import com.example.cinema.client.gui.ProjectorConfigScreen;
 import com.example.cinema.client.gui.SpeakerSpecsConfigScreen;
@@ -20,6 +21,8 @@ import com.example.cinema.client.media.CinemaPlayer;
 import com.example.cinema.client.media.CinemaPrewarm;
 import com.example.cinema.client.render.ProjectorOptics;
 import com.example.cinema.client.render.ScreenBlockEntityRenderer;
+import com.example.cinema.client.render.ScreenGeometry;
+import com.example.cinema.client.render.ScreenLimits;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -64,6 +67,13 @@ public class CinemaClient implements ClientModInitializer {
 		SpeakerSpecsAssignments.load();
 
 		UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
+			if (!CinemaClientConfig.get().emptyHandOpensDeviceGuis()) {
+				return InteractionResult.PASS;
+			}
+			// Held items keep their normal block interaction; only a bare hand opens a GUI.
+			if (!player.getItemInHand(hand).isEmpty()) {
+				return InteractionResult.PASS;
+			}
 			BlockEntity blockEntity = world.getBlockEntity(hitResult.getBlockPos());
 			if (world.getBlockState(hitResult.getBlockPos()).is(Cinema.PROJECTOR_BLOCK)
 				&& blockEntity instanceof ProjectorBlockEntity projector) {
@@ -80,9 +90,6 @@ public class CinemaClient implements ClientModInitializer {
 				return InteractionResult.SUCCESS;
 			}
 			if (world.getBlockState(hitResult.getBlockPos()).getBlock() instanceof SpeakerBlock) {
-				if (!player.getItemInHand(hand).isEmpty()) {
-					return InteractionResult.PASS;
-				}
 				if (world.isClientSide) {
 					SpeakerBlockEntity speaker = findSpeaker(world, hitResult.getBlockPos());
 					if (speaker != null) {
@@ -128,11 +135,16 @@ public class CinemaClient implements ClientModInitializer {
 		});
 
 		BlockEntityRendererRegistry.register(Cinema.screenBlockEntity, ScreenBlockEntityRenderer::new);
+		WorldRenderEvents.START.register(context -> ScreenGeometry.beginFrame());
 		WorldRenderEvents.AFTER_ENTITIES.register(context -> {
 			AvReceiverPlaybackManager.presentFrames();
 			CinemaPlayer.presentActiveFrame();
 		});
 		ClientTickEvents.END_CLIENT_TICK.register(AvReceiverPlaybackManager::tick);
+
+		Cinema.LOGGER.info(
+			"cinema screen: max rendered size {}x{} ({})",
+			ScreenLimits.maxSize(), ScreenLimits.maxSize(), ScreenLimits.source());
 
 		if (System.getProperty("cinema.spike.audio") != null
 			|| System.getProperty("cinema.spike.video") != null
@@ -274,21 +286,25 @@ public class CinemaClient implements ClientModInitializer {
 		Vec3 pose = fixedPlayerPos;
 		float yaw = fixedPlayerYaw;
 		float pitch = fixedPlayerPitch;
+		boolean modifyWorld = CinemaClientConfig.get().spikeModifiesWorld();
 		server.execute(() -> {
 			ServerLevel level = server.overworld();
-			level.setDayTime(6000L);
-			GameRules rules = level.getGameRules();
-			rules.getRule(GameRules.RULE_DAYLIGHT).set(false, server);
-			rules.getRule(GameRules.RULE_WEATHER_CYCLE).set(false, server);
-			rules.getRule(GameRules.RULE_DOMOBSPAWNING).set(false, server);
-			level.setWeatherParameters(6000, 0, false, false);
+			int removed = 0;
+			if (modifyWorld) {
+				level.setDayTime(6000L);
+				GameRules rules = level.getGameRules();
+				rules.getRule(GameRules.RULE_DAYLIGHT).set(false, server);
+				rules.getRule(GameRules.RULE_WEATHER_CYCLE).set(false, server);
+				rules.getRule(GameRules.RULE_DOMOBSPAWNING).set(false, server);
+				level.setWeatherParameters(6000, 0, false, false);
 
-			AABB removalArea = new AABB(
-				pose.x - 96.0, pose.y - 48.0, pose.z - 96.0,
-				pose.x + 96.0, pose.y + 48.0, pose.z + 96.0);
-			var mobs = level.getEntitiesOfClass(Mob.class, removalArea);
-			mobs.forEach(Entity::discard);
-			int removed = mobs.size();
+				AABB removalArea = new AABB(
+					pose.x - 96.0, pose.y - 48.0, pose.z - 96.0,
+					pose.x + 96.0, pose.y + 48.0, pose.z + 96.0);
+				var mobs = level.getEntitiesOfClass(Mob.class, removalArea);
+				mobs.forEach(Entity::discard);
+				removed = mobs.size();
+			}
 
 			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
 				player.teleportTo(level, pose.x, pose.y, pose.z, yaw, pitch);
@@ -297,8 +313,8 @@ public class CinemaClient implements ClientModInitializer {
 				player.setNoGravity(false);
 			}
 			Cinema.LOGGER.info(
-				"cinema spike: fixed environment at {} yaw={} time=6000 clear mobSpawning=false removedMobs={}",
-				pose, yaw, removed);
+				"cinema spike: fixed player at {} yaw={} worldModified={} removedMobs={}",
+				pose, yaw, modifyWorld, removed);
 		});
 	}
 

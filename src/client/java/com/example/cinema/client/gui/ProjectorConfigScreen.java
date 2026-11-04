@@ -2,6 +2,7 @@ package com.example.cinema.client.gui;
 
 import com.example.cinema.block.entity.AvReceiverBlockEntity;
 import com.example.cinema.block.entity.ProjectorBlockEntity;
+import com.example.cinema.client.config.CinemaClientConfig;
 import com.example.cinema.client.media.AvReceiverPlayback;
 import com.example.cinema.client.media.AvReceiverPlaybackManager;
 import com.example.cinema.client.media.CinemaPlayer;
@@ -29,8 +30,8 @@ import java.util.function.DoubleFunction;
  *
  * <p>M1 status (paired screen, lamp, AV signal) plus M2 optical/wash controls
  * and M3 simulation switches. Changes apply immediately: slider changes are
- * debounced, button changes are sent at once, and the screen does not pause the
- * game.
+ * debounced, button changes are sent at once, and pausing follows the Mod Menu
+ * behavior setting (off by default so video keeps playing).
  */
 public final class ProjectorConfigScreen extends Screen {
 	private static final double DEFAULT_THROW_RATIO = 1.75;
@@ -340,18 +341,19 @@ public final class ProjectorConfigScreen extends Screen {
 		}
 
 		ProjectorOptics optics = ProjectorOptics.resolve(client.level, projector, aspect);
+		boolean linkedScreen = projector.screenPos() != null;
 		if (optics == null) {
 			screenDistance = 0.0;
 			resolvedThrowRatio = DEFAULT_THROW_RATIO;
 			if (throwAuto && throwSlider != null) {
 				throwSlider.setActual(resolvedThrowRatio);
 			}
-			statusLines.add("Screen: none");
+			statusLines.add(linkedScreen ? "Screen: linked target missing" : "Screen: not linked");
 		} else {
 			ScreenGeometry screen = optics.screen();
 			screenDistance = optics.lens().distanceTo(optics.screenCenter());
 			resolvedThrowRatio = optics.throwRatio();
-			statusLines.add(String.format(Locale.ROOT, "Screen: %d×%d @ %s · %.1f m",
+			statusLines.add(String.format(Locale.ROOT, "Screen: %d×%d @ %s · %.1f m · linked",
 				screen.width(), screen.height(), screen.master().toShortString(), screenDistance));
 			if (throwAuto && throwSlider != null) {
 				throwSlider.setActual(resolvedThrowRatio);
@@ -417,7 +419,7 @@ public final class ProjectorConfigScreen extends Screen {
 
 		for (int i = 0; i < statusLines.size(); i++) {
 			String line = statusLines.get(i);
-			boolean warning = (i == 0 && line.contains("none"))
+			boolean warning = (i == 0 && (line.contains("not linked") || line.contains("missing")))
 				|| (i == 1 && (line.contains("warming") || line.contains("cooling")))
 				|| (i == 2 && (line.contains("not linked") || line.contains("link lost")));
 			int color = warning ? 0xFFD54F : 0x9A9A9A;
@@ -520,7 +522,7 @@ public final class ProjectorConfigScreen extends Screen {
 
 	@Override
 	public boolean isPauseScreen() {
-		return false;
+		return CinemaClientConfig.get().pauseGameInDeviceGuis();
 	}
 
 	private String truncate(String text, int maxWidth) {

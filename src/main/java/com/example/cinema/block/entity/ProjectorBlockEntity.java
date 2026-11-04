@@ -54,6 +54,8 @@ public class ProjectorBlockEntity extends BlockEntity {
 	private boolean simWash = true;
 	private boolean simWarmup = true;
 	private BlockPos receiverPos;
+	/** Explicitly linked screen block; {@code null} means the projector has no screen. */
+	private BlockPos screenPos;
 
 	/** Client-local lamp output, 0..1. */
 	private float lampLevel;
@@ -65,6 +67,7 @@ public class ProjectorBlockEntity extends BlockEntity {
 	public static void tick(Level level, BlockPos pos, BlockState state, ProjectorBlockEntity projector) {
 		projector.tickLamp();
 		projector.tickReceiverLink(level);
+		projector.tickScreenLink(level);
 	}
 
 	private void tickLamp() {
@@ -86,6 +89,23 @@ public class ProjectorBlockEntity extends BlockEntity {
 		return receiverPos;
 	}
 
+	/** Explicitly linked screen block, or {@code null} when not linked. */
+	public BlockPos screenPos() {
+		return screenPos;
+	}
+
+	public void setScreenPos(BlockPos pos) {
+		if (Objects.equals(screenPos, pos)) {
+			return;
+		}
+		screenPos = pos;
+		markUpdated();
+	}
+
+	public void clearScreen() {
+		setScreenPos(null);
+	}
+
 	public void setReceiverPos(BlockPos pos) {
 		if (Objects.equals(receiverPos, pos)) {
 			return;
@@ -105,10 +125,22 @@ public class ProjectorBlockEntity extends BlockEntity {
 		if (level.isClientSide || receiverPos == null || level.getGameTime() % 20L != 0L) {
 			return;
 		}
+		if (!level.isLoaded(receiverPos)) {
+			return;
+		}
 		BlockEntity blockEntity = level.getBlockEntity(receiverPos);
 		if (!(blockEntity instanceof AvReceiverBlockEntity receiver)
 			|| !worldPosition.equals(receiver.videoTarget())) {
 			setReceiverPos(null);
+		}
+	}
+
+	private void tickScreenLink(Level level) {
+		if (level.isClientSide || screenPos == null || level.getGameTime() % 20L != 0L) {
+			return;
+		}
+		if (level.isLoaded(screenPos) && !level.getBlockState(screenPos).is(Cinema.SCREEN_BLOCK)) {
+			setScreenPos(null);
 		}
 	}
 
@@ -285,6 +317,9 @@ public class ProjectorBlockEntity extends BlockEntity {
 		if (receiverPos != null) {
 			tag.putLong("receiverPos", receiverPos.asLong());
 		}
+		if (screenPos != null) {
+			tag.putLong("screenPos", screenPos.asLong());
+		}
 	}
 
 	@Override
@@ -314,6 +349,7 @@ public class ProjectorBlockEntity extends BlockEntity {
 		simWash = !tag.contains("simWash") || tag.getBoolean("simWash");
 		simWarmup = !tag.contains("simWarmup") || tag.getBoolean("simWarmup");
 		receiverPos = tag.contains("receiverPos") ? BlockPos.of(tag.getLong("receiverPos")) : null;
+		screenPos = tag.contains("screenPos") ? BlockPos.of(tag.getLong("screenPos")) : null;
 	}
 
 	@Override
