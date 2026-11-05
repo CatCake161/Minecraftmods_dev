@@ -18,7 +18,7 @@ public final class ClientHelpCommand {
 			"§e/cinema_seek <秒>§f  跳转；§e/cinema_volume <-60..+6 dBFS>§f  音量",
 			"§e/cinema_mute§f  静音切换",
 			"§e/cinema_receiver info§f  查看接收器状态",
-			"§7命令作用于 64 格内最近的 AV 接收器；默认库 cinema/media/，外部库在接收器 GUI 的 Settings 添加。"
+			"§7命令作用于最近的 AV 接收器（需在 16 格内）；默认库 cinema/media/，外部库在接收器 GUI 的 Settings 添加。"
 		),
 		List.of(
 			"§6Cinema 使用帮助 §7(2/7) §f投影仪（客户端）",
@@ -40,10 +40,10 @@ public final class ClientHelpCommand {
 		),
 		List.of(
 			"§6Cinema 使用帮助 §7(4/7) §f屏幕、投影仪与接收器",
-			"§7屏幕由同朝向、同平面的屏幕方块组成；默认绘制上限 16×16，可用 -Dcinema.screen.maxSize=1..64 调整（硬上限 64×64）。",
+			"§7屏幕由同朝向、同平面的屏幕方块组成；默认 16×16，可在 Mod Menu → Cinema → Config 调整（1..64，硬上限 64×64）。",
 			"§7投影仪↔屏幕、接收器↔投影仪、接收器↔扬声器都用线材配对：第一次右键选择设备，第二次右键兼容设备完成连接。",
 			"§7潜行右键设备 A 再潜行右键设备 B，只解除两者之间的连接；不再自动寻找最近的屏幕/投影仪。",
-			"§7右键投影仪可打开 GUI，直接调整环境光洗白强度。",
+			"§7空手右键投影仪/接收器/扬声器打开对应 GUI；手持物品保留原版交互。",
 			"§7拆掉投影仪后屏幕保持黑屏；重新放回后需要再用线材配对。",
 			"§e/time set midnight§f  测试夜间环境光；§e/time set noon§f  回到正午"
 		),
@@ -53,7 +53,7 @@ public final class ClientHelpCommand {
 			"§f-Dcinema.spike.video=<绝对路径>",
 			"§f-Dcinema.spike.manual=true",
 			"§7自动模式：把 manual=true 换成 exit=true。",
-			"§7测试环境会固定时间、天气、玩家位置，并关闭动物生成。"
+			"§7测试环境默认固定时间、天气、玩家位置并关闭动物生成；可在 Mod Menu 关闭 spike 修改世界。"
 		),
 		List.of(
 			"§6Cinema 使用帮助 §7(6/7) §f常见问题",

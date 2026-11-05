@@ -10,9 +10,9 @@
 
 ## 1. AV 接收器与播放控制
 
-> M1：媒体解码/播放状态/音画时钟归 **AV Receiver**。客户端命令只负责选择本机媒体并发送控制包；投影仪只消费接收器的视频输出，扬声器只消费音频输出。
+> 媒体解码/播放状态/音画时钟归 **AV Receiver**。客户端命令只负责选择本机媒体并发送控制包；投影仪只消费接收器的视频输出，扬声器只消费音频输出。
 
-默认媒体库为 `<game>/cinema/media/`；可在接收器 GUI 的 **Settings → Add library** 添加外部文件夹。默认库使用相对 key，外部库使用 `lib/<id>/<相对路径>`；粘贴已注册库内的绝对路径也会自动转成 key。绝对路径不会写入接收器状态或网络包。媒体列表首次打开时扫描并探测元数据，之后在当前游戏会话内缓存；**Refresh / Refresh library** 强制重新扫描。M3 起每个接收器独立播放，可同时播放多个接收器。
+默认媒体库为 `<game>/cinema/media/`；可在接收器 GUI 的 **Settings → Add library** 添加外部文件夹。默认库使用相对 key，外部库使用 `lib/<id>/<相对路径>`；粘贴已注册库内的绝对路径也会自动转成 key。绝对路径不会写入接收器状态或网络包。媒体列表首次打开时扫描并探测元数据，之后在当前游戏会话内缓存；**Refresh / Refresh library** 强制重新扫描。每个接收器独立播放，可同时播放多个接收器。
 
 | 指令 | 说明 |
 |---|---|
@@ -23,13 +23,14 @@
 | `/cinema_volume <-60..+6>` | 设置接收器主音量，单位为 dBFS（0 = 数字满刻度，+6 = 最大增益，-60 = 静音） |
 | `/cinema_mute` | 切换静音 |
 | `/cinema_receiver info` | 查看最近接收器的媒体/状态/音量（dBFS）/投影仪 |
+| `/cinema_receiver_info` | 同上，`/cinema_receiver` 的兼容别名 |
 
 ```text
 /cinema_play test720p30_51.mp4
 /cinema_seek 0
 ```
 
-命令作用于 64 格内最近的 AV 接收器。视频结束后会停在最后一帧；用 `/cinema_seek 0` 从头重播。
+命令作用于最近的 AV 接收器；服务端要求玩家距离接收器不超过 16 格。视频结束后会停在最后一帧；用 `/cinema_seek 0` 从头重播。
 
 ### 外部媒体库
 
@@ -103,7 +104,14 @@
 
 创造模式位置：接收器/座位/扬声器在 Functional Blocks，线材/遥控器在 Tools & Utilities。
 
-M4 音频路由：接收器用线材连接的扬声器会按 FL/FR/FC/LFE/BL/BR 角色映射到实际位置，每只扬声器可在接收器 Speakers 页调整 `Level`（-12.0..+6.0 dB）；未连接对应声道的扬声器时，该声道回退虚拟 5.1。双声道/单声道媒体会自动上混为 5.1：FL/FR 保持原样，FC 取中置，LFE 取 120 Hz 低通中置，BL/BR 取左右差信号。听者始终使用玩家实际耳朵位置和朝向，不做 Seat/皇帝位或屏幕锁定的声场校正，因此玩家走出影院后空间定位仍然正确。主音量使用 dBFS（-60..+6，+6 为最大增益），静音独立。
+5.1 音频路由：接收器用线材连接的扬声器会按 FL/FR/FC/LFE/BL/BR 角色映射到实际位置，每只扬声器可在接收器 Speakers 页调整 `Level`（-12.0..+6.0 dB）；未连接对应声道的扬声器时，该声道回退虚拟 5.1。双声道/单声道媒体会自动上混为 5.1：FL/FR 保持原样，FC 取中置，LFE 取 120 Hz 低通中置，BL/BR 取左右差信号。听者始终使用玩家实际耳朵位置和朝向，不做 Seat/皇帝位或屏幕锁定的声场校正，因此玩家走出影院后空间定位仍然正确。主音量使用 dBFS（-60..+6，+6 为最大增益），静音独立。
+
+### 调试命令
+
+| 指令 | 说明 |
+|---|---|
+| `/cinema_speaker_specs` | 打开 Speaker Specs 的类型默认编辑器；`reload` 重新读取 profiles，`info` 打印类型默认，`test <type> <h> <v> <hz>` 打印指向性采样 |
+| `/cinema_audio_spike` | 运行 5.1/OpenAL 音频测试，结果写入游戏日志 |
 
 ## 5. 手动 / 自动测试
 
@@ -117,14 +125,14 @@ $env:JAVA_TOOL_OPTIONS="-Dcinema.spike.video=$video -Dcinema.spike.manual=true"
 
 自动模式：把 `manual=true` 换成 `exit=true`。
 
-测试环境会固定时间、天气、玩家位置，并关闭动物生成。屏幕/投影仪需要自行放置。
+测试环境默认会固定时间、天气、玩家位置，并关闭动物生成；可在 Mod Menu 关闭 `spike 修改世界`。屏幕/投影仪需要自行放置。
 
 ## 6. 常见问题
 
 - 视频停在最后一帧：`/cinema_seek 0` 重播。
 - 屏幕没有画面：确认接收器正在播放、投影仪已用线材配对（`linked`）、屏幕正面朝向投影仪、距离在 48 格内、光路没有不透明方块遮挡。
 - `/cinema_play` 提示找不到文件：文件必须放在默认库或 Settings 添加的外部库；参数用库内 key，或粘贴已注册库内的绝对路径。
-- 第二个接收器现在可以独立播放；M3 已为每个接收器使用独立播放器/纹理/OpenAL context。若仍失败，查看日志中的 `cinema audio engine failed` 或 `cinema receiver ...`。
+- 每个接收器独立播放，使用独立播放器/纹理/OpenAL context；两个接收器可同时播放。若仍失败，查看日志中的 `cinema audio engine failed` 或 `cinema receiver ...`。
 - `/cinema_projector_client` 没反应：它是客户端命令；真实方块用 `/cinema_projector`。
 - 找不到新命令：重启客户端加载最新代码。
 

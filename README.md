@@ -4,7 +4,7 @@
 
 当前版本：**Alpha 0.0.1**。
 
-当前状态：**P1 投影仪光学第一版可运行**；4K60/HDR、投影对齐、对焦/梯形等已通过用户游戏内验收；**AV Receiver M1/M2 已完成并验收**（播放管线、接收器 GUI、外部媒体库），**M3 每接收器独立播放、M4 物理 5.1 路由/每扬声器电平已完成并验收**；四种扬声器（落地式/书架式/中置/低音炮）、可乘坐座位、线材、遥控器已创建；声学模拟、媒体轨/字幕选择仍待实现。听者始终使用玩家实际位置/朝向，不使用皇帝位或声场校正。
+当前状态：核心 P1 链路已可玩并通过游戏内验收：投影仪光学与 GUI、屏幕渲染/尺寸配置、AV Receiver M1–M4、四种扬声器、物理 5.1 路由、线材配对、设备命名、可乘坐座位、Mod Menu 设置。剩余重点：64×64 屏幕尺寸显示、BSL wash、无音轨长播、多屏/LAN、遥控器、媒体轨/字幕、可变声道布局与房间声学。听者始终使用玩家实际位置/朝向，不使用皇帝位或声场校正。
 
 ## 环境要求
 
@@ -68,17 +68,19 @@ $env:JAVA_HOME='<JDK-25+>'
 - [项目规划与架构](docs/PLANNING.md)
 - [待办列表](docs/TODO.md)
 - [游戏内指令说明](docs/COMMANDS.md)
-- [P0 技术验证报告](docs/design/P0-SPIKE-REPORT.md)
-- [P0.5 投影/扬声器设计](docs/design/P05-DESIGN.md)
+- [P0 技术验证报告（历史）](docs/design/P0-SPIKE-REPORT.md)
+- [P0.5 投影/扬声器设计（历史）](docs/design/P05-DESIGN.md)
 - [投影仪 GUI 开发大纲](docs/design/PROJECTOR-GUI.md)
 - [AV Receiver 设计与迁移](docs/design/AV-RECEIVER.md)
+- [可变声道布局规划](docs/design/CHANNEL-LAYOUTS.md)
+- [音频声学规划](docs/design/AUDIO-ACOUSTICS.md)
 
 ## 目录结构
 
 ```text
 src/                 Fabric 模组源码
 docs/                规划、待办、指令文档、设计资料
-docs/design/         P0/P0.5 设计与验证报告
+docs/design/         当前设计文档与 P0/P0.5 历史报告
 docs/assets/         文档截图
 spike/               独立的 P0 JavaCV 基准工程（历史验证用）
 ```

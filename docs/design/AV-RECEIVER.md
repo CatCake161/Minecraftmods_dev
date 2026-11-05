@@ -1,6 +1,6 @@
 # AV Receiver 设计与迁移
 
-> 状态：设计草案；AV Receiver / Speaker 方块、block entity 与线材/遥控器物品已创建，播放管线尚未迁移。当前仍是全局 `CinemaPlayer` 直接驱动屏幕/OpenAL 的过渡架构。
+> 状态：M1/M2/M3/M4 已实现并通过游戏内验收。AV Receiver 拥有媒体与播放状态，每个接收器持有独立 `CinemaPlayer`/视频纹理/`CinemaAudioEngine`，配对扬声器按 5.1 角色路由；遥控器与远程配对仍未实现。
 > 相关文档：[项目规划](../PLANNING.md)、[待办](../TODO.md)、[投影仪 GUI](PROJECTOR-GUI.md)、[指令](../COMMANDS.md)。
 
 ## 1. 目标
@@ -19,15 +19,14 @@ AV Receiver（媒体与播放权威）
 - 服务端权威的播放状态：媒体标识、播放/暂停/停止、位置、音量。
 - 客户端本地解码代理：每个客户端为自己的接收器实例解码本地文件。
 - 视频通过接收器 → 投影仪 → 屏幕的显式链路输出。
-- 音频输出支持虚拟 5.1 与 M4 实体扬声器路由；未配对声道回退虚拟 5.1。
+- 音频输出支持虚拟 5.1 与实体扬声器 5.1 路由；未配对声道回退虚拟 5.1。
 - 单人 + LAN；服务端不同步媒体文件本体，只同步媒体指纹和播放状态。
 
 非目标（本阶段）：
 
 - 服务端串流媒体、公网媒体服务器。
-- 接收器 GUI 的完整文件浏览器（M2 再做）。
-- 每接收器完全独立的音频硬件设备（M3 使用共享 Minecraft 设备上的独立 OpenAL context，不是独立声卡）。
-- 物理扬声器路由、房间校准、遥控器（后续阶段）。
+- 每接收器完全独立的音频硬件设备（共用 Minecraft 设备上的独立 OpenAL context，不是独立声卡）。
+- 房间校准、遥控器、远程配对（后续阶段）。
 - 4K/HDR 解码本身的改动；沿用现有 `VideoDecoder`/`StreamingAudioDecoder`。
 
 ## 2. 职责边界
@@ -56,7 +55,7 @@ class: AvReceiverBlock / AvReceiverBlockEntity
 
 - 水平朝向可选；接收器不参与光学，朝向只影响模型和后续扬声器配对。
 - 创造模式物品栏与屏幕/投影仪同组。
-- 空手右键打开接收器 GUI（M2）；M1 先用客户端命令控制。
+- 空手右键打开接收器 GUI；命令仍可用于调试。
 - 拆除时停止播放、清理配对、通知客户端释放纹理。
 
 ### 3.2 `AvReceiverBlockEntity` 字段
@@ -65,7 +64,7 @@ class: AvReceiverBlock / AvReceiverBlockEntity
 name              String      自定义设备名称；空 = 未命名
 mediaKey          String      媒体库内相对路径；空 = 未选择
 mediaSize         long        文件大小，用于本地匹配
-mediaSha256       String      完整 SHA-256；M1 可为空
+mediaSha256       String      完整 SHA-256；异步计算期间可为空
 durationSeconds   double      ffprobe 得到的时长；0 = 未知
 state             enum        STOPPED / PLAYING / PAUSED
 positionSeconds   double      服务端权威播放位置
@@ -99,16 +98,17 @@ receiverPos       Optional<BlockPos>
 
 ### 4.1 媒体库
 
-第一版使用固定目录：
+默认媒体库：
 
 ```text
 <gameDir>/cinema/media/
 开发环境：run/cinema/media/
 ```
 
-- 接收器只保存**相对路径**（例如 `movies/demo.mp4`），不保存绝对路径。
+- 外部库由客户端 `cinema/libraries.json` 注册，key 为 `lib/<id>/<相对路径>`；默认库 key 仍为相对路径（例如 `movies/demo.mp4`）。
+- 接收器只保存**相对 key**，不保存绝对路径。
 - 服务端校验：非空、无 `..`、非绝对路径、分隔符规范化为 `/`。
-- 客户端解析时把相对路径拼到媒体库根目录，并再次校验规范化后仍在根目录内。
+- 客户端解析时把 key 拼到对应库根目录，并再次校验规范化后仍在根目录内。
 - 绝对路径不进入服务端状态，避免 LAN 泄露个人目录，也避免其他客户端无法解析。
 
 ### 4.2 媒体指纹
@@ -118,14 +118,14 @@ mediaKey + mediaSize + mediaSha256 + durationSeconds
 ```
 
 - 选择文件时由客户端计算 `size`、`duration`（`ffprobe`）和 SHA-256。
-- SHA-256 可能较慢：异步计算，先允许 `mediaSha256` 为空（M1 只校验大小）；M2 完成缓存与强制校验。
+- SHA-256 可能较慢：选择文件时异步计算并缓存；播放前应校验本地文件大小/SHA-256 与接收器记录一致（校验逻辑仍待补）。
 - 哈希缓存键：`(path, size, lastModified)`，避免每次播放都重新读整文件。
-- 本地匹配失败时：屏幕保持黑屏，接收器 GUI/命令提示“缺少媒体”或“媒体指纹不匹配”，不自动播放同名但内容不同的文件。
+- 文件缺失时：屏幕保持黑屏，接收器 GUI/命令提示“缺少媒体”，不自动播放同名但内容不同的文件；大小/SHA-256 不匹配的显式校验仍待补。
 
 ### 4.3 选择流程
 
 ```text
-玩家在客户端选择 cinema/media 下的文件
+玩家在客户端选择默认库或外部库中的文件
   → 客户端计算 MediaRef（相对路径/大小/时长/哈希）
   → C2S SelectMedia(pos, MediaRef)
   → 服务端校验范围/路径/数值
@@ -170,15 +170,15 @@ expected = positionSeconds
 
 ## 6. 网络与权威
 
-### 6.1 S2C：先用原版 block entity 同步
+### 6.1 S2C：原版 block entity 同步
 
-M1 不新增 S2C 包：
+当前不新增 S2C 包：
 
 - 服务端每 20 tick / 状态变化时 `sendBlockUpdated`。
 - `getUpdateTag` 包含 3.2 的全部字段；`loadAdditional` 在客户端恢复。
 - 客户端每 10 tick 扫描附近已加载的接收器 block entity，把状态喂给播放代理。
 - 优点：复用现有投影仪同步方式，LAN/专用服务器一致，不引入新包。
-- 风险：接收器很多时 block update 频率高；M2 若测出问题，再换成专用 `ReceiverState` S2C 包（按接收器/距离订阅）。
+- 风险：接收器很多时 block update 频率高；若后续测出问题，再换成专用 `ReceiverState` S2C 包（按接收器/距离订阅）。
 
 ### 6.2 C2S：控制包
 
@@ -201,12 +201,12 @@ double value         seek 秒 / 音量 -60..+6 dBFS / muted 0|1
 - 玩家与接收器距离 ≤ 16 格，维度一致。
 - 方块仍是 `av_receiver`，block entity 类型正确。
 - `mediaKey` 合法（见 4.1）；`mediaSize >= 0`；`durationSeconds >= 0`；`value` 按动作截断。
-- 每玩家每 tick 最多处理 1 个控制包；GUI 拖动滑块只在 Apply 时发送。
-- 拒绝时不下发状态；客户端保留/回滚本地草稿。
+- 每玩家每 tick 最多处理 1 个控制包；滑块约 200 ms debounce 发送，按钮/Close/Esc 前立即 flush。
+- 拒绝时不下发状态；GUI 提示错误并重读 block entity 的权威值。
 
-### 6.3 为什么 M1 不用聊天命令做 GUI 后端
+### 6.3 为什么 GUI 不依赖聊天命令
 
-正式 GUI 不应依赖 `sendCommand`。M1 的临时命令只是调试入口，底层仍走同一个 `AvReceiverControlPayload` 和服务端 setter；M2 GUI 直接复用。
+正式 GUI 不应依赖 `sendCommand`。命令只是调试入口，底层仍走同一个 `AvReceiverControlPayload` 和服务端 setter；GUI 直接复用。
 
 ## 7. 视频路由
 
@@ -228,17 +228,17 @@ AvReceiverBlockEntity.videoTarget
 
 ## 8. 音频路由
 
-M1：
+基础路由：
 
-- 仍使用现有 `CinemaAudioEngine` 的六路 5.1 source。
+- 使用 `CinemaAudioEngine` 的六路 5.1 source。
 - 引擎由接收器播放代理持有/调度，而不是全局 `CinemaPlayer` 静态持有。
-- 每接收器持有自己的 `CinemaAudioEngine`（独立 OpenAL context）；多个接收器可同时播放（M3 已实现并验收）。
+- 每接收器持有自己的 `CinemaAudioEngine`（独立 OpenAL context）；多个接收器可同时播放（M3 已验收）。
 - 音量/静音由接收器状态控制引擎总增益。
 
-M4：
+物理 5.1：
 
 - 接收器按角色把六个声道分配给已配对 Speaker 方块。
-- 当前进度：M4 已把配对扬声器的角色/位置/电平映射到六个 mono source；FL/FR/FC/LFE/BL/BR 使用物理扬声器位置，听者始终是玩家实际耳朵位置和朝向，未配对声道回退虚拟 5.1。
+- 已把配对扬声器的角色/位置/电平映射到六个 mono source；FL/FR/FC/LFE/BL/BR 使用物理扬声器位置，听者始终是玩家实际耳朵位置和朝向，未配对声道回退虚拟 5.1。
 - **不做皇帝位/Seat 听者参考，不做声场校正**：Seat 可右键乘坐，但不影响音频；玩家移动到影院外时仍按真实扬声器方向计算空间定位。
 - 箱体类型决定可用角色：落地式/书架式用于 FL/FR/BL/BR，中置用于 FC，低音炮用于 LFE；不合法角色回退 NONE。
 - 每个 Speaker 一个 mono source，位置来自方块；接收器只做路由。每只已连接扬声器可在接收器 GUI 调整 `Level`（-12.0..+6.0 dB），接收器输出电平上限 +6 dB。
@@ -274,11 +274,11 @@ receiverPos, mediaKey, state, expectedPosition,
 duration, volume, muted, missing, CinemaPlayer player
 ```
 
-`CinemaPlayer` 需要的改动：
+`CinemaPlayer` 的实例化要求（已实现）：
 
 - 纹理 ID 实例化（每播放实例唯一），关闭时释放自己的纹理。
 - 增加 `setVolume(float)` / `setMuted(boolean)`。
-- 音频引擎从静态 `sharedAudio` 改为由每个接收器播放代理持有的独立引擎（M3）；M1/M2 期间曾共享单引擎。
+- 音频引擎由每个接收器播放代理独立持有；不再使用全局共享引擎。
 - 保留现有解码线程、有界队列、音频时钟、无音轨墙钟逻辑。
 
 生命周期：
@@ -286,11 +286,13 @@ duration, volume, muted, missing, CinemaPlayer player
 - 世界卸载/断线/客户端停止：关闭所有播放实例，释放纹理。
 - 接收器停止/拆除：关闭对应实例。
 - 媒体变化：关闭旧实例，按新 MediaRef 新建。
-- 资源重载：M1 只保证不崩溃；完整恢复后续处理。
+- 资源重载：当前只保证不崩溃；完整恢复仍待处理。
 
-## 10. GUI 规格（M2 起）
+## 10. GUI 规格
 
 定位：**功放前面板 + 设置菜单**，不是文件浏览器。主界面必须一眼回答：当前媒体、音量、视频/音频输出目标、异常状态。投影仪光学设置不进入本 GUI。
+
+> 以下为完整目标规格；M2 已实现四页签、媒体库、播放/音量控制和主要诊断，标为“后续”或“待补”的条目尚未完成。
 
 ### 10.1 信息架构
 
@@ -315,7 +317,7 @@ duration, volume, muted, missing, CinemaPlayer player
 ```
 
 - **媒体**：选片、媒体库、播放状态。
-- **扬声器**：布局、角色、测试音、距离/电平/分频/混响（M4）。
+- **扬声器**：布局、角色、测试音、Level、Ping（距离/分频/混响后续）。
 - **信号**：codec、分辨率、丢帧、延迟、指纹等诊断。
 - **设置**：媒体库位置、投影仪/扬声器配对状态、默认音量、关于。
 
@@ -326,8 +328,8 @@ duration, volume, muted, missing, CinemaPlayer player
 - 接收器名称/坐标（多接收器时区分）。
 - 状态：停止/播放/暂停。
 - 当前媒体相对 key、时间/总时长。
-- 三个状态：视频输出（投影仪在线/离线）、音频输出（虚拟 5.1/实体扬声器）、媒体文件（本机可用/缺失/指纹不匹配）。
-- 警告横幅：无投影仪、无音频设备、音频引擎被其他接收器占用、LAN 客户端缺文件。
+- 三个状态：视频输出（投影仪在线/离线）、音频输出（虚拟 5.1/实体扬声器）、媒体文件（本机可用/缺失；指纹不匹配待补）。
+- 警告横幅：无投影仪、无音频设备、音频引擎启动失败、LAN 客户端缺文件。
 
 顶部标题栏：
 
@@ -336,7 +338,7 @@ duration, volume, muted, missing, CinemaPlayer player
 播放条：
 
 - 播放/暂停、停止、±10 秒、可拖动进度条。
-- 拖动只改草稿，松开或 Apply 才发送 seek。
+- 拖动结束后 debounce 发送 seek；Close/Esc 前 flush。
 - 主音量 -60..+6 dBFS + 静音；滑块与诊断页统一显示 dBFS。0 dBFS 为数字满刻度，+6 dBFS 为接收器允许的最大增益（可能削波）。
 - 无媒体/停止/缺文件时按钮禁用并带 tooltip。
 
@@ -345,17 +347,17 @@ duration, volume, muted, missing, CinemaPlayer player
 - 标题“本机媒体库”；默认库为 `cinema/media/`，可添加外部文件夹库。
 - 左上角 `Library` 按钮在默认库与外部库之间切换，只显示库内相对路径。
 - 文件夹导航、搜索、刷新。
-- 条目显示：分辨率、codec、时长、HDR/SDR、音轨格式；缺文件、指纹不匹配、无法解码的条目标红。
+- 条目显示：分辨率、codec、时长、HDR/SDR、音轨格式；缺文件/无法解码的条目标红，指纹不匹配校验待补。
 - 选中后显示详情与“播放”。
 - SHA-256/时长异步计算，显示“扫描中…”，不阻塞 GUI。
 - 不提供系统文件选择器；后续可支持拖入文件复制到媒体库，但首版不做。
 
-### 10.4 扬声器页（M4）
+### 10.4 扬声器页
 
 - 已连接扬声器列表：自定义名称（未命名时显示角色/箱体/坐标）、`Ping` 定位按钮、`Level` 滑块（-12.0..+6.0 dB）、在线状态；超过可视行数时支持滚轮并显示滚动条（同一角色允许多只扬声器链接）。
 - 悬停扬声器行显示完整信息：名称、角色、箱体、方块坐标、与接收器距离、当前 Level。
 - `Ping` 在扬声器方块位置播放定位音，并生成约 8 秒粒子光柱；用于区分外观相同的多只扬声器。
-- 当前链接已参与 M4 音频路由：配对扬声器的角色/位置/电平映射到对应声道；未配对声道回退虚拟 5.1。听者使用玩家实际位置/朝向，不使用 Seat/皇帝位或声场校正。
+- 链接已参与音频路由：配对扬声器的角色/位置/电平映射到对应声道；未配对声道回退虚拟 5.1。听者使用玩家实际位置/朝向，不使用 Seat/皇帝位或声场校正。
 - 角色分配只显示合法项：中置仅 `FC`，低音炮仅 `LFE`，落地式/书架式仅 `NONE/FL/FR/BL/BR`。
 - 单只/全部测试音（后续）。
 - 每声道电平已实现；距离/延迟、LFE 分频、聆听模式（5.1 直通/立体声下混/上混）后续。
@@ -365,7 +367,7 @@ duration, volume, muted, missing, CinemaPlayer player
 
 ### 10.5 信号/诊断页
 
-- 媒体指纹、文件大小、校验结果。
+- 媒体指纹、文件大小、校验结果（校验逻辑待补）。
 - 视频：源分辨率、codec、fps、HDR 元数据、解码 fps、丢帧。
 - 音频：采样率、声道数、缓冲延迟、音画偏差。
 - 状态同步时间、LAN 角色、硬件解码/软件回退状态。
@@ -412,7 +414,7 @@ M1 已完成并通过游戏内验收：
 
 - 固定媒体库 `<game>/cinema/media/` + 相对 key；客户端异步计算 SHA-256/时长。
 - `AvReceiverControlPayload`（C2S）统一处理选片/播放/暂停/停止/seek/音量/静音；投影仪由影院线材显式配对。
-- 客户端 `AvReceiverPlaybackManager` 每 10 tick 同步附近接收器；视频经 `ProjectorOptics` 路由到屏幕，每个接收器使用自己的 OpenAL 5.1 context。
+- 客户端 `AvReceiverPlaybackManager` 每 10 tick 同步附近接收器；视频经 `ProjectorOptics` 路由到屏幕。M3 起每个接收器使用自己的 OpenAL 5.1 context。
 - 接收器每 20 tick 校验显式投影仪链接；自动配对/`/cinema_link` 已取消（2026-11-04）。
 - M3 已拆每接收器独立播放器/纹理/音频引擎；第二个接收器不再被拒绝，已通过游戏内验收。
 - 缺文件时屏幕黑屏、命令/日志提示，不崩溃；拆接收器/投影仪/屏幕均能停止或恢复。
@@ -425,7 +427,7 @@ M2 已完成并通过游戏内验收：
 - 记住上次使用的库与文件夹（当前游戏会话内）。
 - 4K HEVC 启动慢时不再被漂移检测反复重启；首帧显示后记录一次启动偏差继续播放。
 
-## 12. 代码迁移步骤（M1）
+## 12. 代码迁移步骤（M1 历史记录）
 
 1. 注册 `av_receiver` 方块/物品/block entity，加入创造模式物品栏。
 2. `ProjectorBlockEntity` 增加 `receiverPos` 持久化/同步/清理。
@@ -433,7 +435,7 @@ M2 已完成并通过游戏内验收：
 4. `CinemaPlayer` 纹理 ID 实例化、音量/静音接口、音频引擎注入。
 5. 新增客户端 `AvReceiverPlaybackManager` / `AvReceiverPlayback`，每 10 tick 扫描附近接收器。
 6. `ScreenBlockEntityRenderer` 改为从播放管理器取对应接收器的播放实例。
-7. `CinemaClient` 的 `/cinema_play` 等命令改为操作最近接收器；保留一个迁移期的兼容入口，M2 后删除。
+7. `CinemaClient` 的 `/cinema_play` 等命令改为操作最近接收器；迁移期兼容入口已在 M2 后删除。
 8. 更新 `docs/COMMANDS.md`、`docs/TODO.md`、`docs/HANDOFF.md`，补充手动测试步骤。
 
 ## 13. 测试清单
@@ -443,25 +445,20 @@ M2 已完成并通过游戏内验收：
 - 拆投影仪：接收器仍在播放，但无视频输出；重新配对后恢复。
 - 拆屏幕：无画面；屏幕恢复后重新投影。
 - 缺文件：屏幕黑屏，命令/GUI 提示；不崩溃。
-- 指纹不匹配：拒绝播放或明确警告，不静默播放错误文件。
+- 指纹不匹配（待校验逻辑实现后）：拒绝播放或明确警告，不静默播放错误文件。
 - LAN：主机选片，客户端有同文件时同步播放；客户端缺文件时提示。
 - 两个接收器：M3 每接收器独立播放器/纹理/音频引擎；同时播放、暂停、seek、音量互不影响（已验收）。
 - M4：六只已配对扬声器分别设置 FL/FR/FC/LFE/BL/BR，确认声音来自对应物理位置；每只扬声器 `Level` 可调且上限 +6 dB；主音量显示 dBFS 且上限 +6 dB；玩家走进/走出影院时空间定位仍正确；Seat 可右键乘坐但不影响音频；未配对声道回退虚拟 5.1（已验收）。
 - 资源重载、世界卸载、断线重连：无纹理/线程泄漏。
 - 4K60/HDR：接收器链路不改变现有解码性能；记录丢帧。
-- GUI scale 1/2/3/4、键盘操作、Esc/Close 语义（M2）。
+- GUI scale 1/2/3/4、键盘操作、Esc/Close 语义。
 - 与 Sodium/Iris/BSL 同时运行不崩溃。
 
-## 14. 待确认决策
+## 14. 决策记录
 
-1. **媒体库位置**：固定 `<gameDir>/cinema/media/`（推荐，简单且不泄露绝对路径），还是可配置目录？
-2. **旧 `/cinema_play`**：M1 直接改为“选最近接收器 + 媒体库相对路径”（推荐，架构干净），还是保留绝对路径的临时旁路直到 M2？
-3. **接收器↔投影仪配对（已决）**：影院线材显式配对，不再自动配最近投影仪（2026-11-04）。
-4. **状态同步**：M1 用原版 block entity 更新（推荐，改动小），还是直接上专用 S2C 包？
-5. **多接收器（已决）**：M1/M2 曾只允许一个接收器占用音频引擎；M3 已改为每接收器独立播放器/纹理/OpenAL context，可同时播放（已验收）。
-
-M1 采用推荐值：默认媒体库、相对 key、原版 block entity 状态同步、单音频引擎。`/cinema_play` 已改为操作 64 格内最近接收器；GUI 与每接收器独立引擎留到 M2/M3。M3 已把单引擎替换为每接收器独立 `CinemaAudioEngine`/OpenAL context（2026-11-04）。
-
-> 2026-11-04 更新：自动配对已取消。投影仪↔屏幕、接收器↔投影仪、接收器↔扬声器均改用影院线材显式配对。
-
-M2 采用：默认库 `cinema/media/` + 客户端外部库；外部库 key 为 `lib/<id>/<相对路径>`，绝对路径仅保存在客户端 `cinema/libraries.json`，不进入方块实体或网络包。LAN 客户端需要配置同名外部库才能解析同一 key。
+1. **媒体库位置**：默认 `<gameDir>/cinema/media/`；外部库由客户端 `cinema/libraries.json` 注册，绝对路径不进入方块实体或网络包。
+2. **`/cinema_play`**：操作最近的接收器（服务端控制距离 16 格），参数为媒体库 key 或库内路径。
+3. **配对**：影院线材显式配对，支持投影仪↔屏幕、接收器↔投影仪、接收器↔扬声器；不再自动配最近设备。
+4. **状态同步**：使用原版 block entity 更新；暂无专用 `ReceiverState` S2C 包。
+5. **多接收器**：每个接收器独立播放器/纹理/OpenAL context，可同时播放。
+6. **外部库 key**：`lib/<id>/<相对路径>`；LAN 客户端需要配置同名外部库才能解析同一 key。

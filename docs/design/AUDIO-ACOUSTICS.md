@@ -15,7 +15,7 @@
 - 在现有 5.1 回放上加入**客户端本地**的房间声学层：直达声距离/空气吸收、一阶早期反射、晚期混响、扬声器指向性。
 - 保持接收器对媒体/播放状态的权威；声学计算不改变播放位置、音画时钟或服务端状态。
 - 可开关、可调试、可回退：没有 EFX、没有扬声器方块时仍能正常播放；Seat 不参与声学，只作可乘坐装饰。
-- 为后续 M4 扬声器 5.1 路由提供声学数据接口；听者始终是玩家实际耳朵位置/朝向，不做皇帝位或固定监听点。
+- 在 M4 扬声器 5.1 路由之上提供声学数据接口；听者始终是玩家实际耳朵位置/朝向，不做皇帝位或固定监听点。
 
 非目标：
 
@@ -85,9 +85,9 @@
 
 ## 4. 当前代码约束
 
-### 4.1 当前实际音频管线（M1/M2）
+### 4.1 当前实际音频管线
 
-> 本节按当前代码核对；另一段共享对话里“物理 5.1 已实现”的早期推断不正确，以代码/本节为准。
+> 本节按当前代码核对；M4 物理 5.1 路由已接入，见下文。
 
 ```text
 外部 FFmpeg（stdout, s16le, 48 kHz, 5.1）
@@ -98,7 +98,7 @@
 ```
 
 - `StreamingAudioDecoder` 通过 `-map 0:a:0 -ac 6 -ar 48000 -channel_layout 5.1 -f s16le` 调外部 FFmpeg；chunk 为 24,000 帧（0.5 s），`ChunkSink` 遇到引擎满队列会反压 FFmpeg。
-- `CinemaAudioEngine` 在当前线程创建自己的 OpenAL context，6 个 source 默认使用虚拟相对位置；M4 可通过 `setChannelLayout()` 换成已配对扬声器相对听者的位置与增益。`SOFTDeviceClock` + `SOFTSourceStartDelay` 对齐启动，`SOFTSourceLatency` 发布 `audiblePts`。
+- `CinemaAudioEngine` 在当前线程创建自己的 OpenAL context，6 个 source 默认使用虚拟相对位置；M4 已通过 `setChannelLayout()` 换成已配对扬声器相对听者的位置与增益。`SOFTDeviceClock` + `SOFTSourceStartDelay` 对齐启动，`SOFTSourceLatency` 发布 `audiblePts`。
 - 4 buffer/source × 0.5 s ≈ 2 s 缓冲；一阶反射的 80 ms 延迟完全放得下，但不能在这条链路上再加额外 lookahead。
 - `AvReceiverPlayback` 根据接收器状态开/停本地解码器，按 `MAX_DRIFT_SECONDS` 做漂移校正；M3 起每个接收器持有独立 `CinemaAudioEngine`/OpenAL context，多个接收器可同时播放。
 - **M4 已接入物理布局**：`AvReceiverPlayback` 将已配对 `SpeakerBlockEntity` 的角色/位置/电平映射到六个 source；听者始终是玩家实际耳朵位置/朝向，已删除 Seat/皇帝位与声场校正，未配对声道回退虚拟 5.1。声学层仍不能假设房间几何/材质数据。
@@ -106,7 +106,7 @@
 
 ### 4.2 当前实现约束
 
-- `CinemaAudioEngine`：6 个 mono OpenAL source，在 Minecraft 的 OpenAL device 上创建自己的 context；48 kHz；默认虚拟相对位置，M4 可按已配对扬声器更新位置/增益；`AL_INVERSE_DISTANCE_CLAMPED`；目前没有 EFX。
+- `CinemaAudioEngine`：6 个 mono OpenAL source，在 Minecraft 的 OpenAL device 上创建自己的 context；48 kHz；默认虚拟相对位置，M4 已按已配对扬声器更新位置/增益；`AL_INVERSE_DISTANCE_CLAMPED`；目前没有 EFX。
 - 该 context 目前用默认属性创建，没有请求 `ALC_MAX_AUXILIARY_SENDS`；EFX aux send 数量/默认值需要在 spike 中确认。
 - 音频线程优先用 `EXTThreadLocalContext.alcSetThreadContext` 设置/清空自己的 context，回退到 `alcMakeContextCurrent`；并复用 Minecraft 的函数指针。不要在音频线程调用 `alcMakeContextCurrent(NULL)`，否则会清掉 Minecraft 的全局/线程 context，导致 SoundEngine 报 `Allocate new source: Invalid operation`。
 - `MinecraftOpenAl`：复用 Minecraft 的 device；设备切换/资源重载尚未完整处理。
@@ -120,9 +120,9 @@
 
 ### 4.3 由此得到的顺序
 
-- **A0（EFX 能力 spike）** 可以在 M2/M3 之后提前做，不依赖扬声器路由。
-- **A2（一阶反射/指向性）** 依赖 M4 的扬声器角色/位置/朝向；没有 M4 时只能用当前虚拟 6 source 布局做原型，不能验收真实指向性。
-- **A4（接收器 GUI 开关/校准）** 依赖 M4 的 Speakers/Settings 页。
+- **A0（EFX 能力 spike）** 可立即开始，不依赖扬声器路由。
+- **A2（一阶反射/指向性）** 依赖的 M4 扬声器角色/位置/朝向已完成，可以直接进入原型。
+- **A4（接收器 GUI 开关/校准）** 依赖的 M4 Speakers/Settings 页已完成。
 - 听者策略已确定：始终跟随玩家实际耳朵/朝向，不做 Seat 皇帝位、固定监听点或声场校正；Seat 仅是可乘坐座位。
 
 ### 4.4 未来可变声道布局
@@ -146,7 +146,7 @@ FFmpeg 5.1 PCM（48 kHz, FL/FR/FC/LFE/BL/BR）
                  └─ wet return
         │
         ▼
-六个 mono OpenAL source（虚拟布局或 M4 实体扬声器位置）
+六个 mono OpenAL source（M4 实体扬声器位置；未配对声道回退虚拟 5.1）
         │
         ▼
 OpenAL device / Minecraft 音频输出
@@ -256,7 +256,7 @@ RT60  ≈ 0.161 · V / (-S · ln(1 - α_avg)) // Eyring，高吸收
 
 ### 7.2 直达声
 
-- **距离衰减只做一次。** 推荐 M4 后把 source 放到真实扬声器位置，由 OpenAL 的 inverse distance 处理直达声距离；自定义 DSP 只计算反射/混响的相对增益，避免双重衰减。
+- **距离衰减只做一次。** M4 已把 source 放到真实扬声器位置，由 OpenAL 的 inverse distance 处理直达声距离；自定义 DSP 只计算反射/混响的相对增益，避免双重衰减。
 - 若继续使用固定虚拟布局，则在 Java 侧按扬声器到听者的距离计算增益，并关闭/固定 OpenAL 的距离模型，二者只能选一个。
 - **空气吸收**：高频随距离衰减；可用一阶低通/高频 shelf 近似，或 EFX 的 air absorption 参数。首版可先只对反射/混响做，直达声保持中性。
 - **遮挡**：直达声 raycast；被挡住时低通 + 衰减。EFX 可用 `AL_DIRECT_FILTER`；没有 EFX 时在 Java 侧对相应声道滤波。
@@ -567,15 +567,15 @@ UI 归属：
 
 | 阶段 | 内容 | 依赖 | 验收 |
 |---|---|---|---|
-| A0 | EFX/EAXReverb 能力 spike：aux send、wet return、设备布局、CPU/延迟、reset | 无（可在 M2/M3 后提前） | 能听到/关闭混响，无 OpenAL 错误，干声不受影响 |
-| A1 | 声学数据模型、材质映射、房间检测、直达声距离/空气吸收 | M4 扬声器位置更佳 | dump 出正确的房间尺寸/RT60；干声电平一致 |
+| A0 | EFX/EAXReverb 能力 spike：aux send、wet return、设备布局、CPU/延迟、reset | 无（可立即开始） | 能听到/关闭混响，无 OpenAL 错误，干声不受影响 |
+| A1 | 声学数据模型、材质映射、房间检测、直达声距离/空气吸收 | M4 已完成（扬声器位置可用） | dump 出正确的房间尺寸/RT60；干声电平一致 |
 | A1d | Spinorama 数据管线：选 4 类代表型号、抓取 H/V（或 3D）、归一化/降采样、生成资源和 metadata | 无（可提前） | 每类有一张可追溯的 speaker specs 数据表；来源/许可证/质量记录完整 |
 | A1e | 数据许可决策：CC BY-NC-SA 4.0 非商业/相同方式共享，或改宽松数据/用户本地导入 | A1d | 发布包与仓库的许可证/attribution 明确，不违反 NC/SA |
-| A2 | 一阶镜像源早期反射 + 5.1 路由 + 平滑 | M4 | 矩形房间反射延迟/方向合理；开关可辨；无爆音 |
-| A2d | 指向性渲染：角度插值 + 3 频带/短 FIR + 声学中心高度 | A1d/M4 | 旋转/离轴变化与实测曲线趋势一致；无分频染色/爆音 |
+| A2 | 一阶镜像源早期反射 + 5.1 路由 + 平滑 | M4 已完成 | 矩形房间反射延迟/方向合理；开关可辨；无爆音 |
+| A2d | 指向性渲染：角度插值 + 3 频带/短 FIR + 声学中心高度 | A1d；M4 已完成 | 旋转/离轴变化与实测曲线趋势一致；无分频染色/爆音 |
 | A3 | 遮挡 + 空气吸收 + 指向性/反射整合 | A2/A2d | 遮挡可闻；离轴反射变暗/变弱合理 |
 | A4 | 晚期混响 EAXReverb late tail + 参数映射 + 回退 | A0/A1 | RT60/材质变化可闻；无早期反射叠加 |
-| A5 | 接收器 GUI 开关/校准/预设 + 性能/设备切换验收 | M4/M3 | 4K/BSL 下无音频掉帧；设备切换可恢复 |
+| A5 | 接收器 GUI 开关/校准/预设 + 性能/设备切换验收 | M4/M3 已完成 | 4K/BSL 下无音频掉帧；设备切换可恢复 |
 | A6 | 后续：低频模态/多低音炮、衍射/散射、测量 RIR、HRTF | — | 另行设计 |
 
 ## 10. 测试清单
@@ -616,8 +616,8 @@ UI 归属：
 
 ## 13. 建议的下一步
 
-1. 先做 **A1d Spinorama 数据 spike**（不依赖 M4）：选 4 类代表型号，抓取 H/V（或 3D）数据，归一化/降采样，确认格式、质量、source/license；同时做 **A1e 许可决策**。
-2. 做 **A0 EFX spike**（不依赖 M4）：确认 EAXReverb 在自定义 context 中可用，验证 aux send/wet return/reset，记录 OpenAL Soft 1.23.1 行为。
-3. M4 扬声器路由完成后，再做 **A1–A2**：房间检测 + 一阶镜像源 + 5.1 路由。
+1. 先做 **A1d Spinorama 数据 spike**：选 4 类代表型号，抓取 H/V（或 3D）数据，归一化/降采样，确认格式、质量、source/license；同时做 **A1e 许可决策**。
+2. 做 **A0 EFX spike**：确认 EAXReverb 在自定义 context 中可用，验证 aux send/wet return/reset，记录 OpenAL Soft 1.23.1 行为。
+3. M4 扬声器路由已完成，接下来做 **A1–A2**：房间检测 + 一阶镜像源 + 5.1 路由。
 4. 做 **A2d–A4**：Spinorama 指向性渲染、遮挡、晚期混响参数映射；用 A/B 试听决定 early/late 默认电平。
-5. 如果 EFX spike 失败，改用小型 FDN 或暂时只做早期反射 + 无混响；不要为了混响阻塞 M4。
+5. 如果 EFX spike 失败，改用小型 FDN 或暂时只做早期反射 + 无混响；不要为了混响阻塞主线。

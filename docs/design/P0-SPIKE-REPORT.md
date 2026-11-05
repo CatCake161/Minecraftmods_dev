@@ -1,5 +1,7 @@
 # Cinema P0 技术验证
 
+> **历史文档（P0/P0.5）**：以下结论、命令和实现描述对应当时版本，不代表当前实现。当前状态见 [HANDOFF](../HANDOFF.md)，长期架构见 [PLANNING](../PLANNING.md)。
+>
 > 注意：**主模组已迁移到外部 FFmpeg 进程**（用户把 gyan.dev full build 放到 `mods/ffmpeg/bin/`）。
 > 本文的 JavaCV 数据是 P0 历史对比；spike 工程仍可单独用 JavaCV 运行。
 > 注意：`/cinema_visual_spike`、`/cinema_test_scene` 已在后续版本删除；本文保留历史命令用于复现 P0/P0.5。
