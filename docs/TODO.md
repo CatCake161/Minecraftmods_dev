@@ -54,13 +54,13 @@
 - [x] AV Receiver 方块 + block entity（状态字段/持久化/同步骨架）
 - [x] M1：解码/播放状态/音画时钟从全局 `CinemaPlayer` 迁入接收器
 - [x] M1：接收器向投影仪输出视频信号（投影仪不再直接持有播放器）
-- [x] 接收器向扬声器分配 5.1 声道（扬声器不做解码；M4 已实现，待游戏内验收）
+- [x] 接收器向扬声器分配 5.1 声道（扬声器不做解码；M4 已实现并验收）
 - [x] 接收器 GUI 信息架构与页签规格（媒体/扬声器/信号/设置，见 AV-RECEIVER.md §10）
 - [x] M2 接收器 GUI：媒体文件、播放/暂停/seek、音量/静音、信号/设置页
 - [ ] 接收器 GUI 延迟/混响设置（M4 后续）
-- [x] 每接收器独立播放器/状态/音频引擎（M3，已实现，待游戏内验收）
-- [ ] M3 验收：两个接收器同时播放/暂停/seek/音量/静音互不影响；第二个接收器不再被拒绝
-- [ ] M4 验收：六只已配对扬声器按 FL/FR/FC/LFE/BL/BR 角色出声；接收器 Speakers 页可调每只扬声器电平；未配对声道回退虚拟 5.1；玩家在影院内外移动时空间定位仍正确（不依赖 Seat/皇帝位）
+- [x] 每接收器独立播放器/状态/音频引擎（M3，已实现并验收）
+- [x] M3 验收：两个接收器同时播放/暂停/seek/音量/静音互不影响；第二个接收器不再被拒绝
+- [x] M4 验收：六只已配对扬声器按 FL/FR/FC/LFE/BL/BR 角色出声；接收器 Speakers 页可调每只扬声器电平；未配对声道回退虚拟 5.1；玩家在影院内外移动时空间定位仍正确（不依赖 Seat/皇帝位）
 - [x] M4 后续修正：删除皇帝位/固定听者参考；听者改为玩家实际耳朵/朝向；Seat 改为可右键乘坐的普通座位
 - [x] 接收器电平/单位：Speakers 页每扬声器 `Level`（-12.0..+6.0 dB）服务端同步；主音量改用 dBFS（-60..+6），命令/GUI/诊断统一
 - [x] Speakers 页滚动：同一角色允许多只扬声器链接，超过可视行数时滚轮查看并显示滚动条；标题不再用 `linked N/6` 限制显示
@@ -114,7 +114,7 @@
 ## P1：音频计算 / 房间声学（M4 后）
 
 > 方案、可行性/声学判断见 [AUDIO-ACOUSTICS.md](design/AUDIO-ACOUSTICS.md)。
-> 依赖 M4 扬声器路由；A0 EFX spike、A1d Spinorama 数据/许可可提前做。
+> M4 扬声器路由已完成；A0 EFX spike、A1d Spinorama 数据/许可可提前做。
 
 - [x] Spike：`cinema/speaker_specs/profiles/` 本地 JSON 导入/客户端 GUI；低音炮内置 omni + cardioid；空手右键扬声器打开 per-speaker GUI，角色选择也在 GUI（C2S `SpeakerRolePayload`）；简单参数 range/SPL gain 可编辑；`assignments.json` 按维度+坐标保存；measured profile 读取水平/垂直指向性 + 轴上响应三组数据；打开 GUI 不暂停游戏
 - [ ] A0 EFX/EAXReverb spike：在自定义 OpenAL context 中检测 `ALC_EXT_EFX`/`AL_EXT_EFX`；创建 aux slot；验证 per-source send、wet return、stereo/5.1/HRTF 设备、reset/设备切换、CPU/延迟
@@ -157,6 +157,8 @@
 
 ## 最近完成
 
+- [x] 用户验收通过：M3 两个接收器独立播放/暂停/seek/音量/静音互不影响
+- [x] 用户验收通过：M4 物理 5.1 路由、每扬声器 Level、主音量 dBFS、玩家实际听者定位；Speakers 页滚动/命名/Ping、Seat 乘坐与视角平滑、屏幕单投影仪占用
 - [x] 用户验收通过：亮度 0.01..1 的观感
 - [x] 投影仪 GUI M1/M2/M3：状态页、光学/wash、Throw/Focus Auto、Power、四个物理模拟开关、改动即保存；用户游戏内验收通过
 - [x] M2 接收器 GUI：Media / Speakers / Signal / Settings 四页签、媒体列表、播放控制、音量/静音、诊断页
