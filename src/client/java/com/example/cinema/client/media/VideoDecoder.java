@@ -49,7 +49,10 @@ public final class VideoDecoder implements AutoCloseable {
 	private volatile boolean closed;
 
 	public VideoDecoder(Path file, double startSeconds) throws Exception {
-		Ffmpeg.VideoInfo info = Ffmpeg.probeVideo(file);
+		this(file, startSeconds, Ffmpeg.probeVideo(file));
+	}
+
+	public VideoDecoder(Path file, double startSeconds, Ffmpeg.VideoInfo info) throws Exception {
 		frameRate = info.frameRate() > 1.0 ? info.frameRate() : 30.0;
 		this.startSeconds = Math.max(0.0, startSeconds);
 

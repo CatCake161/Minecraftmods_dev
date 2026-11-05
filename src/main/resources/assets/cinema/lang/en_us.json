@@ -21,7 +21,7 @@
 	"message.cinema.pair.cancelled": "Pairing selection cancelled.",
 	"message.cinema.pair.linked": "Linked %s ↔ %s.",
 	"message.cinema.pair.incompatible": "Cannot link %s with %s; selected %s instead.",
-	"message.cinema.pair.too_far": "Devices are more than 48 blocks apart.",
+	"message.cinema.pair.too_far": "Devices are more than 128 blocks apart.",
 	"message.cinema.pair.missing": "That device no longer exists.",
 	"message.cinema.pair.clear_selected": "Selected %s. Sneak-right-click another linked device to disconnect them.",
 	"message.cinema.pair.clear_cancelled": "Disconnect selection cancelled.",

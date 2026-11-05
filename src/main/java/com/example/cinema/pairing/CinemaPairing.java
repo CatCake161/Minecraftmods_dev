@@ -39,7 +39,7 @@ import java.util.UUID;
  * a chunk scan.
  */
 public final class CinemaPairing {
-	private static final double MAX_LINK_DISTANCE = 48.0;
+	private static final double MAX_LINK_DISTANCE = 128.0;
 	private static final long SELECTION_TIMEOUT_TICKS = 20L * 60L;
 	private static final Map<UUID, Pending> PENDING = new HashMap<>();
 	private static final Map<UUID, Pending> CLEAR_PENDING = new HashMap<>();

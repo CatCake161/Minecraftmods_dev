@@ -71,6 +71,8 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	private final Thread thread;
 	private final java.util.concurrent.atomic.AtomicBoolean threadStarted = new java.util.concurrent.atomic.AtomicBoolean();
 	private volatile boolean resetRequested;
+	private volatile boolean flushRequested;
+	private volatile double resetStartPts;
 	private volatile java.util.concurrent.CountDownLatch resetDone;
 
 	@SuppressWarnings("unchecked")
@@ -94,6 +96,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	private int appliedLayoutVersion = -1;
 	private volatile double audiblePts;
 	private volatile double latencySeconds;
+	private volatile long scheduledStartSystemNanos;
 	private double lastEndPts;
 	private ALCapabilities previousProcessCaps;
 	private boolean threadLocalContext;
@@ -119,11 +122,31 @@ public final class CinemaAudioEngine implements AutoCloseable {
 
 	/** Stops all current sources and prepares the same device/context for a new file. */
 	public void reset() {
+		reset(0.0);
+	}
+
+	/** Flushes queued audio and resets the media clock to {@code startPts}. */
+	public void reset(double startPts) {
+		reset(startPts, true);
+	}
+
+	/**
+	 * Lightweight seek flush: stops/un-queues sources and resets the clock, but
+	 * keeps the existing OpenAL sources and buffers allocated.
+	 */
+	public void flush(double startPts) {
+		reset(startPts, false);
+	}
+
+	private void reset(double startPts, boolean fullReset) {
 		if (!running.get()) {
 			return;
 		}
+		resetStartPts = Math.max(0.0, startPts);
 		if (!threadStarted.get()) {
 			clearQueues();
+			audiblePts = resetStartPts;
+			lastEndPts = resetStartPts;
 			return;
 		}
 		if (!thread.isAlive()) {
@@ -131,7 +154,11 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		}
 		java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
 		resetDone = latch;
-		resetRequested = true;
+		if (fullReset) {
+			resetRequested = true;
+		} else {
+			flushRequested = true;
+		}
 		try {
 			latch.await(1, TimeUnit.SECONDS);
 		} catch (InterruptedException e) {
@@ -145,6 +172,11 @@ public final class CinemaAudioEngine implements AutoCloseable {
 				return;
 			}
 		}
+	}
+
+	/** Drops queued decoder output; used to unblock a decoder being cancelled. */
+	public void clearInput() {
+		input.clear();
 	}
 
 	public void startPlayback() {
@@ -161,6 +193,14 @@ public final class CinemaAudioEngine implements AutoCloseable {
 
 	public double latencySeconds() {
 		return latencySeconds;
+	}
+
+	/**
+	 * Wall-clock timestamp of the scheduled six-source start, or 0 before the
+	 * first start. Used to align the first video frame with the first audio.
+	 */
+	public long scheduledStartSystemNanos() {
+		return scheduledStartSystemNanos;
 	}
 
 	public void setPaused(boolean value) {
@@ -353,6 +393,10 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			performReset();
 			return;
 		}
+		if (flushRequested) {
+			performFlush();
+			return;
+		}
 		if (appliedLayoutVersion != layoutVersion.get()) {
 			applyChannelLayout();
 		}
@@ -410,12 +454,17 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	private void startAll() {
 		long now = SOFTDeviceClock.alcGetInteger64vSOFT(currentDevice(), SOFTDeviceClock.ALC_DEVICE_CLOCK_SOFT);
 		long scheduled = now + 150_000_000L;
+		scheduledStartSystemNanos = System.nanoTime() + 150_000_000L;
 		for (int source : sources) {
 			SOFTSourceStartDelay.alSourcePlayAtTimeSOFT(source, scheduled);
 		}
 		started = true;
-		Cinema.LOGGER.info("cinema audio: six sources scheduled in {} ms",
-			String.format("%.1f", (scheduled - now) / 1e6));
+		Cinema.LOGGER.info("cinema audio: six sources scheduled in {} ms (src0 state={}, gain={}, queued={}, muted={})",
+			String.format("%.1f", (scheduled - now) / 1e6),
+			alGetSourcei(sources[0], AL_SOURCE_STATE),
+			String.format("%.3f", alGetSourcef(sources[0], AL_GAIN)),
+			alGetSourcei(sources[0], AL_BUFFERS_QUEUED),
+			masterMuted);
 		checkError("startAll");
 	}
 
@@ -519,6 +568,71 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		}
 	}
 
+	private void performFlush() {
+		boolean valid = true;
+		for (int i = 0; i < SPEAKERS; i++) {
+			alSourceStop(sources[i]);
+			int queued = alGetSourcei(sources[i], AL_BUFFERS_QUEUED);
+			if (queued > 0) {
+				IntBuffer released = BufferUtils.createIntBuffer(queued);
+				alSourceUnqueueBuffers(sources[i], released);
+				for (int j = 0; j < queued; j++) {
+					int buffer = released.get(j);
+					if (buffer == 0) {
+						valid = false;
+					} else {
+						freeBuffers[i].addLast(buffer);
+					}
+				}
+			}
+			alSourcei(sources[i], AL_BUFFER, 0);
+			// alSourceStop keeps the old playback offset. Without rewinding,
+			// newly queued buffers can start past their end, which is heard as
+			// silence after a seek/restart even though the clock keeps moving.
+			alSourceRewind(sources[i]);
+			appliedGains[i] = Float.NaN;
+		}
+		appliedLayoutVersion = -1;
+		int error = alGetError();
+		if (error != AL_NO_ERROR) {
+			Cinema.LOGGER.warn("cinema audio: flush failed with OpenAL error 0x{}; rebuilding sources",
+				Integer.toHexString(error));
+			valid = false;
+		}
+		if (!valid || !allBuffersFree()) {
+			// Last-resort recovery for an inconsistent source pool. This is the
+			// only path in flush that recreates sources.
+			cleanup();
+			for (Deque<Integer> free : freeBuffers) {
+				free.clear();
+			}
+			setupSources();
+		}
+		clearQueues();
+		started = false;
+		startRequested = false;
+		paused = false;
+		appliedPaused = false;
+		audiblePts = resetStartPts;
+		latencySeconds = 0;
+		scheduledStartSystemNanos = 0;
+		lastEndPts = resetStartPts;
+		flushRequested = false;
+		java.util.concurrent.CountDownLatch latch = resetDone;
+		if (latch != null) {
+			latch.countDown();
+		}
+	}
+
+	private boolean allBuffersFree() {
+		for (Deque<Integer> free : freeBuffers) {
+			if (free.size() != BUFFER_COUNT) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	private void performReset() {
 		cleanup();
 		for (Deque<Integer> free : freeBuffers) {
@@ -529,9 +643,10 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		startRequested = false;
 		paused = false;
 		appliedPaused = false;
-		audiblePts = 0;
+		audiblePts = resetStartPts;
 		latencySeconds = 0;
-		lastEndPts = 0;
+		scheduledStartSystemNanos = 0;
+		lastEndPts = resetStartPts;
 		setupSources();
 		resetRequested = false;
 		java.util.concurrent.CountDownLatch latch = resetDone;

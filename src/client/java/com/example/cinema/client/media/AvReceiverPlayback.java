@@ -27,6 +27,8 @@ import java.util.Arrays;
  * position.
  */
 public final class AvReceiverPlayback {
+	/** Time after a seek during which another seek is merged or rejected. */
+	public static final long SEEK_COOLDOWN_MILLIS = 3_000L;
 	private static final double MAX_DRIFT_SECONDS = 0.75;
 	private static final long FAILURE_RETRY_MILLIS = 5_000L;
 	private static final long MISSING_LOG_INTERVAL_MILLIS = 5_000L;
@@ -46,6 +48,10 @@ public final class AvReceiverPlayback {
 	private long lastMissingLogMillis;
 	private double clockOffset;
 	private boolean clockAligned;
+	private double lastExpectedSeconds = Double.NaN;
+	private long seekGraceUntilMillis;
+	private long seekCooldownUntilMillis;
+	private double pendingSeekSeconds = Double.NaN;
 	private boolean missing;
 	private int physicalChannels;
 
@@ -70,6 +76,11 @@ public final class AvReceiverPlayback {
 		return physicalChannels;
 	}
 
+	/** Remaining seek cooldown in milliseconds, or {@code 0} when seek is available. */
+	public long seekCooldownRemainingMillis() {
+		return Math.max(0L, seekCooldownUntilMillis - System.currentTimeMillis());
+	}
+
 	/**
 	 * Reconciles the local player with the receiver state. Returns {@code false}
 	 * when the receiver is stopped and this proxy should be removed.
@@ -83,7 +94,7 @@ public final class AvReceiverPlayback {
 			|| receiver.mediaSize() != mediaSize
 			|| !receiver.mediaSha256().equals(mediaSha256);
 		if (mediaChanged) {
-			closePlayer();
+			closePlayerForRestart(expectedPosition(level, receiver));
 			mediaKey = receiver.mediaKey();
 			mediaSize = receiver.mediaSize();
 			mediaSha256 = receiver.mediaSha256();
@@ -92,6 +103,7 @@ public final class AvReceiverPlayback {
 			missing = false;
 			clockAligned = false;
 			clockOffset = 0.0;
+			lastExpectedSeconds = Double.NaN;
 		}
 		if (player == null && !open(level, receiver)) {
 			return true;
@@ -116,13 +128,51 @@ public final class AvReceiverPlayback {
 			player.setPaused(true);
 		} else {
 			player.setPaused(false);
-			// HEVC/4K decoders can need more than a second to deliver the first
-			// frame. Do not drag a still-starting player back to the live clock;
-			// that used to create a one-second restart loop.
+			// Always advance the expected-position tracker, even while a seek
+			// is settling. Otherwise the stale value looks like a fresh server
+			// seek when the grace period ends and creates a restart loop.
+			double expected = expectedPosition(level, receiver);
+			boolean jumped = !Double.isNaN(lastExpectedSeconds)
+				&& Math.abs(expected - lastExpectedSeconds) > 0.5;
+			lastExpectedSeconds = expected;
+			long nowMillis = System.currentTimeMillis();
+			if (!Double.isNaN(pendingSeekSeconds) && nowMillis >= seekCooldownUntilMillis
+				&& !player.isSeeking()) {
+				double target = pendingSeekSeconds;
+				pendingSeekSeconds = Double.NaN;
+				restartAt(level, receiver, target);
+				if (player != null) {
+					player.setVolume(receiver.volume(), receiver.isMuted());
+				}
+				return true;
+			}
+			if (jumped) {
+				if (nowMillis < seekCooldownUntilMillis || player.isSeeking()) {
+					// Coalesce a burst of seek clicks into one restart, or wait
+					// for an in-flight seek worker to finish.
+					pendingSeekSeconds = expected;
+					return true;
+				}
+				// A new server seek can arrive while the previous restart is
+				// still inside its settle window. Apply it now instead of
+				// swallowing it and leaving the old audio playing until the
+				// grace period expires.
+				restartAt(level, receiver, expected);
+				if (player != null) {
+					player.setVolume(receiver.volume(), receiver.isMuted());
+				}
+				return true;
+			}
+			if (player.isSeeking() || nowMillis < seekGraceUntilMillis) {
+				// The seek worker is still draining the old decoders/audio, or
+				// the newly started decoder has not reached the target clock
+				// yet. Do not run drift correction against an intermediate clock.
+				player.setVolume(receiver.volume(), receiver.isMuted());
+				return true;
+			}
 			boolean starting = player.presentedFrames() == 0
 				&& System.currentTimeMillis() - openedAtMillis < 10_000L;
 			if (!starting) {
-				double expected = expectedPosition(level, receiver);
 				if (!clockAligned) {
 					double offset = player.positionSeconds() - expected;
 					if (Math.abs(offset) > 30.0) {
@@ -170,12 +220,23 @@ public final class AvReceiverPlayback {
 		missing = false;
 		clockAligned = false;
 		clockOffset = 0.0;
+		seekGraceUntilMillis = 0L;
+		seekCooldownUntilMillis = 0L;
+		pendingSeekSeconds = Double.NaN;
+		lastExpectedSeconds = Double.NaN;
 		physicalChannels = 0;
 	}
 
 	private void closePlayer() {
 		if (player != null) {
 			player.close();
+			player = null;
+		}
+	}
+
+	private void closePlayerForRestart(double nextStartSeconds) {
+		if (player != null) {
+			player.closeForRestart(nextStartSeconds);
 			player = null;
 		}
 	}
@@ -206,6 +267,11 @@ public final class AvReceiverPlayback {
 	}
 
 	private void restartAt(ClientLevel level, AvReceiverBlockEntity receiver, double expected) {
+		long seekStartedNanos = System.nanoTime();
+		long now = System.currentTimeMillis();
+		seekGraceUntilMillis = now + SEEK_COOLDOWN_MILLIS + 1_000L;
+		seekCooldownUntilMillis = now + SEEK_COOLDOWN_MILLIS;
+		pendingSeekSeconds = Double.NaN;
 		Path file;
 		try {
 			file = MediaLibrary.resolve(mediaKey);
@@ -214,10 +280,14 @@ public final class AvReceiverPlayback {
 			closePlayer();
 			return;
 		}
-		closePlayer();
+		// In-place seek is disabled until its decoder/clock state machine is
+		// proven stable. Keep the full player restart, but retain the audio
+		// engine's source pool so seek does not rebuild the audio backend.
+		closePlayerForRestart(expected);
 		if (openAt(file, receiver, expected)) {
-			Cinema.LOGGER.info("cinema receiver {}: resynced {} to {} s",
-				receiverPos.toShortString(), mediaKey, String.format("%.2f", expected));
+			Cinema.LOGGER.info("cinema receiver {}: resynced {} to {} s in {} ms",
+				receiverPos.toShortString(), mediaKey, String.format("%.2f", expected),
+				(System.nanoTime() - seekStartedNanos) / 1_000_000L);
 		}
 	}
 

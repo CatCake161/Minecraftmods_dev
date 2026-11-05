@@ -141,6 +141,18 @@ public final class Ffmpeg {
 	}
 
 	public static VideoInfo probeVideo(Path file) throws IOException {
+		VideoInfo info = probeVideoOrNull(file);
+		if (info == null) {
+			throw new IOException("FFprobe could not read video dimensions: " + file);
+		}
+		return info;
+	}
+
+	/**
+	 * Returns {@code null} when the file has no video stream, which is normal for
+	 * audio-only media. Files with a video stream keep the full metadata path.
+	 */
+	public static VideoInfo probeVideoOrNull(Path file) throws IOException {
 		String output = runCapture(List.of(
 			ffprobe().toString(),
 			"-v", "error",
@@ -178,7 +190,7 @@ public final class Ffmpeg {
 			}
 		}
 		if (width <= 0 || height <= 0) {
-			throw new IOException("FFprobe could not read video dimensions: " + file);
+			return null;
 		}
 		return new VideoInfo(width, height, frameRate, codec, pixelFormat, transfer, primaries, space);
 	}

@@ -1,5 +1,6 @@
 package com.example.cinema.client.media;
 
+import com.example.cinema.Cinema;
 import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.renderer.texture.AbstractTexture;
@@ -9,6 +10,7 @@ import org.lwjgl.opengl.GL12;
 import org.lwjgl.opengl.GL14;
 import org.lwjgl.opengl.GL21;
 import org.lwjgl.opengl.GL30;
+import org.lwjgl.opengl.GL32;
 
 import java.nio.ByteBuffer;
 
@@ -20,6 +22,13 @@ import java.nio.ByteBuffer;
  */
 public final class CinemaVideoTexture extends AbstractTexture {
 	private static final boolean FINISH_UPLOADS = Boolean.getBoolean("cinema.video.glFinish");
+
+	static {
+		if (FINISH_UPLOADS) {
+			Cinema.LOGGER.info("cinema video: glFinish uploads enabled");
+		}
+	}
+
 	private int width = -1;
 	private int height = -1;
 	private boolean allocated;
@@ -42,10 +51,15 @@ public final class CinemaVideoTexture extends AbstractTexture {
 		super.setFilter(true, mipmapsValid);
 	}
 
-	public void upload(ByteBuffer rgba, int frameWidth, int frameHeight) {
+	/**
+	 * Uploads one frame. The returned fence must be polled with
+	 * {@link #isUploadComplete(long)} before the source buffer is recycled.
+	 * A return value of 0 means the upload is already complete.
+	 */
+	public long upload(ByteBuffer rgba, int frameWidth, int frameHeight) {
 		RenderSystem.assertOnRenderThread();
 		if (frameWidth <= 0 || frameHeight <= 0) {
-			return;
+			return 0L;
 		}
 		prepareUnpackState();
 		bind();
@@ -65,13 +79,38 @@ public final class CinemaVideoTexture extends AbstractTexture {
 		}
 		GL11.glTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, 0, frameWidth, frameHeight,
 			GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, rgba);
+		long fence = 0L;
 		if (FINISH_UPLOADS) {
 			// Diagnostic switch for NVIDIA driver crashes on asynchronous
 			// glTexSubImage2D copies: -Dcinema.video.glFinish=true.
 			GL11.glFinish();
+		} else {
+			fence = GL32.glFenceSync(GL32.GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 		}
 		mipmapsValid = false;
 		GlStateManager._bindTexture(0);
+		return fence;
+	}
+
+	/** True once the GPU has finished reading the uploaded source buffer. */
+	public boolean isUploadComplete(long fence) {
+		RenderSystem.assertOnRenderThread();
+		if (fence == 0L) {
+			return true;
+		}
+		int status = GL32.glClientWaitSync(fence, 0, 0L);
+		if (status == GL32.GL_ALREADY_SIGNALED || status == GL32.GL_CONDITION_SATISFIED
+			|| status == GL32.GL_WAIT_FAILED) {
+			GL32.glDeleteSync(fence);
+			return true;
+		}
+		return false;
+	}
+
+	/** Forces all pending GPU commands to finish; used on close or queue pressure. */
+	public void finishUploads() {
+		RenderSystem.assertOnRenderThread();
+		GL11.glFinish();
 	}
 
 	/**

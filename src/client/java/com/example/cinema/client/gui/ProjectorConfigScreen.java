@@ -424,7 +424,9 @@ public final class ProjectorConfigScreen extends Screen {
 		}
 		String state = receiver.state().name().toLowerCase(Locale.ROOT);
 		String receiverLabel = receiver.name().isEmpty() ? "" : receiver.name() + " · ";
-		if (player != null) {
+		if (player != null && player.isAudioOnly()) {
+			statusLines.add("AV: " + receiverLabel + state + " · audio only");
+		} else if (player != null) {
 			statusLines.add(String.format(Locale.ROOT, "AV: %s%s · %d×%d",
 				receiverLabel, state, player.width(), player.height()));
 		} else {

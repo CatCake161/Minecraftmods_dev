@@ -28,7 +28,7 @@ import java.util.Map;
  * screens without a link stay dark until the Cinema Cable pairs them.
  */
 public final class ProjectorOptics {
-	private static final double MAX_RANGE = 48.0;
+	private static final double MAX_RANGE = 128.0;
 	private static final long PAIRING_CACHE_MS = 250L;
 	private static final float BASE_IMAGE_ASPECT = 16.0f / 9.0f;
 

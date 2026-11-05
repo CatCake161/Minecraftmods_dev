@@ -128,11 +128,14 @@ public final class AvReceiverConfigScreen extends Screen {
 	private Button backButton;
 	private Button playSelectedButton;
 	private Button removeLibraryButton;
+	private Button seekBackButton;
+	private Button seekForwardButton;
 	private EditBox libraryPathBox;
 	private SeekSlider seekSlider;
 	private VolumeSlider volumeSlider;
 	private double pendingSeekSeconds = Double.NaN;
 	private long pendingSeekUntilMillis;
+	private long seekCooldownUntilMillis;
 	private double pendingVolumeDb = Double.NaN;
 	private long pendingVolumeUntilMillis;
 
@@ -193,10 +196,12 @@ public final class AvReceiverConfigScreen extends Screen {
 		stopButton = Button.builder(Component.literal("Stop"), button -> sendStop())
 			.bounds(contentLeft + 40, rowY, 34, 18).build();
 		addRenderableWidget(stopButton);
-		addRenderableWidget(Button.builder(Component.literal("-10s"), button -> seekRelative(-10))
-			.bounds(contentLeft + 76, rowY, 34, 18).build());
-		addRenderableWidget(Button.builder(Component.literal("+10s"), button -> seekRelative(10))
-			.bounds(contentLeft + 112, rowY, 34, 18).build());
+		seekBackButton = Button.builder(Component.literal("-10s"), button -> seekRelative(-10))
+			.bounds(contentLeft + 76, rowY, 34, 18).build();
+		addRenderableWidget(seekBackButton);
+		seekForwardButton = Button.builder(Component.literal("+10s"), button -> seekRelative(10))
+			.bounds(contentLeft + 112, rowY, 34, 18).build();
+		addRenderableWidget(seekForwardButton);
 
 		int muteWidth = 42;
 		int volumeX = contentLeft + 150;
@@ -403,9 +408,11 @@ public final class AvReceiverConfigScreen extends Screen {
 	private void flushPendingControls() {
 		if (seekSlider != null && seekSlider.dragging && receiver.durationSeconds() > 0.0) {
 			seekSlider.dragging = false;
-			pendingSeekSeconds = seekSlider.draftSeconds;
-			pendingSeekUntilMillis = System.currentTimeMillis() + 1_500L;
-			sendSeek(seekSlider.draftSeconds);
+			if (sendSeek(seekSlider.draftSeconds)) {
+				pendingSeekSeconds = seekSlider.draftSeconds;
+				pendingSeekUntilMillis = System.currentTimeMillis()
+					+ AvReceiverPlayback.SEEK_COOLDOWN_MILLIS;
+			}
 		}
 		if (volumeSlider != null && volumeSlider.dragging) {
 			volumeSlider.dragging = false;
@@ -561,8 +568,15 @@ public final class AvReceiverConfigScreen extends Screen {
 				&& !LibraryRegistry.DEFAULT_ID.equals(selectedLibraryId);
 		}
 		if (seekSlider != null) {
-			seekSlider.active = receiver.durationSeconds() > 0.0;
+			boolean seekCoolingDown = seekCooldownRemainingMillis() > 0L;
+			seekSlider.active = receiver.durationSeconds() > 0.0 && !seekCoolingDown;
 			seekSlider.setExternal(currentPosition());
+			if (seekBackButton != null) {
+				seekBackButton.active = seekSlider.active;
+			}
+			if (seekForwardButton != null) {
+				seekForwardButton.active = seekSlider.active;
+			}
 		}
 		if (volumeSlider != null) {
 			volumeSlider.setExternal(receiver.volumeDb());
@@ -622,6 +636,9 @@ public final class AvReceiverConfigScreen extends Screen {
 		} else {
 			String video = videoTargetLabel();
 			AvReceiverPlayback playback = AvReceiverPlaybackManager.playbackAt(receiver.getBlockPos());
+			if (playback != null && playback.player() != null && playback.player().isAudioOnly()) {
+				video = "Video: audio only";
+			}
 			String audio;
 			if (playback == null || playback.player() == null) {
 				audio = "Audio: idle";
@@ -665,7 +682,7 @@ public final class AvReceiverConfigScreen extends Screen {
 		if (scanning) {
 			graphics.drawString(font, "Scanning media library...", contentLeft + 4, top + 4, 0xFFD54F, false);
 		} else if (filtered.isEmpty()) {
-			graphics.drawString(font, "No video files in this folder", contentLeft + 4, top + 4, 0x9A9A9A, false);
+			graphics.drawString(font, "No media files in this folder", contentLeft + 4, top + 4, 0x9A9A9A, false);
 		} else {
 			graphics.enableScissor(contentLeft, top, contentLeft + contentWidth, bottom);
 			for (int i = 0; i < rows; i++) {
@@ -704,7 +721,7 @@ public final class AvReceiverConfigScreen extends Screen {
 
 		EntryView selected = selectedView();
 		String detail = selected == null
-			? "Select a movie to play"
+			? "Select media to play"
 			: (selected.entry.directory() ? "Folder: " + selected.entry.key() : fullMetadata(selected));
 		graphics.drawString(font, truncate(detail, contentWidth), contentLeft, contentBottom - 34,
 			0x9A9A9A, false);
@@ -771,9 +788,7 @@ public final class AvReceiverConfigScreen extends Screen {
 				+ "  Size: " + formatSize(receiver.mediaSize()),
 			"Fingerprint: " + shortHash(receiver.mediaSha256()),
 			probeLine(),
-			"Playback: " + (player == null ? "not open"
-				: player.width() + "x" + player.height() + "  presented=" + player.presentedFrames()
-					+ "  dropped=" + player.droppedFrames()),
+			"Playback: " + playbackLine(player),
 			"Receiver: " + receiver.state().name().toLowerCase(Locale.ROOT)
 				+ "  " + String.format(Locale.ROOT, "%.1f", currentPosition())
 				+ " / " + String.format(Locale.ROOT, "%.1f", receiver.durationSeconds()) + " s",
@@ -787,6 +802,17 @@ public final class AvReceiverConfigScreen extends Screen {
 			graphics.drawString(font, truncate(line, contentWidth), contentLeft, y, 0xB8B8B8, false);
 			y += 11;
 		}
+	}
+
+	private static String playbackLine(CinemaPlayer player) {
+		if (player == null) {
+			return "not open";
+		}
+		if (player.isAudioOnly()) {
+			return "audio only";
+		}
+		return player.width() + "x" + player.height() + "  presented=" + player.presentedFrames()
+			+ "  dropped=" + player.droppedFrames();
 	}
 
 	private void drawSettingsTab(GuiGraphics graphics) {
@@ -856,7 +882,7 @@ public final class AvReceiverConfigScreen extends Screen {
 				&& mouseX >= libraryPathBox.getX() && mouseX < libraryPathBox.getX() + libraryPathBox.getWidth()
 				&& mouseY >= libraryPathBox.getY() && mouseY < libraryPathBox.getY() + libraryPathBox.getHeight()) {
 				renderWrappedTooltip(graphics,
-					"Absolute path to a folder containing videos. The library is stored locally in "
+					"Absolute path to a folder containing videos or music. The library is stored locally in "
 						+ "cinema/libraries.json; receiver keys use lib/<id>/<relative>.",
 					mouseX, mouseY);
 				return;
@@ -1035,7 +1061,7 @@ public final class AvReceiverConfigScreen extends Screen {
 
 	private void togglePlayPause() {
 		if (receiver.mediaKey().isEmpty()) {
-			setStatus("Select a movie from the Media tab first");
+			setStatus("Select media from the Media tab first");
 			return;
 		}
 		if (receiver.state() == AvReceiverBlockEntity.State.PLAYING) {
@@ -1054,18 +1080,37 @@ public final class AvReceiverConfigScreen extends Screen {
 		if (receiver.durationSeconds() > 0.0) {
 			target = Math.min(target, receiver.durationSeconds());
 		}
-		AvReceiverControlClient.sendValue(receiver.getBlockPos(),
-			AvReceiverControlPayload.Action.SEEK, target);
-		setStatus("Seek requested: " + formatTime(target));
+		sendSeek(target);
 	}
 
-	private void sendSeek(double seconds) {
+	private boolean sendSeek(double seconds) {
 		if (receiver.durationSeconds() <= 0.0) {
-			return;
+			return false;
 		}
+		long cooldownRemaining = seekCooldownRemainingMillis();
+		if (cooldownRemaining > 0L) {
+			setStatus("Seek available again in "
+				+ String.format(Locale.ROOT, "%.1f", cooldownRemaining / 1000.0) + " s");
+			return false;
+		}
+		seekCooldownUntilMillis = System.currentTimeMillis() + AvReceiverPlayback.SEEK_COOLDOWN_MILLIS;
 		AvReceiverControlClient.sendValue(receiver.getBlockPos(),
 			AvReceiverControlPayload.Action.SEEK, seconds);
 		setStatus("Seek requested: " + formatTime(seconds));
+		return true;
+	}
+
+	/**
+	 * Seek is unavailable until both the local request cooldown and the
+	 * playback-side restart cooldown have elapsed.
+	 */
+	private long seekCooldownRemainingMillis() {
+		long remaining = seekCooldownUntilMillis - System.currentTimeMillis();
+		AvReceiverPlayback playback = AvReceiverPlaybackManager.playbackAt(receiver.getBlockPos());
+		if (playback != null) {
+			remaining = Math.max(remaining, playback.seekCooldownRemainingMillis());
+		}
+		return Math.max(0L, remaining);
 	}
 
 	private void sendVolume(double volumeDb) {
@@ -1329,9 +1374,10 @@ public final class AvReceiverConfigScreen extends Screen {
 		if (probe == null) {
 			return "Video: metadata pending  |  Audio: metadata pending";
 		}
-		String video = probe.video().width() + "x" + probe.video().height()
-			+ " " + String.format(Locale.ROOT, "%.1f", probe.video().frameRate()) + "fps "
-			+ probe.video().codec() + " " + (probe.video().isHdr() ? "HDR" : "SDR");
+		String video = probe.video() == null ? "audio only"
+			: probe.video().width() + "x" + probe.video().height()
+				+ " " + String.format(Locale.ROOT, "%.1f", probe.video().frameRate()) + "fps "
+				+ probe.video().codec() + " " + (probe.video().isHdr() ? "HDR" : "SDR");
 		String audio = probe.audio() == null ? "no audio"
 			: probe.audio().codec().toUpperCase(Locale.ROOT) + " "
 				+ probe.audio().channels() + "ch " + probe.audio().sampleRate() + "Hz";
@@ -1342,22 +1388,40 @@ public final class AvReceiverConfigScreen extends Screen {
 		if (view.probe() == null) {
 			return view.error() != null ? "metadata error" : "metadata pending";
 		}
-		return view.probe().video().width() + "x" + view.probe().video().height()
-			+ "  " + view.probe().video().codec()
-			+ "  " + formatTime(view.probe().durationSeconds());
+		MediaLibrary.Probe probe = view.probe();
+		if (probe.audioOnly()) {
+			return "audio  " + audioSummary(probe) + "  " + formatTime(probe.durationSeconds());
+		}
+		return probe.video().width() + "x" + probe.video().height()
+			+ "  " + probe.video().codec()
+			+ "  " + formatTime(probe.durationSeconds());
 	}
 
 	private String fullMetadata(EntryView view) {
 		if (view.probe() == null) {
 			return view.entry.name() + (view.error() != null ? "  |  " + view.error() : "");
 		}
-		String hdr = view.probe().video().isHdr() ? "HDR" : "SDR";
-		String audio = view.probe().audio() == null ? "no audio"
-			: view.probe().audio().channels() + "ch " + view.probe().audio().codec();
+		MediaLibrary.Probe probe = view.probe();
+		if (probe.audioOnly()) {
+			return view.entry.name() + "  |  " + formatSize(view.entry.size())
+				+ "  |  " + formatTime(probe.durationSeconds())
+				+ "  |  audio only  |  " + audioSummary(probe);
+		}
+		String hdr = probe.video().isHdr() ? "HDR" : "SDR";
+		String audio = probe.audio() == null ? "no audio"
+			: probe.audio().channels() + "ch " + probe.audio().codec();
 		return view.entry.name() + "  |  " + formatSize(view.entry.size())
-			+ "  |  " + formatTime(view.probe().durationSeconds())
-			+ "  |  " + view.probe().video().width() + "x" + view.probe().video().height()
-			+ " " + hdr + " " + view.probe().video().codec() + "  |  " + audio;
+			+ "  |  " + formatTime(probe.durationSeconds())
+			+ "  |  " + probe.video().width() + "x" + probe.video().height()
+			+ " " + hdr + " " + probe.video().codec() + "  |  " + audio;
+	}
+
+	private static String audioSummary(MediaLibrary.Probe probe) {
+		if (probe.audio() == null) {
+			return "no audio";
+		}
+		return probe.audio().codec().toUpperCase(Locale.ROOT) + " "
+			+ probe.audio().channels() + "ch " + probe.audio().sampleRate() + "Hz";
 	}
 
 	private String shortHash(String sha) {
@@ -1513,10 +1577,10 @@ public final class AvReceiverConfigScreen extends Screen {
 		@Override
 		public void onRelease(double mouseX, double mouseY) {
 			dragging = false;
-			if (receiver.durationSeconds() > 0.0) {
+			if (receiver.durationSeconds() > 0.0 && sendSeek(draftSeconds)) {
 				pendingSeekSeconds = draftSeconds;
-				pendingSeekUntilMillis = System.currentTimeMillis() + 1_500L;
-				sendSeek(draftSeconds);
+				pendingSeekUntilMillis = System.currentTimeMillis()
+					+ AvReceiverPlayback.SEEK_COOLDOWN_MILLIS;
 			}
 			super.onRelease(mouseX, mouseY);
 		}

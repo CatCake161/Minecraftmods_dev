@@ -114,9 +114,51 @@
 - `SpeakerBlockEntity`：有 `role`、`levelDb`、`type`；`SpeakerBlock` 有 `FACING`；落地式为两格高，block entity 在下半格。M4 接收器→扬声器路由已接入。
 - `Seat` 方块已实现（`SeatBlock`/`SeatBlockEntity`/不可见 `SeatEntity`），可右键乘坐；**不提供皇帝位/听者参考，不参与声学**。
 - `AvReceiverPlaybackManager`：M3 每个接收器独立持有音频引擎/OpenAL context；停止或移除接收器时释放对应 context。
-- 六个 source 仍是 `AL_SOURCE_RELATIVE = AL_TRUE`；M4 每个 sync 把物理扬声器世界坐标转换为听者相对坐标并通过 `setChannelLayout()` 快照更新，音频线程不读世界/玩家状态。
+- 六个 source 仍是 `AL_SOURCE_RELATIVE = AL_TRUE`；M4 每个 sync 把物理扬声器世界坐标转换为听者相对坐标并通过 `setChannelLayout()` 快照更新，音频线程不读世界/玩家状态。世界坐标源迁移评审见 §4.2.1，当前暂不迁移。
 - `StreamingAudioDecoder` 的 FFmpeg stderr 没有单独消费（`redirectErrorStream(false)`，靠 `-loglevel error` 降低输出）；极端情况下仍可能因 stderr 管道填满而阻塞，后续可加 drain 线程。
 - `CinemaPlayer` 的 A/V 时钟使用音频设备时钟/PTS；声学处理不得改变 chunk 的 `startPtsSeconds` 或引入不可控 lookahead。
+
+### 4.2.1 定位模型评审：相对源 vs 世界坐标源（暂不迁移）
+
+> 2026-11 评审；当前代码未改动。
+
+**当前模型（M4）**
+
+- 六个 source 均为 `AL_SOURCE_RELATIVE = AL_TRUE`，OpenAL listener 固定在原点、朝向 -Z。
+- `AvReceiverPlayback` 每个 client tick 取玩家眼睛位置和水平朝向，把扬声器世界坐标转成 listener space：
+  `x = dot(relative, right)`、`y = relative.y`、`z = -dot(relative, forward)`；未配对声道回退到 `DEFAULT_POSITIONS`。
+- 因此方位和 OpenAL 距离衰减都随玩家姿态更新；音频线程只读 float 快照，不访问 Minecraft 世界。
+- 这是 M3/M4 为了让音频线程与客户端世界状态解耦而选的结构，不是性能妥协。
+
+**世界坐标模型**
+
+- `AL_SOURCE_RELATIVE = AL_FALSE`；source 保存扬声器世界坐标（`speakerCenter`），listener 每个 tick 更新为玩家眼睛位置与 yaw-only 朝向。
+- 未配对声道用 listener pose + 默认偏移生成世界坐标，保持虚拟 5.1 仍围绕听者。
+- 理论上与当前模型等价：Minecraft 与 OpenAL 都是右手、Y-up，可以直接使用世界坐标；listener `at` = 水平 look，`up` = (0,1,0)，source = 世界坐标。变换后的方位/距离应与当前 `toListenerSpace` 完全一致。
+
+**主要风险**
+
+1. **坐标与朝向**：必须保持 yaw-only。若把完整 look（含 pitch）传给 listener，抬头/低头会让扬声器在垂直方向移动，改变当前听感。需要单元测试确认前/后/左/右与 Z 符号。
+2. **上下文线程**：OpenAL 调用只能在 `cinema-audio` 线程；listener/source 更新必须通过不可变快照，不能在 client tick 直接调用 `alListener*`/`alSource*`。
+3. **原子性**：当前 `channelPositions`、`channelGains`、`layoutVersion` 是分开的 volatile 字段；加入 listener 后更容易出现“新位置 + 旧增益/listener”的撕裂。迁移时应改成单个 immutable `LayoutSnapshot`（listener + 六路位置 + 六路增益 + 相对/绝对标志）。
+4. **距离衰减**：`AL_INVERSE_DISTANCE_CLAMPED` 目前依赖默认 `AL_REFERENCE_DISTANCE = 1`、`AL_ROLLOFF_FACTOR = 1`、`AL_MAX_DISTANCE = 64`；5 格约 -14 dB。世界坐标模型在坐标正确时衰减完全相同，但应显式设置参考距离，并把 listener 与 source 放在同一快照更新，否则会双重变换或距离错误。未来若在 Java 侧做距离/声学校准，需把 `AL_ROLLOFF_FACTOR` 归零，避免双重衰减。
+5. **回退布局**：未配对声道若继续用 relative，会变成混合模型；建议全部 absolute，并用 listener yaw 旋转默认偏移。扬声器区块卸载时也要原子切换。
+6. **Doppler/HRTF**：当前没有设置 listener/source velocity，不产生 Doppler；迁移后不要误设 velocity。HRTF 下需 A/B 验证 listener 朝向。
+7. **多接收器**：每个 OpenAL context 有自己的 listener，必须全部更新；player 不存在时使用接收器中心 +1.5 的 fallback。
+
+**结论**
+
+- 当前相对模型没有功能性问题，**暂不迁移**。它已经提供正确的方位和距离衰减，并让音频线程完全不接触 Minecraft 状态。
+- 等 A2 早期反射/遮挡/房间声学需要稳定的世界坐标 source 时再迁移；届时先做纯数学等价测试、不可变快照、显式 reference distance，并用固定姿态 + 移动/转头做游戏内 A/B。迁移前不要改 `AL_SOURCE_RELATIVE`。
+
+**迁移前验证清单**
+
+1. 纯数学：对随机 listener 位置/yaw 和扬声器世界坐标，比较 `toListenerSpace` 与“世界坐标 + listener 变换”的 x/y/z；覆盖前/后/左/右、yaw=0/90/180/270。
+2. 固定姿态：同一影院、同一听者位置，逐声道 Ping，比较相对源与世界坐标源的声像/响度。
+3. 移动与转头：沿前后左右移动、连续转头，确认没有左右翻转、Z 轴反向、俯仰导致的垂直漂移。
+4. 回退布局：拔掉部分扬声器/让区块卸载，确认未配对声道仍围绕听者，且切换时无爆音。
+5. 多接收器/HRTF：两个接收器同时播放；开启/关闭 HRTF，确认 listener 姿态和距离衰减一致。
+6. 线程：确认 client tick 只写快照，所有 `alListener*`/`alSource*` 都在 `cinema-audio` 线程执行。
 
 ### 4.3 由此得到的顺序
 

@@ -50,10 +50,10 @@ public final class AvReceiverPlaybackManager {
 		if (++tickCounter % SYNC_INTERVAL_TICKS == 0) {
 			scan(client.level, client.player.blockPosition());
 		} else {
-			// The listener now follows the player's actual ears and head direction,
-			// so refresh relative source positions every client tick. The full
-			// receiver scan stays at the lower interval above.
-			updateLayouts(client.level);
+			// State changes such as seek/play/pause must be observed every tick;
+			// waiting for the next full receiver scan adds up to 0.5 s of input
+			// latency. The expensive chunk scan stays at the lower interval.
+			syncTracked(client.level);
 		}
 	}
 
@@ -119,10 +119,18 @@ public final class AvReceiverPlaybackManager {
 		}
 	}
 
-	private static void updateLayouts(ClientLevel level) {
-		for (Map.Entry<BlockPos, AvReceiverPlayback> entry : playbacks.entrySet()) {
+	private static void syncTracked(ClientLevel level) {
+		Iterator<Map.Entry<BlockPos, AvReceiverPlayback>> iterator = playbacks.entrySet().iterator();
+		while (iterator.hasNext()) {
+			Map.Entry<BlockPos, AvReceiverPlayback> entry = iterator.next();
 			if (level.getBlockEntity(entry.getKey()) instanceof AvReceiverBlockEntity receiver) {
-				entry.getValue().updateChannelLayout(level, receiver);
+				if (!entry.getValue().sync(level, receiver)) {
+					entry.getValue().close();
+					iterator.remove();
+				}
+			} else {
+				entry.getValue().close();
+				iterator.remove();
 			}
 		}
 	}

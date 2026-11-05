@@ -7,8 +7,8 @@
 
 - Minecraft 1.21.1 + Fabric，Java 21；包名 `com.example.cinema`，模组 id `cinema`；当前版本 **Alpha 0.0.1**。
 - 核心信号链已可玩：屏幕 → 投影仪 → AV Receiver → 5.1 扬声器。媒体由客户端本地解码，接收器与服务端保存播放状态和媒体指纹。
-- 已通过游戏内验收：投影仪光学与 GUI M1/M2/M3、屏幕渲染与尺寸配置、AV Receiver M1/M2/M3/M4、四种扬声器、物理 5.1 路由、线材配对、设备/扬声器命名、座位乘坐与视角、Mod Menu 设置页。
-- 剩余主要问题：64×64 屏幕配对/尺寸显示错误、BSL 下 wash 异常、无音轨长播未测、NVIDIA 纹理上传崩溃待复测。
+- 已通过游戏内验收：投影仪光学与 GUI M1/M2/M3、屏幕渲染与尺寸配置（含 64×64）、AV Receiver M1/M2/M3/M4、四种扬声器、物理 5.1 路由、线材配对、设备/扬声器命名、座位乘坐与视角、Mod Menu 设置页。
+- 剩余主要问题：暂无阻塞项。NVIDIA 纹理上传已在 `glFinish` 模式下复测通过，默认策略待评估；BSL 下 wash 异常与无音轨长播按用户决定暂不处理。
 - 规划中：多屏/多投影仪、LAN 状态同步、遥控器与远程配对、音轨/视频轨/字幕、AV Receiver `Video Processing`、可变声道布局/天空声道、房间声学。
 - 已验收功能的细节见 §3；未完成事项统一维护在 [TODO.md](TODO.md)。
 
@@ -41,17 +41,21 @@
 - 屏幕：同朝向、同平面矩形扫描；逐格渲染，修复特殊视角下整屏消失；BE 视距 512。
 - 屏幕尺寸可配置为 1..64（默认 16×16），保存到 `config/cinema.json`；`-Dcinema.screen.maxSize` 优先。
 - 投掷比自动模式按屏幕四角与视频宽高比拟合，保留约 2% 边缘余量，支持斜向安装。
-- 显式配对：投影仪↔屏幕；配对距离上限 48 格；解除连接使用潜行右键设备 A、再潜行右键设备 B。
-- 对焦模糊当前基于 mipmap/LOD，物理观感一般，列为后续改进（不阻塞）。
+- 显式配对：投影仪↔屏幕；配对距离上限 128 格；解除连接使用潜行右键设备 A、再潜行右键设备 B。
+- 64×64 屏幕已验证：完整矩形下 GUI/命令的尺寸与 master 坐标正确；配对与光学解析范围均为 128 格。
+- 配对诊断：超过 128 格、投影仪/屏幕朝向不对、屏幕已被占用等失败原因通过聊天提示；投影仪 GUI 状态区显示屏幕链接与 AV 信号状态（已通过游戏内验收）。
+- 对焦模糊当前基于 mipmap/LOD，物理观感一般；按用户决定暂不处理（不阻塞）。
 
 ### 3.2 AV Receiver 与媒体
 
 - M1：媒体/播放状态/音画时钟迁入接收器；`AvReceiverControlPayload`（C2S）+ 服务端校验；客户端 `AvReceiverPlaybackManager` 每 10 tick 同步状态，视频经 `ProjectorOptics` 路由到屏幕。
-- M2：接收器 GUI（Media/Speakers/Signal/Settings）、默认库 + 外部媒体库、`lib/<id>/...` key、添加/移除/切换库、记住上次库/文件夹、缺文件提示、长文本截断/tooltip/滑块 pending/ESC 暂停同步。
+- M2：接收器 GUI（Media/Speakers/Signal/Settings）、默认库 + 外部媒体库、`lib/<id>/...` key、添加/移除/切换库、记住上次库/文件夹、缺文件提示、长文本截断/tooltip/滑块 pending/ESC 暂停同步。选择 >64 MiB 媒体时使用快速采样指纹（`q1:` 头尾各 4 MiB + size），避免播放前全量 SHA-256 阻塞。
 - 媒体库扫描/探测结果按“库 + 文件夹”在当前游戏会话内缓存；Refresh 强制刷新，添加/移除库会使对应缓存失效。
-- M3：每个接收器持有独立 `CinemaPlayer`、视频纹理和 `CinemaAudioEngine`/OpenAL context；两个接收器可同时播放，播放/暂停/seek/音量/静音互不影响。
+- M3：每个接收器持有独立 `CinemaPlayer`、视频纹理和 `CinemaAudioEngine`/OpenAL context；两个接收器可同时播放，播放/暂停/seek/音量/静音互不影响。seek 当前是完整播放器/解码器重启，但复用视频纹理与 OpenAL device/context/source 池，只 flush 音频队列和时钟，不重建音频后端；首帧与音频调度时刻对齐。
 - M4：配对扬声器按 FL/FR/FC/LFE/BL/BR 角色映射到六个 source；听者始终使用玩家实际耳朵位置/朝向，不使用皇帝位或声场校正；未配对声道回退虚拟 5.1。
 - 立体声/单声道源自动上混 5.1（FL/FR 原样、FC 中置、LFE 120 Hz 低通、BL/BR 差信号）；主音量 dBFS（-60..+6），每只扬声器 Level（-12..+6 dB）。
+- 纯音频媒体：媒体库识别 mp3/flac/wav/m4a/aac/ogg/opus/wma 等；播放时跳过视频解码、不要求投影仪，接收器/扬声器链路与视频文件一致（已通过游戏内验收）。
+- seek：每次 seek 后 3 秒冷却，GUI 滑块与 ±10s 按钮同时禁用；冷却期内的连续请求合并为最后一次。修复了 grace 窗口内新 seek 被吞的问题，纯音频/视频不再出现“时间显示已跳但仍在播旧内容”。音频引擎复用 source 池；4K 感知延迟主要来自解码器重新打开和关键帧定位。
 - 4K60/HDR、HDR10/HLG、4K60 VP9/HEVC/AV1 已由用户游戏内验收；HDR 默认输出 720p、SDR 默认 1080p。
 
 ### 3.3 扬声器、座位与音频
@@ -73,10 +77,11 @@
 
 ## 4. 已知问题 / 风险
 
-- **64×64 屏幕配对/尺寸显示错误（未修复）**：以 `-Dcinema.screen.maxSize=64` 启动并填充 64×64 屏幕后，投影仪 GUI / `/cinema_projector_client info` 能显示屏幕，但尺寸/坐标错误。定位前不要改相关渲染/配对代码；复现时记录 GUI 整行原文、`/fill` 坐标、投影仪坐标/朝向、屏幕 facing。
-- **BSL 下 ambient wash 某些值画面异常**：待确认是白色 overlay 的 bloom/exposure 还是 alpha 曲线；无音轨墙钟长播也未测试。
-- **NVIDIA `nvoglv64.dll` ACCESS_VIOLATION**：栈为 `CinemaVideoTexture.upload → glTexSubImage2D`，不是 Java 异常。已改为每个接收器跨 seek 复用视频纹理，并提供 `-Dcinema.video.glFinish=true` 诊断开关，待复测。
+- **原地 seek 仍未启用**：当前 seek 复用音视频资源但会重新打开 FFmpeg 解码器，4K AV1/HEVC 仍可能需要数秒才出首帧；原地 seek 状态机未重新设计前不要直接恢复。
+- **BSL 下 ambient wash 某些值画面异常**：待确认是白色 overlay 的 bloom/exposure 还是 alpha 曲线；无音轨墙钟长播也未测试。两项按用户决定暂不处理，不阻塞当前验收。
+- **NVIDIA `nvoglv64.dll` ACCESS_VIOLATION**：栈为 `CinemaVideoTexture.upload → glTexSubImage2D`，不是 Java 异常。`glFinish` 模式下 4K VP9 / 4K AV1 HDR 连续 seek 已复测通过；现已改为 `glFenceSync` + 延迟回收帧缓冲，仍需带/不带 `glFinish` 的游戏内长测确认。
 - **音频声学仍是规划**：见 `docs/design/AUDIO-ACOUSTICS.md`。EAXReverb 只计划用于晚期尾音；早期反射用一阶镜像源 + Spinorama 实测扬声器指向性。EFX 可用性、材质吸收、型号映射都需 spike/校准。
+- **音频定位模型**：当前保留 `AL_SOURCE_RELATIVE = AL_TRUE`；世界坐标源迁移已完成评审，暂不迁移，需与 A2 声学一起做，见 `AUDIO-ACOUSTICS.md` §4.2.1。
 - Spinorama 数据默认 CC BY-NC-SA 4.0，与项目 CC0 不同；发布前必须做许可/attribution 决策。REST API 需要人工申请 Bearer key，key 只能放本地环境变量/转换工具，不能进仓库、发布包或日志。
 - 一阶声学模型不覆盖衍射、散射、高阶反射和低频房间模态；LFE 低频峰谷/驻波不会正确重现。
 - 当前物理路由固定 6 声道（5.1）；可变布局/天空声道仍是规划，见 `docs/design/CHANNEL-LAYOUTS.md`。
@@ -87,12 +92,9 @@
 
 ## 5. 下一步优先级
 
-1. **剩余问题修复与复测**
-   - 定位并修复 64×64 屏幕配对/尺寸显示错误（先复现并记录，不盲改）。
-   - 定位 BSL 下 wash 异常；补做无音轨墙钟长播。
-   - 用 `-Dcinema.video.glFinish=true` 复测 NVIDIA 视频上传崩溃。
-2. **投影仪配对诊断与远程控制**
-   - 配对失败原因（距离/朝向/遮挡）与信号页诊断。
+1. **视频上传稳定性**
+   - 评估 `glFinish` 默认策略，或改为 PBO/fence/延迟回收帧缓冲；补做无 `glFinish` 的长测。
+2. **投影仪远程控制**
    - 遥控器绑定后从观众席远程打开 GUI、调整参数、发起/解除配对；线材保留为近距物理配对 fallback。
 3. **媒体能力**
    - 音轨/视频轨/字幕选择与渲染；拖放导入媒体库；AV Receiver `Video Processing`（输出分辨率/缩放/色彩/HDR/帧率）。

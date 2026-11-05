@@ -21,7 +21,7 @@
 	"message.cinema.pair.cancelled": "已取消配对选择",
 	"message.cinema.pair.linked": "已连接 %s ↔ %s",
 	"message.cinema.pair.incompatible": "不能将 %s 与 %s 配对；已改为选择 %s",
-	"message.cinema.pair.too_far": "设备距离超过 48 格，无法配对",
+	"message.cinema.pair.too_far": "设备距离超过 128 格，无法配对",
 	"message.cinema.pair.missing": "目标设备已不存在",
 	"message.cinema.pair.clear_selected": "已选择 %s；潜行右键另一个已连接设备完成断开",
 	"message.cinema.pair.clear_cancelled": "已取消断开选择",

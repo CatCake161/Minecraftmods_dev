@@ -6,6 +6,7 @@ import net.minecraft.client.Minecraft;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.RandomAccessFile;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
@@ -28,9 +29,14 @@ import java.util.stream.Stream;
  */
 public final class MediaLibrary {
 	private static final int HASH_BUFFER_BYTES = 1024 * 1024;
+	private static final long FULL_HASH_LIMIT_BYTES = 64L * 1024 * 1024;
+	private static final int FINGERPRINT_SAMPLE_BYTES = 4 * 1024 * 1024;
 	private static final String EXTERNAL_PREFIX = "lib/";
 	private static final Set<String> VIDEO_EXTENSIONS = Set.of(
 		"mp4", "mkv", "webm", "mov", "m4v", "avi", "ts", "m2ts");
+	private static final Set<String> AUDIO_EXTENSIONS = Set.of(
+		"mp3", "mp2", "flac", "wav", "m4a", "m4b", "aac", "ogg", "oga", "opus",
+		"wma", "aiff", "aif", "ape", "alac", "wv", "mka", "ac3", "dts", "tta");
 
 	private MediaLibrary() {
 	}
@@ -100,7 +106,7 @@ public final class MediaLibrary {
 			: EXTERNAL_PREFIX + library.id() + "/" + relative;
 	}
 
-	/** Lists directories and video files in one library folder. */
+	/** Lists directories, video files and audio-only files in one library folder. */
 	public static List<Entry> list(String libraryId, String folder) throws IOException {
 		LibraryRegistry.Library library = LibraryRegistry.findById(libraryId);
 		if (library == null) {
@@ -135,7 +141,7 @@ public final class MediaLibrary {
 						: EXTERNAL_PREFIX + library.id() + "/" + relative;
 					if (Files.isDirectory(path)) {
 						entries.add(new Entry(key, name, library.id(), relative, true, 0L));
-					} else if (isVideoFile(name) && Files.isRegularFile(path)) {
+					} else if (isMediaFile(name) && Files.isRegularFile(path)) {
 						try {
 							entries.add(new Entry(key, name, library.id(), folderKey, false, Files.size(path)));
 						} catch (IOException ignored) {
@@ -155,9 +161,15 @@ public final class MediaLibrary {
 	}
 
 	public static Probe probe(Path file) throws IOException {
-		Ffmpeg.VideoInfo video = Ffmpeg.probeVideo(file);
+		String name = file.getFileName() == null ? "" : file.getFileName().toString();
+		// Audio containers can carry cover art as an attached video stream.
+		// Keep them on the audio-only path so the receiver never starts a video decoder.
+		Ffmpeg.VideoInfo video = isAudioFile(name) ? null : Ffmpeg.probeVideoOrNull(file);
 		double duration = Ffmpeg.probeDuration(file);
 		Ffmpeg.AudioInfo audio = Ffmpeg.probeAudio(file);
+		if (video == null && audio == null) {
+			throw new IOException("No audio or video stream: " + name);
+		}
 		return new Probe(duration, video, audio);
 	}
 
@@ -170,16 +182,28 @@ public final class MediaLibrary {
 	}
 
 	public static boolean isVideoFile(String name) {
+		return hasExtension(name, VIDEO_EXTENSIONS);
+	}
+
+	public static boolean isAudioFile(String name) {
+		return hasExtension(name, AUDIO_EXTENSIONS);
+	}
+
+	public static boolean isMediaFile(String name) {
+		return isVideoFile(name) || isAudioFile(name);
+	}
+
+	private static boolean hasExtension(String name, Set<String> extensions) {
 		int dot = name.lastIndexOf('.');
 		if (dot < 0 || dot == name.length() - 1) {
 			return false;
 		}
-		return VIDEO_EXTENSIONS.contains(name.substring(dot + 1).toLowerCase(Locale.ROOT));
+		return extensions.contains(name.substring(dot + 1).toLowerCase(Locale.ROOT));
 	}
 
 	public static Metadata describe(Path file, String key) throws IOException {
 		long size = Files.size(file);
-		String sha256 = sha256(file);
+		String sha256 = fingerprint(file, size);
 		double duration = 0.0;
 		try {
 			duration = Ffmpeg.probeDuration(file);
@@ -187,6 +211,34 @@ public final class MediaLibrary {
 			Cinema.LOGGER.warn("cinema media: could not probe duration for {}", displayKey(key));
 		}
 		return new Metadata(key, size, sha256, duration);
+	}
+
+	/**
+	 * Full SHA-256 for normal files; for very large media use a fast sampled
+	 * fingerprint (head + tail + size) so selecting a movie does not require
+	 * reading the whole file. The {@code q1:} prefix marks the sampled form.
+	 */
+	public static String fingerprint(Path file, long size) throws IOException {
+		if (size <= FULL_HASH_LIMIT_BYTES) {
+			return sha256(file);
+		}
+		MessageDigest digest;
+		try {
+			digest = MessageDigest.getInstance("SHA-256");
+		} catch (NoSuchAlgorithmException e) {
+			throw new IllegalStateException("SHA-256 unavailable", e);
+		}
+		digest.update("cinema-quick-fingerprint-v1".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+		digest.update(java.nio.ByteBuffer.allocate(Long.BYTES).putLong(size).array());
+		byte[] buffer = new byte[FINGERPRINT_SAMPLE_BYTES];
+		try (RandomAccessFile input = new RandomAccessFile(file.toFile(), "r")) {
+			input.readFully(buffer);
+			digest.update(buffer);
+			input.seek(size - FINGERPRINT_SAMPLE_BYTES);
+			input.readFully(buffer);
+			digest.update(buffer);
+		}
+		return "q1:" + HexFormat.of().formatHex(digest.digest());
 	}
 
 	public static String sha256(Path file) throws IOException {
@@ -224,5 +276,8 @@ public final class MediaLibrary {
 	}
 
 	public record Probe(double durationSeconds, Ffmpeg.VideoInfo video, Ffmpeg.AudioInfo audio) {
+		public boolean audioOnly() {
+			return video == null && audio != null;
+		}
 	}
 }

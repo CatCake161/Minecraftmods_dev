@@ -13,7 +13,7 @@ public final class ClientHelpCommand {
 	private static final List<List<String>> PAGES = List.of(
 		List.of(
 			"§6Cinema 使用帮助 §7(1/7) §fAV 接收器与播放",
-			"§e/cinema_play <媒体库相对路径>§f  选片并播放，例如 movies/demo.mp4",
+			"§e/cinema_play <媒体库相对路径>§f  选择视频或音乐并播放，例如 movies/demo.mp4、music/song.flac",
 			"§e/cinema_pause§f  暂停 / 继续；§e/cinema_stop§f  停止",
 			"§e/cinema_seek <秒>§f  跳转；§e/cinema_volume <-60..+6 dBFS>§f  音量",
 			"§e/cinema_mute§f  静音切换",
