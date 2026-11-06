@@ -81,6 +81,57 @@ public final class CinemaPairing {
 		CLEAR_PENDING.remove(playerId);
 	}
 
+	/**
+	 * Links two devices for a remote-pairing request. The caller has already
+	 * validated the remote binding and the player's access to the anchor device.
+	 */
+	public static boolean remoteLink(ServerPlayer player, ServerLevel level,
+									 BlockPos anchorPos, BlockPos targetPos) {
+		Device first = deviceAt(level, anchorPos);
+		Device second = deviceAt(level, targetPos);
+		if (first == null || second == null) {
+			action(player, "message.cinema.pair.missing");
+			return false;
+		}
+		if (!isCompatible(first.kind(), second.kind())) {
+			action(player, "message.cinema.pair.incompatible",
+				deviceName(first), deviceName(second), deviceName(second));
+			return false;
+		}
+		double distance = Vec3.atCenterOf(first.pos()).distanceTo(Vec3.atCenterOf(second.pos()));
+		if (distance > MAX_LINK_DISTANCE) {
+			action(player, "message.cinema.pair.too_far");
+			return false;
+		}
+		if (!link(player, level, first, second)) {
+			return false;
+		}
+		action(player, "message.cinema.pair.linked", deviceName(first), deviceName(second));
+		return true;
+	}
+
+	/** Removes the link between two devices for a remote-pairing request. */
+	public static boolean remoteUnlink(ServerPlayer player, ServerLevel level,
+									   BlockPos anchorPos, BlockPos targetPos) {
+		Device first = deviceAt(level, anchorPos);
+		Device second = deviceAt(level, targetPos);
+		if (first == null || second == null) {
+			action(player, "message.cinema.pair.missing");
+			return false;
+		}
+		if (!isCompatible(first.kind(), second.kind())) {
+			action(player, "message.cinema.pair.clear_incompatible");
+			return false;
+		}
+		if (!unlink(level, first, second)) {
+			action(player, "message.cinema.pair.no_pair_link",
+				deviceName(first), deviceName(second));
+			return false;
+		}
+		action(player, "message.cinema.pair.unlinked", deviceName(first), deviceName(second));
+		return true;
+	}
+
 	private static void handleClick(ServerPlayer player, ServerLevel level, Device device) {
 		UUID playerId = player.getUUID();
 		Pending pending = PENDING.get(playerId);

@@ -1,6 +1,7 @@
 package com.example.cinema.network;
 
 import com.example.cinema.block.entity.SpeakerBlockEntity;
+import com.example.cinema.item.RemoteControlAccess;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -19,8 +20,9 @@ public final class SpeakerNameHandler {
 		ServerPlayer player = context.player();
 		ServerLevel level = player.serverLevel();
 		BlockPos pos = payload.speakerPos();
+		boolean near = player.blockPosition().distSqr(pos) <= MAX_CONTROL_DISTANCE * MAX_CONTROL_DISTANCE;
 		if (!level.isLoaded(pos)
-			|| player.blockPosition().distSqr(pos) > MAX_CONTROL_DISTANCE * MAX_CONTROL_DISTANCE) {
+			|| (!near && !RemoteControlAccess.canAccessLinkedSpeaker(player, pos))) {
 			error(player, "Speaker is out of range");
 			return;
 		}

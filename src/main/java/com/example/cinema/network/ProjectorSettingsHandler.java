@@ -1,6 +1,8 @@
 package com.example.cinema.network;
 
 import com.example.cinema.block.entity.ProjectorBlockEntity;
+import com.example.cinema.item.RemoteBinding;
+import com.example.cinema.item.RemoteControlAccess;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -19,8 +21,12 @@ public final class ProjectorSettingsHandler {
 		ServerPlayer player = context.player();
 		ServerLevel level = player.serverLevel();
 		BlockPos pos = payload.projectorPos();
+		boolean near = player.blockPosition().distSqr(pos)
+			<= MAX_CONTROL_DISTANCE * MAX_CONTROL_DISTANCE;
 		if (!level.isLoaded(pos)
-			|| player.blockPosition().distSqr(pos) > MAX_CONTROL_DISTANCE * MAX_CONTROL_DISTANCE) {
+			|| (!near && !RemoteControlAccess.canControl(player, pos,
+				RemoteBinding.Kind.PROJECTOR)
+				&& !RemoteControlAccess.canAccessLinkedProjector(player, pos))) {
 			error(player, "Projector is out of range");
 			return;
 		}

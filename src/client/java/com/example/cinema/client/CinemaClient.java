@@ -15,7 +15,10 @@ import com.example.cinema.client.command.ClientSpeakerSpecsCommand;
 import com.example.cinema.client.config.CinemaClientConfig;
 import com.example.cinema.client.gui.AvReceiverConfigScreen;
 import com.example.cinema.client.gui.ProjectorConfigScreen;
+import com.example.cinema.client.gui.RemoteDeviceScreen;
+import com.example.cinema.client.gui.RemotePairingScreen;
 import com.example.cinema.client.gui.SpeakerSpecsConfigScreen;
+import com.example.cinema.client.item.RemoteControllerClient;
 import com.example.cinema.client.media.AvReceiverPlaybackManager;
 import com.example.cinema.client.media.CinemaPlayer;
 import com.example.cinema.client.media.CinemaPrewarm;
@@ -25,16 +28,20 @@ import com.example.cinema.client.render.ScreenGeometry;
 import com.example.cinema.client.render.ScreenLimits;
 import com.example.cinema.client.render.SeatEntityRenderer;
 import com.example.cinema.client.render.SpeakerLocator;
+import com.example.cinema.network.RemotePairingListPayload;
+import com.example.cinema.network.RemoteScanListPayload;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.client.rendering.v1.BlockEntityRendererRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
+import net.fabricmc.fabric.api.event.player.UseItemCallback;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.core.BlockPos;
@@ -70,6 +77,11 @@ public class CinemaClient implements ClientModInitializer {
 		SpeakerSpecsAssignments.load();
 
 		UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
+			InteractionResult remoteResult =
+				RemoteControllerClient.useBlock(player, world, hand, hitResult);
+			if (remoteResult != InteractionResult.PASS) {
+				return remoteResult;
+			}
 			if (!CinemaClientConfig.get().emptyHandOpensDeviceGuis()) {
 				return InteractionResult.PASS;
 			}
@@ -104,6 +116,19 @@ public class CinemaClient implements ClientModInitializer {
 			}
 			return InteractionResult.PASS;
 		});
+		UseItemCallback.EVENT.register(RemoteControllerClient::useItem);
+		ClientPlayNetworking.registerGlobalReceiver(RemotePairingListPayload.TYPE,
+			(payload, context) -> context.client().execute(() -> {
+				if (context.client().screen instanceof RemotePairingScreen screen) {
+					screen.applyList(payload);
+				}
+			}));
+		ClientPlayNetworking.registerGlobalReceiver(RemoteScanListPayload.TYPE,
+			(payload, context) -> context.client().execute(() -> {
+				if (context.client().screen instanceof RemoteDeviceScreen screen) {
+					screen.applyList(payload);
+				}
+			}));
 
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
 			dispatcher.register(ClientCommandManager.literal("cinema_audio_spike")

@@ -19,6 +19,15 @@ import com.example.cinema.item.RemoteControllerItem;
 import com.example.cinema.pairing.CinemaPairing;
 import com.example.cinema.network.ProjectorSettingsHandler;
 import com.example.cinema.network.ProjectorSettingsPayload;
+import com.example.cinema.network.RemoteBindHandler;
+import com.example.cinema.network.RemoteBindPayload;
+import com.example.cinema.network.RemotePairingActionPayload;
+import com.example.cinema.network.RemotePairingHandler;
+import com.example.cinema.network.RemotePairingListPayload;
+import com.example.cinema.network.RemotePairingRequestPayload;
+import com.example.cinema.network.RemoteScanHandler;
+import com.example.cinema.network.RemoteScanListPayload;
+import com.example.cinema.network.RemoteScanRequestPayload;
 import com.example.cinema.network.AvReceiverControlHandler;
 import com.example.cinema.network.AvReceiverControlPayload;
 import com.example.cinema.network.DeviceNameHandler;
@@ -140,6 +149,24 @@ public class Cinema implements ModInitializer {
 		ServerPlayNetworking.registerGlobalReceiver(DeviceNamePayload.TYPE, DeviceNameHandler::handle);
 		PayloadTypeRegistry.playC2S().register(ProjectorSettingsPayload.TYPE, ProjectorSettingsPayload.CODEC);
 		ServerPlayNetworking.registerGlobalReceiver(ProjectorSettingsPayload.TYPE, ProjectorSettingsHandler::handle);
+		PayloadTypeRegistry.playC2S().register(RemoteBindPayload.TYPE, RemoteBindPayload.CODEC);
+		ServerPlayNetworking.registerGlobalReceiver(RemoteBindPayload.TYPE, RemoteBindHandler::handle);
+		PayloadTypeRegistry.playC2S().register(RemotePairingRequestPayload.TYPE,
+			RemotePairingRequestPayload.CODEC);
+		PayloadTypeRegistry.playS2C().register(RemotePairingListPayload.TYPE,
+			RemotePairingListPayload.CODEC);
+		PayloadTypeRegistry.playC2S().register(RemotePairingActionPayload.TYPE,
+			RemotePairingActionPayload.CODEC);
+		ServerPlayNetworking.registerGlobalReceiver(RemotePairingRequestPayload.TYPE,
+			RemotePairingHandler::handleRequest);
+		ServerPlayNetworking.registerGlobalReceiver(RemotePairingActionPayload.TYPE,
+			RemotePairingHandler::handleAction);
+		PayloadTypeRegistry.playC2S().register(RemoteScanRequestPayload.TYPE,
+			RemoteScanRequestPayload.CODEC);
+		PayloadTypeRegistry.playS2C().register(RemoteScanListPayload.TYPE,
+			RemoteScanListPayload.CODEC);
+		ServerPlayNetworking.registerGlobalReceiver(RemoteScanRequestPayload.TYPE,
+			RemoteScanHandler::handle);
 
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
 			ProjectorCommand.register(dispatcher));

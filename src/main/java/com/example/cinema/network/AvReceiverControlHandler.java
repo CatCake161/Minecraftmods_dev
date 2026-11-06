@@ -1,6 +1,8 @@
 package com.example.cinema.network;
 
 import com.example.cinema.block.entity.AvReceiverBlockEntity;
+import com.example.cinema.item.RemoteBinding;
+import com.example.cinema.item.RemoteControlAccess;
 import com.example.cinema.media.MediaKey;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.BlockPos;
@@ -22,8 +24,11 @@ public final class AvReceiverControlHandler {
 		ServerPlayer player = context.player();
 		ServerLevel level = player.serverLevel();
 		BlockPos avReceiverPos = payload.avReceiverPos();
+		boolean near = player.blockPosition().distSqr(avReceiverPos)
+			<= MAX_CONTROL_DISTANCE * MAX_CONTROL_DISTANCE;
 		if (!level.isLoaded(avReceiverPos)
-			|| player.blockPosition().distSqr(avReceiverPos) > MAX_CONTROL_DISTANCE * MAX_CONTROL_DISTANCE) {
+			|| (!near && !RemoteControlAccess.canControl(player, avReceiverPos,
+				RemoteBinding.Kind.RECEIVER))) {
 			error(player, "AV receiver is out of range");
 			return;
 		}

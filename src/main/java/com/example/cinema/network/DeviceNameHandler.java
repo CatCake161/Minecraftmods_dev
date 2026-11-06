@@ -4,6 +4,8 @@ import com.example.cinema.Cinema;
 import com.example.cinema.block.entity.AvReceiverBlockEntity;
 import com.example.cinema.block.entity.ProjectorBlockEntity;
 import com.example.cinema.block.entity.ScreenBlockEntity;
+import com.example.cinema.item.RemoteBinding;
+import com.example.cinema.item.RemoteControlAccess;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -22,8 +24,14 @@ public final class DeviceNameHandler {
 		ServerPlayer player = context.player();
 		ServerLevel level = player.serverLevel();
 		BlockPos anchor = payload.anchorPos();
-		if (!level.isLoaded(anchor)
-			|| player.blockPosition().distSqr(anchor) > MAX_CONTROL_DISTANCE * MAX_CONTROL_DISTANCE) {
+		RemoteBinding.Kind kind = payload.target() == DeviceNamePayload.Target.RECEIVER
+			? RemoteBinding.Kind.RECEIVER : RemoteBinding.Kind.PROJECTOR;
+		boolean near = player.blockPosition().distSqr(anchor)
+			<= MAX_CONTROL_DISTANCE * MAX_CONTROL_DISTANCE;
+		boolean remote = RemoteControlAccess.canControl(player, anchor, kind)
+			|| (kind == RemoteBinding.Kind.PROJECTOR
+				&& RemoteControlAccess.canAccessLinkedProjector(player, anchor));
+		if (!level.isLoaded(anchor) || (!near && !remote)) {
 			error(player, "Device is out of range");
 			return;
 		}

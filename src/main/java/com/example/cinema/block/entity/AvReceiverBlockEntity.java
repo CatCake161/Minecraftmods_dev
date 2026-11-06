@@ -2,6 +2,7 @@ package com.example.cinema.block.entity;
 
 import com.example.cinema.Cinema;
 import com.example.cinema.block.SpeakerBlock;
+import com.example.cinema.media.MediaKey;
 import com.example.cinema.util.CinemaNames;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
@@ -51,6 +52,7 @@ public class AvReceiverBlockEntity extends BlockEntity {
 	private long mediaSize;
 	private String mediaSha256 = "";
 	private double durationSeconds;
+	private boolean audioOnly;
 	private State state = State.STOPPED;
 	private double positionSeconds;
 	private float volumeDb = (float) DEFAULT_VOLUME_DB;
@@ -80,6 +82,12 @@ public class AvReceiverBlockEntity extends BlockEntity {
 			receiver.positionSeconds += 1.0 / 20.0;
 			if (receiver.durationSeconds > 0.0) {
 				receiver.positionSeconds = Math.min(receiver.positionSeconds, receiver.durationSeconds);
+			}
+			if (receiver.durationSeconds > 0.0
+				&& receiver.positionSeconds >= receiver.durationSeconds - 0.05) {
+				// EOF is a normal stop for both audio and video. For video this
+				// also clears the last frame instead of leaving a frozen image.
+				receiver.stop();
 			}
 			if (receiver.positionSeconds != previous && level.getGameTime() % 20L == 0L) {
 				receiver.markUpdated();
@@ -188,6 +196,7 @@ public class AvReceiverBlockEntity extends BlockEntity {
 		mediaSize = Math.max(0L, size);
 		mediaSha256 = sha256 == null ? "" : sha256;
 		durationSeconds = Math.max(0.0, duration);
+		audioOnly = MediaKey.isAudioKey(key);
 		positionSeconds = 0.0;
 		state = State.PLAYING;
 		stateChangedGameTime = level.getGameTime();
@@ -222,6 +231,13 @@ public class AvReceiverBlockEntity extends BlockEntity {
 	public void seek(double seconds) {
 		double max = durationSeconds > 0.0 ? durationSeconds : Double.MAX_VALUE;
 		positionSeconds = Math.max(0.0, Math.min(seconds, max));
+		if (durationSeconds > 0.0 && positionSeconds >= durationSeconds - 0.05) {
+			// Seeking/playing to EOF is a normal stop for both audio and video.
+			// Reopening a decoder at the end produces zero frames and used to
+			// retry in a loop.
+			stop();
+			return;
+		}
 		markUpdated();
 	}
 
@@ -384,6 +400,7 @@ public class AvReceiverBlockEntity extends BlockEntity {
 		tag.putLong("mediaSize", mediaSize);
 		tag.putString("mediaSha256", mediaSha256);
 		tag.putDouble("durationSeconds", durationSeconds);
+		tag.putBoolean("audioOnly", audioOnly);
 		tag.putString("state", state.name());
 		tag.putDouble("positionSeconds", positionSeconds);
 		tag.putFloat("volumeDb", volumeDb);
@@ -405,6 +422,8 @@ public class AvReceiverBlockEntity extends BlockEntity {
 		mediaSize = tag.getLong("mediaSize");
 		mediaSha256 = tag.getString("mediaSha256");
 		durationSeconds = Math.max(0.0, tag.getDouble("durationSeconds"));
+		audioOnly = tag.contains("audioOnly")
+			? tag.getBoolean("audioOnly") : MediaKey.isAudioKey(mediaKey);
 		state = parseState(tag.getString("state"));
 		positionSeconds = Math.max(0.0, tag.getDouble("positionSeconds"));
 		if (tag.contains("volumeDb")) {

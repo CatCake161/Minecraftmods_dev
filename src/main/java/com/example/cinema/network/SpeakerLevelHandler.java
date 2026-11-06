@@ -2,6 +2,8 @@ package com.example.cinema.network;
 
 import com.example.cinema.block.entity.AvReceiverBlockEntity;
 import com.example.cinema.block.entity.SpeakerBlockEntity;
+import com.example.cinema.item.RemoteBinding;
+import com.example.cinema.item.RemoteControlAccess;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -21,8 +23,11 @@ public final class SpeakerLevelHandler {
 		ServerLevel level = player.serverLevel();
 		BlockPos receiverPos = payload.receiverPos();
 		BlockPos speakerPos = payload.speakerPos();
+		boolean near = player.blockPosition().distSqr(receiverPos)
+			<= MAX_CONTROL_DISTANCE * MAX_CONTROL_DISTANCE;
 		if (!level.isLoaded(receiverPos)
-			|| player.blockPosition().distSqr(receiverPos) > MAX_CONTROL_DISTANCE * MAX_CONTROL_DISTANCE) {
+			|| (!near && !RemoteControlAccess.canControl(player, receiverPos,
+				RemoteBinding.Kind.RECEIVER))) {
 			error(player, "AV receiver is out of range");
 			return;
 		}

@@ -1,6 +1,6 @@
 # AV Receiver 设计与迁移
 
-> 状态：M1/M2/M3/M4 已实现并通过游戏内验收。AV Receiver 拥有媒体与播放状态，每个接收器持有独立 `CinemaPlayer`/视频纹理/`CinemaAudioEngine`，配对扬声器按 5.1 角色路由；遥控器与远程配对仍未实现。
+> 状态：M1/M2/M3/M4 已实现并通过游戏内验收。AV Receiver 拥有媒体与播放状态，每个接收器持有独立 `CinemaPlayer`/视频纹理/`CinemaAudioEngine`，配对扬声器按 5.1 角色路由；遥控器扫描/远程访问与设备配对菜单已实现。
 > 相关文档：[项目规划](../PLANNING.md)、[待办](../TODO.md)、[投影仪 GUI](PROJECTOR-GUI.md)、[指令](../COMMANDS.md)。
 
 ## 1. 目标
@@ -379,7 +379,7 @@ duration, volume, muted, missing, CinemaPlayer player
 - 默认媒体库只读显示 `cinema/media/`。
 - **外部媒体库**：输入文件夹绝对路径 → Add library；列表可选中/Remove library（只删注册，不删文件）。
 - 投影仪/扬声器配对状态（只读；当前连接由影院线材修改）。
-- 未来支持遥控器/接收器 GUI 发起远程配对，省去跑到设备旁；线材保留为近距物理配对 fallback。
+- 支持通过遥控器扫描面板远程打开接收器/投影仪/扬声器 GUI；设备配对仍在接收器/投影仪配对菜单中完成，线材保留为近距物理配对 fallback。
 - 默认音量/最大音量。
 - 重新扫描设备。
 - 关于/版本。

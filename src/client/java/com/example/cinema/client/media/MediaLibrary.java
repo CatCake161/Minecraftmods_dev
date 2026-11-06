@@ -34,9 +34,6 @@ public final class MediaLibrary {
 	private static final String EXTERNAL_PREFIX = "lib/";
 	private static final Set<String> VIDEO_EXTENSIONS = Set.of(
 		"mp4", "mkv", "webm", "mov", "m4v", "avi", "ts", "m2ts");
-	private static final Set<String> AUDIO_EXTENSIONS = Set.of(
-		"mp3", "mp2", "flac", "wav", "m4a", "m4b", "aac", "ogg", "oga", "opus",
-		"wma", "aiff", "aif", "ape", "alac", "wv", "mka", "ac3", "dts", "tta");
 
 	private MediaLibrary() {
 	}
@@ -186,7 +183,7 @@ public final class MediaLibrary {
 	}
 
 	public static boolean isAudioFile(String name) {
-		return hasExtension(name, AUDIO_EXTENSIONS);
+		return MediaKey.isAudioKey(name);
 	}
 
 	public static boolean isMediaFile(String name) {

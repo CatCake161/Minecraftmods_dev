@@ -100,7 +100,7 @@
 | 中置扬声器 | `cinema:center_speaker` | 一格高；空手右键打开 speaker specs GUI；角色在 GUI 内选择 `NONE/FC` |
 | 低音炮 | `cinema:subwoofer` | 一格高；空手右键打开 speaker specs GUI；角色在 GUI 内选择 `NONE/LFE` |
 | 影院线材 | `cinema:cable` | 两次右键配对：投影仪↔屏幕、接收器↔投影仪、接收器↔扬声器；潜行右键两个设备解除它们之间的连接 |
-| 影院遥控器 | `cinema:remote_controller` | 仅物品与提示；未来用于绑定投影仪/接收器后远程打开 GUI、调整参数和发起远程配对 |
+| 影院遥控器 | `cinema:remote_controller` | 右键打开三栏扫描面板（AV 接收器/投影仪/扬声器），Ping 定位、Access 打开 GUI；128 格内生效；配对在接收器/投影仪 GUI 或线材中完成 |
 
 创造模式位置：接收器/座位/扬声器在 Functional Blocks，线材/遥控器在 Tools & Utilities。
 

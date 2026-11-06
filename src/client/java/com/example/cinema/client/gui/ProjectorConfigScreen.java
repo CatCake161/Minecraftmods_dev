@@ -11,6 +11,7 @@ import com.example.cinema.client.network.DeviceNameClient;
 import com.example.cinema.client.network.ProjectorSettingsClient;
 import com.example.cinema.client.render.ProjectorOptics;
 import com.example.cinema.client.render.ScreenGeometry;
+import com.example.cinema.item.RemoteBinding;
 import com.example.cinema.util.CinemaNames;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
@@ -45,6 +46,7 @@ public final class ProjectorConfigScreen extends Screen {
 	private static final long NAME_SAVE_DEBOUNCE_MS = 250L;
 
 	private final ProjectorBlockEntity projector;
+	private final Screen parent;
 	private boolean throwAuto;
 	private boolean focusAuto;
 	private double draftThrowRatio;
@@ -96,8 +98,13 @@ public final class ProjectorConfigScreen extends Screen {
 	private Button simWarmupButton;
 
 	public ProjectorConfigScreen(ProjectorBlockEntity projector) {
+		this(projector, null);
+	}
+
+	public ProjectorConfigScreen(ProjectorBlockEntity projector, Screen parent) {
 		super(Component.literal("Cinema Projector"));
 		this.projector = projector;
+		this.parent = parent;
 		loadDraft();
 	}
 
@@ -251,6 +258,10 @@ public final class ProjectorConfigScreen extends Screen {
 
 		addRenderableWidget(Button.builder(Component.literal("Defaults"), button -> resetDefaults())
 			.bounds(contentLeft, contentBottom, 70, 18).build());
+		addRenderableWidget(Button.builder(Component.literal("Pairing..."),
+				button -> minecraft.setScreen(new RemotePairingScreen(this, projector.getBlockPos(),
+					RemoteBinding.Kind.PROJECTOR)))
+			.bounds(contentLeft + contentWidth - 140, contentBottom, 76, 18).build());
 		addRenderableWidget(Button.builder(Component.literal("Close"), button -> onClose())
 			.bounds(contentLeft + contentWidth - 60, contentBottom, 60, 18).build());
 
@@ -658,7 +669,13 @@ public final class ProjectorConfigScreen extends Screen {
 		closing = true;
 		flushNow();
 		flushNames();
-		super.onClose();
+		if (parent != null && minecraft != null) {
+			Minecraft client = minecraft;
+			Screen target = parent;
+			client.execute(() -> client.setScreen(target));
+		} else {
+			super.onClose();
+		}
 	}
 
 	@Override

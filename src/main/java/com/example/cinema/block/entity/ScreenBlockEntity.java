@@ -106,6 +106,11 @@ public class ScreenBlockEntity extends BlockEntity {
 		}
 	}
 
+	/** Returns all connected screen cells on the same facing plane. */
+	public static Set<BlockPos> connectedBlocks(Level level, BlockPos start) {
+		return connected(level, start);
+	}
+
 	private static Set<BlockPos> connected(Level level, BlockPos start) {
 		Set<BlockPos> result = new HashSet<>();
 		BlockState startState = level.getBlockState(start);

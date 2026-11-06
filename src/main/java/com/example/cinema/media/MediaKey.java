@@ -1,5 +1,8 @@
 package com.example.cinema.media;
 
+import java.util.Locale;
+import java.util.Set;
+
 /**
  * Lexical validation for media-library keys.
  *
@@ -9,8 +12,23 @@ package com.example.cinema.media;
  */
 public final class MediaKey {
 	public static final int MAX_LENGTH = 512;
+	public static final Set<String> AUDIO_EXTENSIONS = Set.of(
+		"mp3", "mp2", "flac", "wav", "m4a", "m4b", "aac", "ogg", "oga", "opus",
+		"wma", "aiff", "aif", "ape", "alac", "wv", "mka", "ac3", "dts", "tta");
 
 	private MediaKey() {
+	}
+
+	/** True when the key's final extension is a known audio-only container. */
+	public static boolean isAudioKey(String key) {
+		if (key == null) {
+			return false;
+		}
+		int dot = key.lastIndexOf('.');
+		if (dot < 0 || dot == key.length() - 1) {
+			return false;
+		}
+		return AUDIO_EXTENSIONS.contains(key.substring(dot + 1).toLowerCase(Locale.ROOT));
 	}
 
 	/** Returns a normalized key, or {@code null} when the input is not a valid key. */

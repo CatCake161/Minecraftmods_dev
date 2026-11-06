@@ -16,6 +16,8 @@ import com.example.cinema.client.network.AvReceiverControlClient;
 import com.example.cinema.client.network.DeviceNameClient;
 import com.example.cinema.client.network.SpeakerLevelClient;
 import com.example.cinema.client.render.SpeakerLocator;
+import com.example.cinema.item.RemoteBinding;
+import com.example.cinema.item.RemoteControlAccess;
 import com.example.cinema.network.AvReceiverControlPayload;
 import com.example.cinema.util.CinemaNames;
 import net.minecraft.client.Minecraft;
@@ -29,6 +31,8 @@ import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -74,11 +78,13 @@ public final class AvReceiverConfigScreen extends Screen {
 		new ConcurrentHashMap<>();
 
 	private final AvReceiverBlockEntity receiver;
+	private final Screen parent;
 	private Tab tab = Tab.MEDIA;
 	private final List<EntryView> entries = new ArrayList<>();
 	private final List<String> speakerLines = new ArrayList<>();
 	private final List<SpeakerRow> linkedSpeakers = new ArrayList<>();
 	private final Map<BlockPos, SpeakerLevelSlider> speakerLevelSliders = new LinkedHashMap<>();
+	private final Map<BlockPos, Button> speakerAccessButtons = new LinkedHashMap<>();
 	private String speakerRowsKey = "";
 	private String builtSpeakerRowsKey = "";
 
@@ -113,6 +119,7 @@ public final class AvReceiverConfigScreen extends Screen {
 	private String statusMessage = "";
 	private long statusUntil;
 	private boolean mediaMissing;
+	private boolean closing;
 	private MediaLibrary.Probe receiverProbe;
 	private String receiverProbeKey = "";
 	private boolean receiverProbePending;
@@ -141,8 +148,13 @@ public final class AvReceiverConfigScreen extends Screen {
 	private long pendingVolumeUntilMillis;
 
 	public AvReceiverConfigScreen(AvReceiverBlockEntity receiver) {
+		this(receiver, null);
+	}
+
+	public AvReceiverConfigScreen(AvReceiverBlockEntity receiver, Screen parent) {
 		super(Component.literal("Cinema AV Receiver"));
 		this.receiver = receiver;
+		this.parent = parent;
 		if (LibraryRegistry.findById(libraryId) == null) {
 			libraryId = LibraryRegistry.DEFAULT_ID;
 			folder = "";
@@ -155,6 +167,7 @@ public final class AvReceiverConfigScreen extends Screen {
 	protected void init() {
 		super.init();
 		speakerLevelSliders.clear();
+		speakerAccessButtons.clear();
 		panelWidth = Math.min(width - 12, 420);
 		panelHeight = Math.min(height - 12, 300);
 		left = (width - panelWidth) / 2;
@@ -267,6 +280,10 @@ public final class AvReceiverConfigScreen extends Screen {
 			removeLibraryButton = Button.builder(Component.literal("Remove library"), button -> removeLibrary())
 				.bounds(contentLeft + 96, contentTop + 44, 104, 18).build();
 			addRenderableWidget(removeLibraryButton);
+			addRenderableWidget(Button.builder(Component.literal("Pair devices..."),
+					button -> minecraft.setScreen(new RemotePairingScreen(this, receiver.getBlockPos(),
+						RemoteBinding.Kind.RECEIVER)))
+				.bounds(contentLeft + contentWidth - 104, contentTop + 66, 104, 18).build());
 		}
 		addRenderableWidget(Button.builder(Component.literal("Close"), button -> onClose())
 			.bounds(contentLeft + contentWidth - 60, contentBottom - 18, 60, 18).build());
@@ -406,6 +423,10 @@ public final class AvReceiverConfigScreen extends Screen {
 
 	@Override
 	public void onClose() {
+		if (closing) {
+			return;
+		}
+		closing = true;
 		flushPendingControls();
 		flushReceiverName();
 		if (searchBox != null) {
@@ -414,7 +435,13 @@ public final class AvReceiverConfigScreen extends Screen {
 		rememberedSearch = search;
 		scanGeneration++;
 		Cinema.LOGGER.info("cinema receiver gui: closed {}", receiver.getBlockPos().toShortString());
-		super.onClose();
+		if (parent != null && minecraft != null) {
+			Minecraft client = minecraft;
+			Screen target = parent;
+			client.execute(() -> client.setScreen(target));
+		} else {
+			super.onClose();
+		}
 	}
 
 	private void flushPendingControls() {
@@ -594,6 +621,9 @@ public final class AvReceiverConfigScreen extends Screen {
 			volumeSlider.setExternal(receiver.volumeDb());
 		}
 		syncSpeakerLevels();
+		for (Map.Entry<BlockPos, Button> entry : speakerAccessButtons.entrySet()) {
+			entry.getValue().active = canAccessSpeaker(entry.getKey());
+		}
 		if (playSelectedButton != null) {
 			playSelectedButton.active = selectedFile() != null && !pendingPlay;
 		}
@@ -1203,8 +1233,10 @@ public final class AvReceiverConfigScreen extends Screen {
 		boolean scrollable = linkedSpeakers.size() > visibleRows;
 		int labelWidth = speakerLabelWidth();
 		int pingWidth = 34;
+		int accessWidth = 46;
 		int pingX = contentLeft + labelWidth;
-		int sliderX = pingX + pingWidth + 2;
+		int accessX = pingX + pingWidth + 2;
+		int sliderX = accessX + accessWidth + 2;
 		int sliderWidth = Math.max(60,
 			contentLeft + contentWidth - (scrollable ? 6 : 0) - sliderX);
 		for (int i = 0; i < visibleRows && speakerScroll + i < linkedSpeakers.size(); i++) {
@@ -1213,10 +1245,49 @@ public final class AvReceiverConfigScreen extends Screen {
 			addRenderableWidget(Button.builder(Component.literal("Ping"),
 					button -> pingSpeaker(row))
 				.bounds(pingX, rowY, pingWidth, 16).build());
+			Button access = Button.builder(Component.literal("Access"),
+					button -> openSpeakerAccess(row))
+				.bounds(accessX, rowY, accessWidth, 16).build();
+			access.active = canAccessSpeaker(row.pos());
+			addRenderableWidget(access);
+			speakerAccessButtons.put(row.pos(), access);
 			SpeakerLevelSlider slider = new SpeakerLevelSlider(sliderX, rowY, sliderWidth, 16,
 				row.pos(), row.levelDb());
 			addRenderableWidget(slider);
 			speakerLevelSliders.put(row.pos(), slider);
+		}
+	}
+
+	private boolean canAccessSpeaker(BlockPos speakerPos) {
+		if (minecraft == null || minecraft.player == null) {
+			return false;
+		}
+		if (minecraft.player.blockPosition().distSqr(speakerPos) <= 16.0 * 16.0) {
+			return true;
+		}
+		if (minecraft.player.blockPosition().distSqr(receiver.getBlockPos())
+			> RemoteControlAccess.MAX_REMOTE_DISTANCE * RemoteControlAccess.MAX_REMOTE_DISTANCE) {
+			return false;
+		}
+		for (InteractionHand hand : InteractionHand.values()) {
+			ItemStack stack = minecraft.player.getItemInHand(hand);
+			if (stack.is(Cinema.REMOTE_CONTROLLER_ITEM)
+				&& RemoteBinding.matches(stack, minecraft.player.level().dimension(),
+					receiver.getBlockPos(), RemoteBinding.Kind.RECEIVER)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private void openSpeakerAccess(SpeakerRow row) {
+		if (minecraft == null || minecraft.level == null) {
+			return;
+		}
+		if (minecraft.level.getBlockEntity(row.pos()) instanceof SpeakerBlockEntity speaker) {
+			minecraft.setScreen(new SpeakerSpecsConfigScreen(this, speaker));
+		} else {
+			setStatus("Speaker chunk is not loaded");
 		}
 	}
 
