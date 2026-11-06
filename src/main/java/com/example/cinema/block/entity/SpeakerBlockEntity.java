@@ -67,8 +67,10 @@ public class SpeakerBlockEntity extends BlockEntity {
 	}
 
 	public Vec3 acousticForward() {
+		// Positive yaw is counter-clockwise from above: when the player faces
+		// the speaker, increasing yaw moves the aim toward the player's right.
 		double radians = Math.toRadians(acousticYawDegrees());
-		return new Vec3(Math.sin(radians), 0.0, -Math.cos(radians));
+		return new Vec3(-Math.sin(radians), 0.0, -Math.cos(radians));
 	}
 
 	public int cycleAcousticYaw(boolean reverse) {
@@ -167,9 +169,9 @@ public class SpeakerBlockEntity extends BlockEntity {
 	private static int yawStepFor(Direction direction) {
 		return switch (direction) {
 			case NORTH -> 0;
-			case EAST -> 9;
+			case WEST -> 9;
 			case SOUTH -> 18;
-			case WEST -> 27;
+			case EAST -> 27;
 			default -> 0;
 		};
 	}

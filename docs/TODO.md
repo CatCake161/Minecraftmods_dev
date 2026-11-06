@@ -50,7 +50,7 @@
 - [x] A0c 决策门：EAXReverb late tail 可用且 wet 能覆盖 5.1；选择 EAXReverb 作为 late-tail 首选，FDN 仅作为 EFX 不可用/布局不合适的回退。结论已回写 AUDIO-ACOUSTICS.md
 - [x] A1 声学数据模型：房间平面/包围盒、体积/表面积、材质吸收、扬声器位置/朝向/高度、玩家听者位置/朝向。已实现 `/cinema_acoustics` 快照；待游戏内 dump 验证
 - [ ] A1b 材质映射：已改为现实吸声系数的 3 频带估算（CDC/NIOSH、acoustic.ua；screen/植被/雪/多孔/金属为估计）；外部 JSON/数据驱动覆盖和试听校准待补
-- [x] A1c 房间检测：6 轴 × 25 射线扇形（可反射 2 次）+ 中位平面 + 9×9 材质采样 + 宽松内部空气验证 + 5 Hz 缓存 + 部分平面 fallback；Eyring RT60 只设 5.0 s 上限、无最低 clamp；待游戏内验证
+- [x] A1c 房间检测：6 轴 × 25 射线扇形（可反射 2 次）+ 中位平面 + 9×9 材质采样 + 宽松内部空气验证 + 5 Hz 缓存 + 部分平面 fallback + 1.5 m 平面迟滞/2 m 旧房间保持；Eyring RT60 只设 5.0 s 上限、无最低 clamp；待游戏内验证
 - [ ] A1-RT60 备选：Fitzroy 公式作为非扩散/不规则房间的对照；先记录，不替换 Eyring
 - [x] A1 扬声器朝向：36 档 10° 声学 yaw + Speaker Alignment Tool（右键 +10°，潜行 -10°）；方块模型由 `SpeakerBlockEntityRenderer` 同步物理旋转；待游戏内验证
 - [x] A1d ASR/Spinorama 数据管线：只读 `SPL Horizontal.txt`/`SPL Vertical.txt`；保留原始 194/200 点频率网格、不降采样；补 `-180°`；按全频段能量平均计算 -10 dB 频率范围并取整到 1 Hz；删除 `quality`；21 个型号生成到本地 `run/cinema/speaker_data/profiles/`，**不打包**。转换器：`docs/examples/speaker_data/convert_spinorama.py`。待游戏内加载验证

@@ -41,10 +41,10 @@ public final class SpeakerBlockEntityRenderer implements BlockEntityRenderer<Spe
 		if (!(state.getBlock() instanceof SpeakerBlock)) {
 			return;
 		}
-		// Axis.YP positive rotation decreases the north-referenced yaw, so the
-		// correction is blockYaw - acousticYaw.
-		float correction = yawForFacing(state.getValue(SpeakerBlock.FACING))
-			- speaker.acousticYawDegrees();
+		// Positive acoustic yaw is counter-clockwise from above (0=N, 90=W).
+		// Axis.YP positive rotation increases that yaw.
+		float correction = speaker.acousticYawDegrees()
+			- yawForFacing(state.getValue(SpeakerBlock.FACING));
 		renderModel(state, correction, poseStack, buffers, packedLight, packedOverlay);
 
 		if (state.getBlock() instanceof FloorstandingSpeakerBlock
@@ -83,9 +83,9 @@ public final class SpeakerBlockEntityRenderer implements BlockEntityRenderer<Spe
 	private static float yawForFacing(Direction direction) {
 		return switch (direction) {
 			case NORTH -> 0.0f;
-			case EAST -> 90.0f;
+			case WEST -> 90.0f;
 			case SOUTH -> 180.0f;
-			case WEST -> 270.0f;
+			case EAST -> 270.0f;
 			default -> 0.0f;
 		};
 	}

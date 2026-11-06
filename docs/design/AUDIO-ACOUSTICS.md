@@ -336,9 +336,10 @@ A1 只使用 Eyring。Sabine 仅适用于极低吸收/扩散场的粗略估计�
   - default `0.05/0.05/0.05`，`0.10`
   - 主要来源：CDC/NIOSH《Compendium of Materials for Noise Control》Table 5、`acoustic.ua` absorption coefficients；screen/vegetation/snow/porous/metal 缺少直接对应项，为估计值。
 - 扬声器声学中心：落地 **+1.31 m**（上层高音）、书架 **+0.77 m**、中置 **+0.33 m**、低音炮 **+0.48 m**（相对方块 y，来自方块模型）；声学中心再沿朝向向前面板偏移 **0.45 m**。
-- 扬声器朝向：新增 **36 档 10° 声学 yaw**（0=N，9=E，18=S，27=W），不再受方块四向 `FACING` 限制；方块模型通过 `SpeakerBlockEntityRenderer` 同步旋转到同一物理朝向。
+- 扬声器朝向：新增 **36 档 10° 声学 yaw**（0=N，9=W，18=S，27=E；正方向 = 面向扬声器时玩家的右侧，符合 CTA 角度方向），不再受方块四向 `FACING` 限制；方块模型通过 `SpeakerBlockEntityRenderer` 同步旋转到同一物理朝向。
 - 朝向校准物品：**Speaker Alignment Tool**（`cinema:speaker_alignment_tool`，铁锭+指南针合成）；右键 +10°，潜行右键 -10°，action bar 显示当前角度。
 - 缓存：移动/转头时约 5 Hz 更新，静止时每 20 tick 更新；断线/退出清空。A1 只生成快照，不改变任何音频。
+- 稳定化：新平面坐标与上一有效快照相差 ≤1.5 m 时沿用旧平面（避免不规则天花板/墙角抖动）；新检测失败但玩家仍在上一有效房间 2 m 内时，保留旧房间盒，仅更新听者/扬声器。
 - 调试：`/cinema_acoustics` 强制刷新并输出房间、六个平面、材质、RT60、听者和附近扬声器。
 
 ### 7.2 直达声
@@ -424,7 +425,7 @@ R_p(f) = sqrt(1 - α_p(f))
 
 **角度与坐标**
 
-- 扬声器朝向由 **36 档声学 yaw** 定义（对齐工具设置，10° 步进）；方块 `FACING` 只保留放置基准，实际模型由 `SpeakerBlockEntityRenderer` 按声学 yaw 旋转。声学中心按模型取高音/驱动轴：落地 +1.31 m、书架 +0.77 m、中置 +0.33 m、低音炮 +0.48 m（相对方块 y），再沿朝向向前面板偏移 0.45 m。
+- 扬声器朝向由 **36 档声学 yaw** 定义（对齐工具设置，10° 步进；正方向 = 面向扬声器时玩家右侧）；方块 `FACING` 只保留放置基准，实际模型由 `SpeakerBlockEntityRenderer` 按声学 yaw 旋转。声学中心按模型取高音/驱动轴：落地 +1.31 m、书架 +0.77 m、中置 +0.33 m、低音炮 +0.48 m（相对方块 y），再沿朝向向前面板偏移 0.45 m。
 - **角度定义采用 ANSI/CTA-2034-A §5.1 与 Figure 1**：0° 是 reference axis（on-axis）；正水平角在面向扬声器时指向听者右侧（即扬声器自身左侧）；正垂直角向上；+180° 与 -180° 是同一个后方点。源数据只有 +180°，导入时补一行 -180°，SPL 与 +180° 相同；H/V 表均为 -180..180 共 37 行。
 - 由世界坐标方向 `d`（扬声器 → 听者或反射点）计算：`f` 为扬声器前方单位向量，`u` 为世界上方，`r = normalize(cross(u, f))`（面向扬声器时的听者右侧）；`θh = atan2(dot(d, r), dot(d, f))`，`θv = asin(clamp(dot(d, u), -1, 1))`。`θh` 归一化到 -180..180，`θv` 到 -90..90；H/V 表做双线性插值。
 - 指向性归一化：每个频带减去 `onAxisSpl[band]`，只保留相对指向性。轴上 EQ 另行使用 `onAxisEqGainDb(f) = onAxisSpl(f) - onAxisReferenceDb`；`onAxisReferenceDb` 是**全频段能量平均** `10*log10(mean(10^(SPL/10)))`，对每个 on-axis 采样点等权（原始网格为对数间隔，近似 log-frequency 等权，不是线性频率积分），用来归一化整体响度，不参与 H/V 相对指向性。

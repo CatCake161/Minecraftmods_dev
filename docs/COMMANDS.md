@@ -101,7 +101,7 @@
 | 低音炮 | `cinema:subwoofer` | 一格高；空手右键打开 speaker data GUI；角色在 GUI 内选择 `NONE/LFE` |
 | 影院线材 | `cinema:cable` | 两次右键配对：投影仪↔屏幕、接收器↔投影仪、接收器↔扬声器；潜行右键两个设备解除它们之间的连接 |
 | 影院遥控器 | `cinema:remote_controller` | 右键打开三栏扫描面板（AV 接收器/投影仪/扬声器），Ping 定位、Access 打开 GUI；128 格内生效；配对在接收器/投影仪 GUI 或线材中完成 |
-| 扬声器朝向校准器 | `cinema:speaker_alignment_tool` | 右键扬声器 +10° 声学 yaw，潜行右键 -10°；方块模型同步旋转到相同物理朝向 |
+| 扬声器朝向校准器 | `cinema:speaker_alignment_tool` | 右键扬声器 +10° 声学 yaw（面向扬声器时向玩家右侧），潜行右键 -10°；方块模型同步旋转到相同物理朝向 |
 
 创造模式位置：接收器/座位/扬声器在 Functional Blocks，线材/遥控器/朝向校准器在 Tools & Utilities。
 

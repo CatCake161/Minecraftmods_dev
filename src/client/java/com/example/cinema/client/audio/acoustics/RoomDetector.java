@@ -42,6 +42,7 @@ public final class RoomDetector {
 	private static final int MATERIAL_SAMPLE_RADIUS = 4;
 	private static final double SPEAKER_RADIUS = 48.0;
 	private static final double ACOUSTIC_FRONT_OFFSET = 0.45;
+	private static final double PLANE_STABILIZE_MARGIN = 1.5;
 	private static final double FALLBACK_HALF_XZ = 6.0;
 	private static final double FALLBACK_DOWN = 3.0;
 	private static final double FALLBACK_UP = 4.0;
@@ -49,7 +50,8 @@ public final class RoomDetector {
 	private RoomDetector() {
 	}
 
-	public static RoomAcousticSnapshot detect(Level level, Player player, long version) {
+	public static RoomAcousticSnapshot detect(Level level, Player player, long version,
+											  RoomAcousticSnapshot previous) {
 		Vec3 eye = player.getEyePosition();
 		AcousticListener listener = new AcousticListener(eye, player.getLookAngle(),
 			new Vec3(0.0, 1.0, 0.0));
@@ -78,6 +80,16 @@ public final class RoomDetector {
 		double maxY = Math.max(downY, upY);
 		double minZ = Math.min(northZ, southZ);
 		double maxZ = Math.max(northZ, southZ);
+
+		if (previous != null && previous.room().valid()) {
+			AcousticRoom old = previous.room();
+			minX = stabilize(minX, old.min().x);
+			maxX = stabilize(maxX, old.max().x);
+			minY = stabilize(minY, old.min().y);
+			maxY = stabilize(maxY, old.max().y);
+			minZ = stabilize(minZ, old.min().z);
+			maxZ = stabilize(maxZ, old.max().z);
+		}
 
 		if (maxX - minX < MIN_ROOM_DIMENSION
 			|| maxY - minY < MIN_ROOM_DIMENSION
@@ -178,6 +190,10 @@ public final class RoomDetector {
 			surfaces, false, reason);
 		return new RoomAcousticSnapshot(version, level.getGameTime(), room, listener,
 			scanSpeakers(level, eye));
+	}
+
+	private static double stabilize(double current, double previous) {
+		return Math.abs(current - previous) <= PLANE_STABILIZE_MARGIN ? previous : current;
 	}
 
 	private static double[] ensureSpan(double a, double b, double center) {

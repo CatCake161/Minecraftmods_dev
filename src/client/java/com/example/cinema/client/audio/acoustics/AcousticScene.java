@@ -16,6 +16,7 @@ public final class AcousticScene {
 	private static final int IDLE_UPDATE_INTERVAL_TICKS = 20;
 	private static final double MOVE_THRESHOLD_SQR = 0.25 * 0.25;
 	private static final double LOOK_DOT_THRESHOLD = 0.996;
+	private static final double STICKY_ROOM_RADIUS_SQR = 2.0 * 2.0;
 	private static final Vec3 DEFAULT_LOOK = new Vec3(0.0, 0.0, -1.0);
 
 	private static volatile RoomAcousticSnapshot snapshot;
@@ -45,7 +46,17 @@ public final class AcousticScene {
 		}
 		version++;
 		try {
-			snapshot = RoomDetector.detect(minecraft.level, minecraft.player, version);
+			RoomAcousticSnapshot detected = RoomDetector.detect(minecraft.level,
+				minecraft.player, version, current);
+			if (!detected.room().valid() && current != null
+				&& current.room().valid()
+				&& eye.distanceToSqr(lastEye) <= STICKY_ROOM_RADIUS_SQR) {
+				// Keep the last good box across a transient irregular-corner
+				// miss while the listener is still in the same area.
+				detected = new RoomAcousticSnapshot(version, now, current.room(),
+					detected.listener(), detected.speakers());
+			}
+			snapshot = detected;
 			lastError = "";
 			lastGameTime = now;
 			lastEye = eye;
@@ -67,7 +78,8 @@ public final class AcousticScene {
 		}
 		version++;
 		try {
-			snapshot = RoomDetector.detect(minecraft.level, minecraft.player, version);
+			snapshot = RoomDetector.detect(minecraft.level, minecraft.player, version,
+				snapshot);
 			lastError = "";
 			lastGameTime = minecraft.level.getGameTime();
 			lastEye = minecraft.player.getEyePosition();
