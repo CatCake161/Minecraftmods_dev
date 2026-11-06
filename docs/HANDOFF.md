@@ -64,9 +64,9 @@
 - 四种箱体：落地式 `floorstanding_speaker`（两格高）、书架式 `bookshelf_speaker`（一格高）、中置 `center_speaker`（一格高，仅 FC）、低音炮 `subwoofer`（一格高，仅 LFE）。
 - 落地式下半格持有 block entity，上半格为无 block entity 的延伸；破坏任一半只掉一个物品。
 - 扬声器 GUI 可编辑名称、选择角色、查看/导入 speaker data；角色选择通过 `SpeakerRolePayload` 提交服务端。
-- Speaker Data：`cinema/speaker_data/profiles/` 本地 JSON、拖放导入、分页选择器（21 个 ASR 型号全部可选）、H/V 原始 194/200 点 + `-180°` 行、`-10 dB` 频率范围（整数 Hz）、on-axis 全频段能量平均归一化；measured profile 的 low/high 固定，仅 `SPL gain dB` 可编辑；profile 只生成到本地 `run/` 目录（不打包、不提交）；A2 起按 H/V 合成 4096-tap 最小相位 FIR 应用到直达声。
+- Speaker Data：`cinema/speaker_data/profiles/` 本地 JSON、拖放导入、分页选择器（21 个 ASR 型号全部可选）、H/V 原始 194/200 点 + `-180°` 行、`-10 dB` 频率范围（整数 Hz）、on-axis 全频段能量平均归一化；measured profile 的 low/high 固定，仅 `SPL gain dB` 可编辑；profile 只生成到本地 `run/` 目录（不打包、不提交）；A2 起按 H/V 合成 8192-tap 最小相位 FIR 应用到直达声。
 - A1 房间声学数据：客户端 `/cinema_acoustics` 输出六面房间盒、体积/表面积、材质吸收、RT60、听者与附近扬声器；6 轴×25 射线扇形（每条最多反射 2 次）、9×9 材质采样（裁剪到平面边界）、Eyring RT60（不设上下限，A3 再 clamp EAX）、1.5 m 平面迟滞、fallback 保留真实面并按缺失轴延伸 16 m/听者 ±8 m；盒内有界 32³/8 ms flood fill 计算有效体积/面积、开口面和材质加权 α（incomplete 时回退盒值，10 s 重扫）；扬声器 36 档 10° 声学 yaw + Speaker Alignment Tool，模型由 BER 同步旋转；5 Hz 快照缓存/fallback；尚未接入音频，游戏内 dump 验证无明显问题。
-- A2 直达声指向性：`SpeakerDirectivityService` 按听者/扬声器 H/V 角设计 4096-tap 最小相位 FIR（cepstrum，48 kHz），on-axis 1 kHz 为 0 dB，整体偏移乘入 source gain；5° 缓存 + daemon worker 异步设计；`CinemaAudioEngine` 用 overlap-add FFT 卷积，2048-frame 小块/4 缓冲（≈171 ms 前瞻），FIR tail 跨块；声学中心改用 `acousticFrontPosition()`；`/cinema_acoustics` 打印 `directivity ... maxErr`。实测 JBL/Genelec/Adam 样本 <0.2 dB；空气吸收/遮挡/反射待 A2b/A2d。
+- A2 直达声指向性：`SpeakerDirectivityService` 按听者/扬声器 H/V 角设计 8192-tap 最小相位 FIR（cepstrum，48 kHz），目标 = on-axis EQ + H/V 相对指向性，FIR 在 1 kHz 归一为 0 dB，总 1 kHz 偏移乘入 source gain；5° 缓存 + daemon worker 异步设计；`CinemaAudioEngine` 用 overlap-add FFT 卷积，2048-frame 小块/4 缓冲（≈171 ms 前瞻），FIR tail 跨块；声学中心改用 `acousticFrontPosition()`；`/cinema_acoustics` 打印 `directivity ... maxErr`。实测 JBL/Genelec/Adam 样本 <0.4 dB；空气吸收/遮挡/反射待 A2b/A2d。
 - 接收器 Speakers 页：滚动列表、每只扬声器 `Level`、`Ping` 定位音 + 约 8 秒粒子光柱、自定义名称/角色/坐标/距离 tooltip。
 - Seat 可右键乘坐；`LocalPlayerSeatMixin` 修复乘坐时视角平滑/滞后；Seat 不参与音频、不定义皇帝位。
 
@@ -102,7 +102,7 @@
    - 按 `CHANNEL-LAYOUTS.md` 分阶段泛化 `CinemaAudioEngine`/`AudioChunk`/`SpeakerRole`，先保持 5.1 零回归。
 4. **房间声学**
    - 所有声学模拟原型/实验代码在 `acoustic-simulation` 分支开发，只有通过游戏内听感验收的部分才分段合并回 `main`。
-   - A0 EFX/EAXReverb 技术验证已通过（EAXReverb late tail 可用，FDN 仅回退）；A1d 数据管线已完成（profile 本地生成）；A1 房间快照已实现，游戏内 `/cinema_acoustics` dump 验证无明显问题；A2 直达声指向性（4096-tap 最小相位 FIR）已接入，空气吸收/遮挡/反射待续；A1e attribution 仍待补。不要为了声学阻塞主线。
+   - A0 EFX/EAXReverb 技术验证已通过（EAXReverb late tail 可用，FDN 仅回退）；A1d 数据管线已完成（profile 本地生成）；A1 房间快照已实现，游戏内 `/cinema_acoustics` dump 验证无明显问题；A2 直达声指向性（8192-tap 最小相位 FIR）已接入，空气吸收/遮挡/反射待续；A1e attribution 仍待补。不要为了声学阻塞主线。
 
 ## 6. 构建与运行
 
@@ -191,3 +191,4 @@ src/client/java/com/example/cinema/client/render/ScreenLimits.java
 - 不在仓库文件里写个人绝对路径、姓名、邮箱、私人媒体文件名。
 - 测试时先确保 Minecraft 窗口置前。
 - `acoustic-simulation` 分支下的所有开发、代码实现和细节处理必须如实向用户汇报，由用户判断是否合理；不得自行决定声学行为、默认值或近似。
+

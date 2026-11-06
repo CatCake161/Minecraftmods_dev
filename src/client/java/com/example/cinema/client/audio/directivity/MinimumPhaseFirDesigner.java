@@ -10,12 +10,12 @@ import com.example.cinema.client.audio.speakerdata.SpeakerDataProfile;
  *
  * <p>The cepstrum method is used: log magnitude -> real cepstrum -> minimum-
  * phase window -> complex spectrum -> inverse FFT -> truncated impulse
- * response. A 4096-tap filter at 48 kHz is enough to keep the tested measured
- * profiles within about 0.2 dB of the raw H/V target.
+ * response. An 8192-tap filter at 48 kHz keeps the tested measured profiles
+ * within about 0.4 dB of the combined on-axis + H/V target.
  */
 public final class MinimumPhaseFirDesigner {
-	public static final int LENGTH = 4096;
-	private static final int FFT_SIZE = 16384;
+	public static final int LENGTH = 8192;
+	private static final int FFT_SIZE = 32768;
 	private static final double SAMPLE_RATE = 48_000.0;
 	private static final double MIN_HZ = 20.0;
 	private static final double MAX_HZ = 20_000.0;
@@ -33,7 +33,11 @@ public final class MinimumPhaseFirDesigner {
 		}
 		double h = wrapHorizontal(horizontalDegrees);
 		double v = Math.max(-90.0, Math.min(90.0, verticalDegrees));
-		double offsetDb = profile.gainDb(h, v, REFERENCE_HZ);
+		// Reconstruct the absolute on-axis response and add the relative
+		// directivity curve. The 1 kHz value of that combined response is the
+		// source gain; the FIR carries the remaining frequency shape.
+		double offsetDb = profile.onAxisEqGainDb(REFERENCE_HZ)
+			+ profile.gainDb(h, v, REFERENCE_HZ);
 		double[] target = targetShape(profile, h, v, offsetDb);
 		if (maxAbs(target) < FLAT_THRESHOLD_DB) {
 			return new MinimumPhaseFir(new float[]{1.0f}, gain(offsetDb), offsetDb,
@@ -100,7 +104,8 @@ public final class MinimumPhaseFirDesigner {
 		for (int i = 0; i <= half; i++) {
 			double frequency = i * SAMPLE_RATE / FFT_SIZE;
 			double clamped = Math.max(MIN_HZ, Math.min(MAX_HZ, frequency));
-			target[i] = profile.gainDb(h, v, clamped) - offsetDb;
+			target[i] = profile.onAxisEqGainDb(clamped)
+				+ profile.gainDb(h, v, clamped) - offsetDb;
 		}
 		// Force exactly 0 dB at the reference bin so the FIR normalization and
 		// the requested -10 dB/±1 dB checks use the same anchor.
@@ -119,7 +124,8 @@ public final class MinimumPhaseFirDesigner {
 		for (int i = 1; i < 512; i++) {
 			double t = i / 512.0;
 			double frequency = MIN_HZ * Math.pow(MAX_HZ / MIN_HZ, t);
-			double target = profile.gainDb(h, v, frequency) - offsetDb;
+			double target = profile.onAxisEqGainDb(frequency)
+				+ profile.gainDb(h, v, frequency) - offsetDb;
 			double actual = 20.0 * Math.log10(Math.max(1.0e-12,
 				responseAt(taps, frequency)));
 			maxError = Math.max(maxError, Math.abs(target - actual));

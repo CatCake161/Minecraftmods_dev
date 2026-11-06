@@ -397,7 +397,7 @@ R_p(f) = sqrt(1 - α_p(f))
 
 ### 7.4 扬声器指向性（Spinorama 实测数据）
 
-> **计算方法已定（2026-11-06）**：先尝试 15 个 PEQ（peaking/LS/HS）拟合；实测 JBL A180 等原始 H/V 曲线在极端角度无法满足全频段 ±1 dB（垂直 20° 等位置误差更大），因此改用 **4096-tap 最小相位 FIR**。H/V 按 separable 合成目标幅度，以 1 kHz on-axis 为 0 dB 参考；整体偏移作为独立 source gain。实测样本（JBL A180、Genelec 8351B、Adam T5V）最大误差 <0.2 dB。FIR 目前用于直达声；反射路径在 A2b 复用同一设计。
+> **计算方法已定（2026-11-06）**：先尝试 15 个 PEQ（peaking/LS/HS）拟合；实测 JBL A180 等原始 H/V 曲线在极端角度无法满足全频段 ±1 dB（垂直 20° 等位置误差更大），因此改用 **8192-tap 最小相位 FIR**。目标幅度 = **on-axis EQ + H/V 相对指向性**；以 1 kHz 总偏移作为独立 source gain，FIR 只保留剩余形状。实测样本（JBL A180、Genelec 8351B、Adam T5V）最大误差 <0.4 dB。FIR 目前用于直达声；反射路径在 A2b 复用同一设计。
 
 **范围**
 
@@ -430,13 +430,14 @@ R_p(f) = sqrt(1 - α_p(f))
 - 扬声器朝向由 **36 档声学 yaw** 定义（对齐工具设置，10° 步进；正方向 = 面向扬声器时玩家右侧）；方块 `FACING` 只保留放置基准，实际模型由 `SpeakerBlockEntityRenderer` 按声学 yaw 旋转。声学中心按模型取高音/驱动轴：落地 +1.31 m、书架 +0.77 m、中置 +0.33 m、低音炮 +0.48 m（相对方块 y），再沿朝向向前面板偏移 0.45 m。
 - **角度定义采用 ANSI/CTA-2034-A §5.1 与 Figure 1**：0° 是 reference axis（on-axis）；正水平角在面向扬声器时指向听者右侧（即扬声器自身左侧）；正垂直角向上；+180° 与 -180° 是同一个后方点。源数据只有 +180°，导入时补一行 -180°，SPL 与 +180° 相同；H/V 表均为 -180..180 共 37 行。
 - 由世界坐标方向 `d`（扬声器 → 听者或反射点）计算：`f` 为扬声器前方单位向量，`u` 为世界上方，`r = normalize(cross(u, f))`（面向扬声器时的听者右侧）；`θh = atan2(dot(d, r), dot(d, f))`，`θv = asin(clamp(dot(d, u), -1, 1))`。`θh` 归一化到 -180..180，`θv` 到 -90..90；H/V 表做双线性插值。
-- 指向性归一化：每个频带减去 `onAxisSpl[band]`，只保留相对指向性。轴上 EQ 另行使用 `onAxisEqGainDb(f) = onAxisSpl(f) - onAxisReferenceDb`；`onAxisReferenceDb` 是**全频段能量平均** `10*log10(mean(10^(SPL/10)))`，对每个 on-axis 采样点等权（原始网格为对数间隔，近似 log-frequency 等权，不是线性频率积分），用来归一化整体响度，不参与 H/V 相对指向性。
+- 指向性归一化：每个频带减去 `onAxisSpl[band]`，只保留相对指向性。轴上 EQ 使用 `onAxisEqGainDb(f) = onAxisSpl(f) - onAxisReferenceDb`；`onAxisReferenceDb` 是**全频段能量平均** `10*log10(mean(10^(SPL/10)))`，对每个 on-axis 采样点等权（原始网格为对数间隔，近似 log-frequency 等权，不是线性频率积分），用来归一化整体响度。A2 起 `onAxisEqGainDb` 与 H/V 相对指向性相加后一起进入直达声 FIR。
 
 **渲染**
 
-- **直达声 FIR**：按当前“扬声器 → 听者”的 H/V 角，从 profile 的 H/V 表合成相对 on-axis 的目标幅度；减去 1 kHz 偏移后，用 cepstrum 法设计 **4096-tap 最小相位 FIR @48 kHz**。4096 taps 的实测误差 <0.2 dB；1 kHz 偏移作为独立 source gain，不进入 FIR。
-- **缓存**：角度量化到 **5°**，按 profile + 角度缓存；4096-tap FIR 在单个 daemon worker 上异步设计，设计期间沿用上一个 FIR，避免卡渲染线程。缓存上限 1024 条。
-- **音频路径**：每个扬声器通道在 `CinemaAudioEngine` 中用 overlap-add FFT 卷积应用 FIR；引擎按 **2048 frame**（≈42.7 ms）小块排队，4 个缓冲 ≈171 ms 前瞻，使指向性更新不必等 0.5 s 解码块。卷积核 4096 taps 的 tail 跨块保留；FIR 改变时保留 tail，避免硬切；seek/flush 时清空。
+- **直达声 FIR**：目标幅度 = `onAxisEqGainDb(f) + gainDb(h, v, f)`，即实测 on-axis 频响 + 相对指向性；减去 1 kHz 总偏移后，用 cepstrum 法设计 **8192-tap 最小相位 FIR @48 kHz**。8192 taps 的实测误差 <0.4 dB；1 kHz 偏移作为独立 source gain，不进入 FIR。
+- **on-axis 聆听**：D=0，FIR 仍保留 `onAxisEqGainDb(f) - onAxisEqGainDb(1k)`，所以听到的是该型号实测轴向曲线（以全频段能量平均归一化），不再是平直参考。未测量/omni profile 的 on-axis EQ 为 0，仍为直通。
+- **缓存**：角度量化到 **5°**，按 profile + 角度缓存；8192-tap FIR 在单个 daemon worker 上异步设计，设计期间沿用上一个 FIR，避免卡渲染线程。缓存上限 512 条。
+- **音频路径**：每个扬声器通道在 `CinemaAudioEngine` 中用 overlap-add FFT 卷积应用 FIR；引擎按 **2048 frame**（≈42.7 ms）小块排队，4 个缓冲 ≈171 ms 前瞻，使指向性更新不必等 0.5 s 解码块。卷积核 8192 taps 的 tail 跨块保留；FIR 改变时保留 tail，避免硬切；seek/flush 时清空。
 - **声学中心**：source 位置改用 `SpeakerBlockEntity.acousticFrontPosition()`（类型高度 + 0.45 m 前面板偏移）；直达角与 OpenAL 距离都用该位置。
 - **反射**：A2b 复用同一个 FIR 设计，角度改为“扬声器 → 反射点”；反射路径再乘材质 `sqrt(1-α)`、空气吸收 `A(L)` 和散射修正。当前还未接入反射 source。
 - **限制**：FIR 是 separable H/V 的最小相位近似，不是完整 3D balloon；最小相位会改变相位但不改变目标幅度。极端角度若个别频点超过 1 dB，worker 会记录 warning，命令可查看 `maxErr`。
@@ -472,10 +473,10 @@ R_p(f) = sqrt(1 - α_p(f))
 - **按扬声器保存**：`assignments.json` 以“维度 + 方块坐标”为 key，保存该扬声器自己的 profile 和参数；没有 assignment 的扬声器回退到类型默认。
 - **求值**：`SpeakerDataProfile.gainDb(horizontal, vertical, frequency)`；measured profile 对 H/V 表做频率/角度插值，减去轴上响应，再以 separable（dB 相加）方式合成；结果 clamp 到 **-90..+12 dB**。
 - **频率范围**：从 on-axis 的 -10 dB 低/高交点计算；参考电平为 on-axis 全频段能量平均，结果四舍五入到 1 Hz。没有交点时使用测量边界。
-- **轴上 EQ 归一化**：`onAxisEqGainDb(f)` 保留原始 on-axis 形状，减去全频段能量平均电平，使不同型号的整体响度可比；当前尚未接入实际音频。
+- **轴上 EQ 归一化**：`onAxisEqGainDb(f)` 保留原始 on-axis 形状，减去全频段能量平均电平，使不同型号的整体响度可比；A2 已与指向性一起并入直达声 FIR。
 - **入口**：空手右键扬声器方块打开该扬声器的 speaker data GUI；角色选择在 GUI 内。`/cinema_speaker_data` 是类型默认的调试入口；`reload` 重扫文件夹，`info` 打印每类当前 profile，`test <type> <h> <v> <hz>` 打印指定角度/频率的指向性增益和轴上 EQ 增益。
 - **示例/转换器**：`docs/examples/speaker_data/`（含 synthetic 测试表、cardioid 简单 profile 和 `convert_spinorama.py`）。
-- **边界**：A2d 已把 profile 应用到直达声的 4096-tap 最小相位 FIR（反射待 A2b）；`SPL gain dB` 已进入 `speakerGain`。早期 spike 的 3 频带/15-PEQ 方案未采用。
+- **边界**：A2d 已把 profile 应用到直达声的 8192-tap 最小相位 FIR（反射待 A2b）；`SPL gain dB` 已进入 `speakerGain`；on-axis EQ 已并入同一 FIR。早期 spike 的 3 频带/15-PEQ 方案未采用。
 - **暂停**：GUI 是否暂停由 Mod Menu 的 `Pause game in device GUIs` 控制，默认 false；单机打开面板不会暂停集成服务器/播放。
 - **许可**：内置 profile 和 synthetic 示例是项目自带/CC0；真实 ASR/Spinorama 数据为 CC BY-NC-SA 4.0，profile 只作为本地用户数据存在，GUI 会显示 source/license。
 

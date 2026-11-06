@@ -13,14 +13,14 @@ import java.util.concurrent.Executors;
 /**
  * Client-side cache for per-direction minimum-phase FIRs.
  *
- * <p>Designing a 4096-tap filter needs several 16384-point FFTs, so it runs on a
- * single daemon worker. Callers get the cached filter immediately, or
+ * <p>Designing an 8192-tap filter needs several 32768-point FFTs, so it runs on
+ * a single daemon worker. Callers get the cached filter immediately, or
  * {@code null} while the first design is pending; they keep the previous
  * filter in that case. Angles are quantised to 5 degrees to bound the cache.
  */
 public final class SpeakerDirectivityService {
 	private static final int ANGLE_BUCKET_DEGREES = 5;
-	private static final int MAX_CACHE_ENTRIES = 1024;
+	private static final int MAX_CACHE_ENTRIES = 512;
 	private static final ExecutorService EXECUTOR = Executors.newSingleThreadExecutor(
 		runnable -> {
 			Thread thread = new Thread(runnable, "cinema-directivity-fir");
