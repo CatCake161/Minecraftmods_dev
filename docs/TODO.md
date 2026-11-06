@@ -5,7 +5,7 @@
 
 ## 现在：剩余验收 / 已知问题
 
-- 暂无阻塞项。NVIDIA 视频上传已在 `glFinish` 模式下复测通过；默认策略见 P1 工程项。
+- 暂无阻塞项。视频上传默认策略已定为 `glFenceSync` + 延迟回收，并已通过用户游戏内长测。
 
 ## P1：投影仪 / 配对 / 遥控
 
@@ -30,7 +30,6 @@
 - [ ] 媒体指纹校验：客户端播放前校验本地文件大小/指纹与接收器记录一致；缺失/不匹配时明确提示。
 - [ ] 两小时长片完整内存/队列测试。
 - [ ] 资源重载、音频设备切换、世界卸载恢复。
-- [ ] 视频上传帧缓冲生命周期验收：已改为 `glFenceSync` + 延迟回收（上传后等 GPU fence 再归还 buffer，队列压力时 `glFinish`），待带/不带 `-Dcinema.video.glFinish=true` 的游戏内长测。
 
 ## P1：扬声器 / 音频
 
@@ -103,11 +102,12 @@
 
 ## 最近完成
 
+- [x] 视频上传默认策略定稿：`glFenceSync` + 延迟回收帧缓冲（GPU fence 信号后才归还源缓冲，队列压力/关闭时 `glFinish` 兜底）已通过用户游戏内长测，稳定且 seek 速度符合预期；每帧 `glFinish` 性能差，`-Dcinema.video.glFinish=true` 仅保留为诊断开关
 - [x] 遥控器/远程访问：右键打开三栏扫描面板（AV 接收器/投影仪/扬声器），每行 Ping/Access；设备 GUI Close 返回扫描面板；配对保留在接收器/投影仪的配对菜单和线材；遥控器面板不再承载配对，HUD 已移除
 - [x] 音视频 seek 稳定性：切换/重启不再残留旧音频；seek 后 3 秒冷却，冷却期内连续点击合并为最后一次；修复 3–4 秒 grace 窗口内新 seek 被吞导致“时间已跳但仍在播旧内容”；音频 source 池复用，用户游戏内验收通过
 - [x] 媒体结尾（EOF）停止：音频/视频 seek 或自然播放到 duration 时直接 stop，状态回到 `STOPPED` 且位置归零，不再每 5 秒重试；`audioOnly` 持久化
 - [x] 64×64 屏幕：已通过游戏内验收；配对/光学范围上限 128 格，完整矩形下尺寸与 master 坐标正确
-- [x] NVIDIA 视频上传复测：`-Dcinema.video.glFinish=true` 下，4K VP9 与 4K AV1 HDR 连续播放/seek 未再出现 `nvoglv64.dll` ACCESS_VIOLATION
+- [x] NVIDIA 视频上传历史验证：`-Dcinema.video.glFinish=true` 下，4K VP9 与 4K AV1 HDR 连续播放/seek 未再出现 `nvoglv64.dll` ACCESS_VIOLATION（该模式性能不佳，最终默认策略已改为 fence + 延迟回收）
 - [x] 纯音频媒体播放：已实现并通过游戏内验收（mp3/flac/wav/m4a/aac/ogg/opus/wma 等；选择/播放/暂停/seek/停止/音量/5.1 上混；无视频时不要求投影仪）
 - [x] 投影仪配对诊断：已通过游戏内验收（过远/朝向/屏幕占用等失败原因有提示；投影仪 GUI 显示屏幕链接与 AV 信号状态）
 - [x] 完成音频定位模型评审（相对源 vs 世界坐标源），当前保留相对源，迁移计划挂到 A2 声学

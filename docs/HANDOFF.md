@@ -8,7 +8,7 @@
 - Minecraft 1.21.1 + Fabric，Java 21；包名 `com.example.cinema`，模组 id `cinema`；当前版本 **Alpha 0.0.1**。
 - 核心信号链已可玩：屏幕 → 投影仪 → AV Receiver → 5.1 扬声器。媒体由客户端本地解码，接收器与服务端保存播放状态和媒体指纹。
 - 已通过游戏内验收：投影仪光学与 GUI M1/M2/M3、屏幕渲染与尺寸配置（含 64×64）、AV Receiver M1/M2/M3/M4、四种扬声器、物理 5.1 路由、线材配对、设备/扬声器命名、座位乘坐与视角、Mod Menu 设置页、遥控器扫描/远程访问、设备配对菜单。
-- 剩余主要问题：暂无阻塞项。NVIDIA 纹理上传已在 `glFinish` 模式下复测通过，默认策略待评估；BSL 下 wash 异常与无音轨长播按用户决定暂不处理。
+- 剩余主要问题：暂无阻塞项。视频上传默认采用 `glFenceSync` + 延迟回收帧缓冲，已由用户游戏内长测确认稳定、seek 速度符合预期；`glFinish` 每帧同步性能差，仅保留为诊断开关。BSL 下 wash 异常与无音轨长播按用户决定暂不处理。
 - 规划中：多屏/多投影仪、LAN 状态同步、音轨/视频轨/字幕、AV Receiver `Video Processing`、可变声道布局/天空声道、房间声学。
 - 已验收功能的细节见 §3；未完成事项统一维护在 [TODO.md](TODO.md)。
 
@@ -57,6 +57,7 @@
 - 纯音频媒体：媒体库识别 mp3/flac/wav/m4a/aac/ogg/opus/wma 等；播放时跳过视频解码、不要求投影仪，接收器/扬声器链路与视频文件一致（已通过游戏内验收）。
 - seek：每次 seek 后 3 秒冷却，GUI 滑块与 ±10s 按钮同时禁用；冷却期内的连续请求合并为最后一次。修复了 grace 窗口内新 seek 被吞的问题，纯音频/视频不再出现“时间显示已跳但仍在播旧内容”。音频引擎复用 source 池；4K 感知延迟主要来自解码器重新打开和关键帧定位。
 - 4K60/HDR、HDR10/HLG、4K60 VP9/HEVC/AV1 已由用户游戏内验收；HDR 默认输出 720p、SDR 默认 1080p。
+- 视频上传生命周期：默认 `glFenceSync` + 延迟回收帧缓冲（GPU fence 信号后才归还源缓冲），仅在队列压力和关闭时 `glFinish` 兜底；已由用户游戏内长测确认稳定，seek 速度符合预期。每帧 `glFinish` 性能差，`-Dcinema.video.glFinish=true` 仅作诊断开关。
 
 ### 3.3 扬声器、座位与音频
 
@@ -79,7 +80,6 @@
 
 - **原地 seek 仍未启用**：当前 seek 复用音视频资源但会重新打开 FFmpeg 解码器，4K AV1/HEVC 仍可能需要数秒才出首帧；原地 seek 状态机未重新设计前不要直接恢复。
 - **BSL 下 ambient wash 某些值画面异常**：待确认是白色 overlay 的 bloom/exposure 还是 alpha 曲线；无音轨墙钟长播也未测试。两项按用户决定暂不处理，不阻塞当前验收。
-- **NVIDIA `nvoglv64.dll` ACCESS_VIOLATION**：栈为 `CinemaVideoTexture.upload → glTexSubImage2D`，不是 Java 异常。`glFinish` 模式下 4K VP9 / 4K AV1 HDR 连续 seek 已复测通过；现已改为 `glFenceSync` + 延迟回收帧缓冲，仍需带/不带 `glFinish` 的游戏内长测确认。
 - **音频声学仍是规划**：见 `docs/design/AUDIO-ACOUSTICS.md`。EAXReverb 只计划用于晚期尾音；早期反射用一阶镜像源 + Spinorama 实测扬声器指向性。EFX 可用性、材质吸收、型号映射都需 spike/校准。
 - **音频定位模型**：当前保留 `AL_SOURCE_RELATIVE = AL_TRUE`；世界坐标源迁移已完成评审，暂不迁移，需与 A2 声学一起做，见 `AUDIO-ACOUSTICS.md` §4.2.1。
 - Spinorama 数据默认 CC BY-NC-SA 4.0，与项目 CC0 不同；发布前必须做许可/attribution 决策。REST API 需要人工申请 Bearer key，key 只能放本地环境变量/转换工具，不能进仓库、发布包或日志。
@@ -92,15 +92,13 @@
 
 ## 5. 下一步优先级
 
-1. **视频上传稳定性**
-   - 评估 `glFinish` 默认策略，或改为 PBO/fence/延迟回收帧缓冲；补做无 `glFinish` 的长测。
-2. **媒体能力**
+1. **媒体能力**
    - 音轨/视频轨/字幕选择与渲染；拖放导入媒体库；AV Receiver `Video Processing`（输出分辨率/缩放/色彩/HDR/帧率）。
-3. **多屏 / 多投影仪 / LAN**
+2. **多屏 / 多投影仪 / LAN**
    - 同接收器多视频输出、LAN 播放状态同步、客户端缺文件/指纹校验、资源重载恢复。
-4. **可变声道布局 / 天空声道**
+3. **可变声道布局 / 天空声道**
    - 按 `CHANNEL-LAYOUTS.md` 分阶段泛化 `CinemaAudioEngine`/`AudioChunk`/`SpeakerRole`，先保持 5.1 零回归。
-5. **房间声学**
+4. **房间声学**
    - 所有声学模拟原型/实验代码在 `acoustic-simulation` 分支开发，只有通过游戏内听感验收的部分才分段合并回 `main`。
    - 先做 A1d Spinorama 数据 spike、A0 EFX/EAXReverb spike 与 A1e 许可决策；不要为了声学阻塞主线。
 
