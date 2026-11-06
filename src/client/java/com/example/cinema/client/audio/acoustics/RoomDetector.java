@@ -45,12 +45,21 @@ public final class RoomDetector {
 	private static final double PLANE_STABILIZE_MARGIN = 1.5;
 	/** Missing-axis estimate: 16 m total span, centered or from a known plane. */
 	private static final double FALLBACK_HALF_XZ = 8.0;
+	/** Reuse a flood fill for this long before checking for block changes. */
+	private static final long FILL_REFRESH_TICKS = 200L;
+	private static final double FILL_CONTAIN_MARGIN = 1.0;
 
 	private RoomDetector() {
 	}
 
 	public static RoomAcousticSnapshot detect(Level level, Player player, long version,
 											  RoomAcousticSnapshot previous) {
+		return detect(level, player, version, previous, false);
+	}
+
+	public static RoomAcousticSnapshot detect(Level level, Player player, long version,
+											  RoomAcousticSnapshot previous,
+											  boolean forceFill) {
 		Vec3 eye = player.getEyePosition();
 		AcousticListener listener = new AcousticListener(eye, player.getLookAngle(),
 			new Vec3(0.0, 1.0, 0.0));
@@ -63,7 +72,8 @@ public final class RoomDetector {
 		SurfaceHit north = castPlane(level, player, eye, Direction.NORTH);
 		if (east == null || west == null || up == null || down == null
 			|| south == null || north == null) {
-			return fallback(level, player, listener, version, "missing room plane", east, west, up, down, south, north);
+			return fallback(level, player, listener, version, "missing room plane",
+				east, west, up, down, south, north, previous, forceFill);
 		}
 
 		double westX = west.planeCoordinate;
@@ -92,13 +102,16 @@ public final class RoomDetector {
 		if (maxX - minX < MIN_ROOM_DIMENSION
 			|| maxY - minY < MIN_ROOM_DIMENSION
 			|| maxZ - minZ < MIN_ROOM_DIMENSION) {
-			return fallback(level, player, listener, version, "room too small", east, west, up, down, south, north);
+			return fallback(level, player, listener, version, "room too small",
+				east, west, up, down, south, north, previous, forceFill);
 		}
 		if (!contains(eye, minX, maxX, minY, maxY, minZ, maxZ)) {
-			return fallback(level, player, listener, version, "listener outside box", east, west, up, down, south, north);
+			return fallback(level, player, listener, version, "listener outside box",
+				east, west, up, down, south, north, previous, forceFill);
 		}
 		if (!hasOpenInterior(level, minX, maxX, minY, maxY, minZ, maxZ)) {
-			return fallback(level, player, listener, version, "interior fully solid", east, west, up, down, south, north);
+			return fallback(level, player, listener, version, "interior fully solid",
+				east, west, up, down, south, north, previous, forceFill);
 		}
 
 		List<AcousticSurface> surfaces = new ArrayList<>(6);
@@ -115,9 +128,11 @@ public final class RoomDetector {
 		surfaces.add(surface(level, north, AcousticSurface.Axis.Z, northZ, 1.0,
 			minX, maxX, minY, maxY));
 
+		RoomFill fill = resolveFill(level, eye, minX, minY, minZ, maxX, maxY, maxZ,
+			previous, level.getGameTime(), forceFill);
 		AcousticRoom room = AcousticRoom.box(
 			new Vec3(minX, minY, minZ), new Vec3(maxX, maxY, maxZ),
-			surfaces, true, "");
+			surfaces, true, "", fill);
 		return new RoomAcousticSnapshot(version, level.getGameTime(), room, listener,
 			scanSpeakers(level, eye));
 	}
@@ -126,7 +141,9 @@ public final class RoomDetector {
 												 AcousticListener listener, long version,
 												 String reason, SurfaceHit east, SurfaceHit west,
 												 SurfaceHit up, SurfaceHit down,
-												 SurfaceHit south, SurfaceHit north) {
+												 SurfaceHit south, SurfaceHit north,
+												 RoomAcousticSnapshot previous,
+												 boolean forceFill) {
 		Vec3 eye = listener.eye();
 		double[] xSpan = resolveAxis(west, east, eye.x);
 		double[] zSpan = resolveAxis(north, south, eye.z);
@@ -155,11 +172,50 @@ public final class RoomDetector {
 		addFallbackSurface(surfaces, level, north, AcousticSurface.Axis.Z, minZ, 1.0,
 			minX, maxX, minY, maxY);
 
+		RoomFill fill = resolveFill(level, eye, minX, minY, minZ, maxX, maxY, maxZ,
+			previous, level.getGameTime(), forceFill);
 		AcousticRoom room = AcousticRoom.box(
 			new Vec3(minX, minY, minZ), new Vec3(maxX, maxY, maxZ),
-			surfaces, false, reason);
+			surfaces, false, reason, fill);
 		return new RoomAcousticSnapshot(version, level.getGameTime(), room, listener,
 			scanSpeakers(level, eye));
+	}
+
+	/**
+	 * Reuses the previous fill while the listener is still inside it and it is
+	 * younger than {@link #FILL_REFRESH_TICKS}. An incomplete fill is reused for
+	 * the same interval because rescanning a capped or unloaded region cannot
+	 * improve it. A forced refresh from the debug command always rescans.
+	 */
+	private static RoomFill resolveFill(Level level, Vec3 eye,
+										double minX, double minY, double minZ,
+										double maxX, double maxY, double maxZ,
+										RoomAcousticSnapshot previous, long now,
+										boolean forceFill) {
+		if (!forceFill && previous != null) {
+			RoomFill old = previous.room().fill();
+			if (old != null) {
+				long age = now - old.gameTime();
+				if (age >= 0L && age < FILL_REFRESH_TICKS
+					&& (!old.complete()
+					|| (old.contains(eye, FILL_CONTAIN_MARGIN)
+					&& fillFits(old, minX, minY, minZ, maxX, maxY, maxZ)))) {
+					return old;
+				}
+			}
+		}
+		return RoomFloodFill.scan(level, eye, new Vec3(minX, minY, minZ),
+			new Vec3(maxX, maxY, maxZ), now);
+	}
+
+	private static boolean fillFits(RoomFill fill, double minX, double minY, double minZ,
+									double maxX, double maxY, double maxZ) {
+		return fill.min().x >= minX - FILL_CONTAIN_MARGIN
+			&& fill.min().y >= minY - FILL_CONTAIN_MARGIN
+			&& fill.min().z >= minZ - FILL_CONTAIN_MARGIN
+			&& fill.max().x <= maxX + FILL_CONTAIN_MARGIN
+			&& fill.max().y <= maxY + FILL_CONTAIN_MARGIN
+			&& fill.max().z <= maxZ + FILL_CONTAIN_MARGIN;
 	}
 
 	/**

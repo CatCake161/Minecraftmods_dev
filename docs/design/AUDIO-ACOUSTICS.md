@@ -315,7 +315,7 @@ A1 只使用 Eyring。Sabine 仅适用于极低吸收/扩散场的粗略估计�
 
 **A1 初始实现（2026-11-06）**
 
-- 数据模型：`AcousticMaterial`、`AcousticSurface`、`AcousticRoom`、`AcousticSpeaker`、`AcousticListener`、`RoomAcousticSnapshot`。
+- 数据模型：`AcousticMaterial`、`AcousticSurface`、`AcousticRoom`、`RoomFill`、`RoomFloodFill`、`AcousticSpeaker`、`AcousticListener`、`RoomAcousticSnapshot`。
 - 房间检测：从玩家眼睛沿 ±X/±Y/±Z 各发 **25 条射线扇形**（5×5，约 ±9°），共 150 条；每条射线最多反射 **2 次**，取同轴向、同命中面的中位平面，避免墙角/门洞单条射线失败。跳过扬声器、座椅、投影仪、接收器，屏幕作为墙面；不再因“墙面太近”直接失败，仅保留任一维 <1.5 m 的失败条件。
 - 墙面材质：命中点周围 **9×9（半径 4）** 方块采样，但严格裁剪到该平面的 u/v 边界；跳过空气/设备，按样本数平均。`samples` 是方块数量，不是 m²；完整方块平面上不会超过面积（边界取整除外）。屏幕单独映射。
 - 凸盒验证：监听者必须在六面内；盒内 1/3、2/3 的 2×2×2 点采样，仅在 **8/8 全为固体** 时判为不可信（避免墙角/家具误判）。
@@ -339,8 +339,10 @@ A1 只使用 Eyring。Sabine 仅适用于极低吸收/扩散场的粗略估计�
 - 扬声器朝向：新增 **36 档 10° 声学 yaw**（0=N，9=W，18=S，27=E；正方向 = 面向扬声器时玩家的右侧，符合 CTA 角度方向），不再受方块四向 `FACING` 限制；方块模型通过 `SpeakerBlockEntityRenderer` 同步旋转到同一物理朝向。
 - 朝向校准物品：**Speaker Alignment Tool**（`cinema:speaker_alignment_tool`，铁锭+指南针合成）；右键 +10°，潜行右键 -10°，action bar 显示当前角度。
 - 缓存：移动/转头时约 5 Hz 更新，静止时每 20 tick 更新；断线/退出清空。A1 只生成快照，不改变任何音频。
-- 稳定化：新平面坐标与上一有效快照相差 ≤1.5 m 时沿用旧平面，避免不规则天花板/墙角抖动；检测失败时直接使用 fallback（部分平面或 16×16×16 m 估计盒），不保留旧房间。
-- 调试：`/cinema_acoustics` 强制刷新并输出房间、六个平面、材质、RT60、听者和附近扬声器。
+- 稳定化：新平面坐标与上一有效快照相差 ≤1.5 m 时沿用旧平面，避免不规则天花板/墙角抖动；检测失败时直接使用 fallback（保留真实平面，缺失轴以已知面延伸 16 m；两面都缺失时该轴用听者 ±8 m），不保留旧房间。
+- 连通空气 flood fill：在六面盒内从眼睛做有界 **6 邻接 BFS**，最多 **32³ = 32768** 格、单次 **8 ms** 预算；只穿过无碰撞方块或扬声器/座椅/投影仪/接收器，水/岩浆按边界处理；未加载区块、超出上限或超出时间预算时标记 `fill=incomplete`，RT60 回退到几何盒。完整填充时给出 `effectiveVolume`、`effectiveSurfaceArea`、`openArea` 与开口面（`x±/y±/z±`），Eyring 使用有效体积/面积和按边界材质加权的 α；开口按 α=1 计入（近似为完全吸声）。完整填充最多每 **200 tick** 或听者离开旧填充时重扫；incomplete 填充每 200 tick 重试；`/cinema_acoustics` 强制重扫。填充只用于 RT60/调试，不改变 A1 的盒几何。
+- 开口按 α=1 只是把逃逸能量视为完全吸收的 A1 近似；门洞通向另一房间的耦合混响尚未建模，留给后续 A3/Fitzroy/portal 处理。
+- 调试：`/cinema_acoustics` 强制刷新并输出房间、六个平面、材质、flood fill 体积/面积/开口、RT60、听者和附近扬声器。
 
 ### 7.2 直达声
 

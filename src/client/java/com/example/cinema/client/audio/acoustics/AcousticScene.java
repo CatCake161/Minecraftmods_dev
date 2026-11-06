@@ -69,7 +69,7 @@ public final class AcousticScene {
 		version++;
 		try {
 			snapshot = RoomDetector.detect(minecraft.level, minecraft.player, version,
-				snapshot);
+				snapshot, true);
 			lastError = "";
 			lastGameTime = minecraft.level.getGameTime();
 			lastEye = minecraft.player.getEyePosition();

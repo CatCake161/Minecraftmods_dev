@@ -5,14 +5,15 @@ import net.minecraft.world.phys.Vec3;
 import java.util.List;
 
 /**
- * A1 room snapshot. Only the six-plane box is modeled; a failed box detection
- * produces a fallback box with {@code valid=false}.
+ * A1 room snapshot. The six-plane box is the detected bounding volume; the
+ * optional {@link RoomFill} provides the connected air volume, effective
+ * surface area, and openings measured inside that box.
  */
 public record AcousticRoom(boolean valid, String fallbackReason,
 						   Vec3 min, Vec3 max, double volume, double surfaceArea,
 						   double alphaLow, double alphaMid, double alphaHigh,
 						   double rt60Low, double rt60Mid, double rt60High,
-						   List<AcousticSurface> surfaces) {
+						   List<AcousticSurface> surfaces, RoomFill fill) {
 	private static final double EYRING = 0.161;
 
 	public AcousticRoom {
@@ -42,6 +43,16 @@ public record AcousticRoom(boolean valid, String fallbackReason,
 	 */
 	public static AcousticRoom box(Vec3 min, Vec3 max, List<AcousticSurface> surfaces,
 								   boolean valid, String fallbackReason) {
+		return box(min, max, surfaces, valid, fallbackReason, null);
+	}
+
+	/**
+	 * Builds a room and, when the flood fill is complete, uses its connected
+	 * volume, boundary area and measured absorption for Eyring RT60. An
+	 * incomplete fill keeps the geometric box values.
+	 */
+	public static AcousticRoom box(Vec3 min, Vec3 max, List<AcousticSurface> surfaces,
+								   boolean valid, String fallbackReason, RoomFill fill) {
 		double dx = Math.max(0.0, max.x - min.x);
 		double dy = Math.max(0.0, max.y - min.y);
 		double dz = Math.max(0.0, max.z - min.z);
@@ -70,12 +81,44 @@ public record AcousticRoom(boolean valid, String fallbackReason,
 			alphaMid /= weightedArea;
 			alphaHigh /= weightedArea;
 		}
+
+		double effectiveVolume = volume;
+		double effectiveArea = area;
+		if (fill != null && fill.complete() && fill.surfaceArea() > 0.0) {
+			effectiveVolume = fill.volume();
+			effectiveArea = fill.surfaceArea();
+			alphaLow = fill.alphaLow();
+			alphaMid = fill.alphaMid();
+			alphaHigh = fill.alphaHigh();
+		}
 		return new AcousticRoom(valid, fallbackReason, min, max, volume, area,
 			alphaLow, alphaMid, alphaHigh,
-			rt60(volume, area, alphaLow),
-			rt60(volume, area, alphaMid),
-			rt60(volume, area, alphaHigh),
-			surfaces);
+			rt60(effectiveVolume, effectiveArea, alphaLow),
+			rt60(effectiveVolume, effectiveArea, alphaMid),
+			rt60(effectiveVolume, effectiveArea, alphaHigh),
+			surfaces, fill);
+	}
+
+	/** Connected air volume used for RT60; box volume when fill is incomplete. */
+	public double effectiveVolume() {
+		return fill != null && fill.complete() ? fill.volume() : volume;
+	}
+
+	/** Connected boundary area used for RT60; box area when fill is incomplete. */
+	public double effectiveSurfaceArea() {
+		return fill != null && fill.complete() ? fill.surfaceArea() : surfaceArea;
+	}
+
+	public double openArea() {
+		return fill == null ? 0.0 : fill.openArea();
+	}
+
+	public boolean fillComplete() {
+		return fill != null && fill.complete();
+	}
+
+	public double fillCoverage() {
+		return fill == null ? 0.0 : fill.coverage(volume);
 	}
 
 	private static double rt60(double volume, double area, double alpha) {

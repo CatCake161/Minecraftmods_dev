@@ -6,6 +6,7 @@ import com.example.cinema.client.audio.acoustics.AcousticScene;
 import com.example.cinema.client.audio.acoustics.AcousticSpeaker;
 import com.example.cinema.client.audio.acoustics.AcousticSurface;
 import com.example.cinema.client.audio.acoustics.RoomAcousticSnapshot;
+import com.example.cinema.client.audio.acoustics.RoomFill;
 import com.mojang.brigadier.CommandDispatcher;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
@@ -36,17 +37,29 @@ public final class ClientAcousticsCommand {
 			return 0;
 		}
 		AcousticRoom room = snapshot.room();
+		RoomFill fill = room.fill();
+		String fillState = fill == null ? "none"
+			: fill.complete() ? "complete" : "incomplete";
 		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
-			"acoustics: valid=%s fallback=%s version=%d",
+			"acoustics: valid=%s fallback=%s fill=%s version=%d",
 			room.valid(), room.fallbackReason().isBlank() ? "-" : room.fallbackReason(),
-			snapshot.version())));
+			fillState, snapshot.version())));
 		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
-			"acoustics: size=%s volume=%.1f m3 surface=%.1f m2",
+			"acoustics: size=%s boxVolume=%.1f m3 boxSurface=%.1f m2",
 			room.sizeLabel(), room.volume(), room.surfaceArea())));
+		if (fill == null) {
+			source.sendFeedback(Component.literal("acoustics: fill=none"));
+		} else {
+			source.sendFeedback(Component.literal(String.format(Locale.ROOT,
+				"acoustics: fill volume=%.1f m3 surface=%.1f m2 open=%.1f m2 cells=%d faces=%s coverage=%.2f",
+				fill.volume(), fill.surfaceArea(), fill.openArea(),
+				fill.cells(), fill.openFacesLabel(), room.fillCoverage())));
+		}
 		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
-			"acoustics: alpha L/M/H=%.3f/%.3f/%.3f RT60 L/M/H=%s/%s/%s s",
+			"acoustics: alpha L/M/H=%.3f/%.3f/%.3f RT60 L/M/H=%s/%s/%s s source=%s",
 			room.alphaLow(), room.alphaMid(), room.alphaHigh(),
-			rt60(room.rt60Low()), rt60(room.rt60Mid()), rt60(room.rt60High()))));
+			rt60(room.rt60Low()), rt60(room.rt60Mid()), rt60(room.rt60High()),
+			room.fillComplete() ? "fill" : "box")));
 		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
 			"acoustics: listener eye=(%.2f, %.2f, %.2f) look=(%.2f, %.2f, %.2f)",
 			snapshot.listener().eye().x, snapshot.listener().eye().y,
