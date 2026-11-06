@@ -4,8 +4,11 @@ import com.example.cinema.Cinema;
 import com.example.cinema.block.entity.AvReceiverBlockEntity;
 import com.example.cinema.block.entity.SpeakerBlockEntity;
 import com.example.cinema.block.entity.SpeakerRole;
-import com.example.cinema.block.entity.SpeakerType;
+import com.example.cinema.client.audio.directivity.MinimumPhaseFir;
+import com.example.cinema.client.audio.directivity.SpeakerDirectivityService;
 import com.example.cinema.client.audio.speakerdata.SpeakerDataAssignments;
+import com.example.cinema.client.audio.speakerdata.SpeakerDataProfile;
+import com.example.cinema.client.audio.speakerdata.SpeakerDataRegistry;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
@@ -54,6 +57,8 @@ public final class AvReceiverPlayback {
 	private double pendingSeekSeconds = Double.NaN;
 	private boolean missing;
 	private int physicalChannels;
+	private final MinimumPhaseFir[] channelFilters =
+		new MinimumPhaseFir[CinemaAudioEngine.CHANNELS];
 
 	AvReceiverPlayback(BlockPos receiverPos) {
 		this.receiverPos = receiverPos;
@@ -61,6 +66,7 @@ public final class AvReceiverPlayback {
 		this.texture = new CinemaVideoTexture();
 		Minecraft.getInstance().getTextureManager().register(textureId, texture);
 		this.textureRegistered = true;
+		Arrays.fill(channelFilters, MinimumPhaseFir.FLAT);
 	}
 
 	public BlockPos receiverPos() {
@@ -360,7 +366,9 @@ public final class AvReceiverPlayback {
 
 		float[][] positions = new float[CinemaAudioEngine.CHANNELS][];
 		float[] gains = new float[CinemaAudioEngine.CHANNELS];
+		MinimumPhaseFir[] filters = new MinimumPhaseFir[CinemaAudioEngine.CHANNELS];
 		Arrays.fill(gains, 1.0f);
+		Arrays.fill(filters, MinimumPhaseFir.FLAT);
 		double[] bestDistance = new double[CinemaAudioEngine.CHANNELS];
 		Arrays.fill(bestDistance, Double.MAX_VALUE);
 		for (BlockPos pos : receiver.speakerTargets()) {
@@ -376,7 +384,7 @@ public final class AvReceiverPlayback {
 			if (channel < 0 || channel >= positions.length) {
 				continue;
 			}
-			Vec3 center = speakerCenter(speaker);
+			Vec3 center = speaker.acousticFrontPosition();
 			Vec3 relative = center.subtract(listener);
 			double distance = relative.lengthSqr();
 			if (distance < 0.01 || distance >= bestDistance[channel]) {
@@ -384,7 +392,11 @@ public final class AvReceiverPlayback {
 			}
 			bestDistance[channel] = distance;
 			positions[channel] = toListenerSpace(relative, forward);
-			gains[channel] = speakerGain(speaker);
+			SpeakerDirectivityService.Angles angles = SpeakerDirectivityService.angles(
+				center, speaker.acousticForward(), listener);
+			MinimumPhaseFir filter = directivityFilter(speaker, angles);
+			filters[channel] = filter;
+			gains[channel] = speakerGain(speaker) * (float) filter.overallGain();
 		}
 
 		int routed = 0;
@@ -394,15 +406,29 @@ public final class AvReceiverPlayback {
 			}
 		}
 		physicalChannels = routed;
-		engine.setChannelLayout(positions, gains);
+		System.arraycopy(filters, 0, channelFilters, 0, filters.length);
+		engine.setChannelLayout(positions, gains, filters);
 	}
 
-	private static Vec3 speakerCenter(SpeakerBlockEntity speaker) {
-		Vec3 center = Vec3.atCenterOf(speaker.getBlockPos());
-		if (speaker.type() == SpeakerType.FLOORSTANDING) {
-			center = center.add(0.0, 0.5, 0.0);
+	private MinimumPhaseFir directivityFilter(SpeakerBlockEntity speaker,
+											  SpeakerDirectivityService.Angles angles) {
+		SpeakerDataRegistry.SpeakerSettings settings =
+			SpeakerDataAssignments.settingsFor(speaker);
+		SpeakerDataProfile profile = SpeakerDataRegistry.find(speaker.type(),
+			settings.profileId());
+		if (profile == null) {
+			return MinimumPhaseFir.FLAT;
 		}
-		return center;
+		MinimumPhaseFir design = SpeakerDirectivityService.get(profile,
+			angles.horizontal(), angles.vertical());
+		int channel = speaker.role().ordinal() - 1;
+		if (design != null) {
+			return design;
+		}
+		if (channel >= 0 && channel < channelFilters.length) {
+			return channelFilters[channel];
+		}
+		return MinimumPhaseFir.FLAT;
 	}
 
 	private static float speakerGain(SpeakerBlockEntity speaker) {

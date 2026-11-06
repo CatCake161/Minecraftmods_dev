@@ -55,10 +55,11 @@
 - [x] A1 扬声器朝向：36 档 10° 声学 yaw + Speaker Alignment Tool（右键 +10°，潜行 -10°）；方块模型由 `SpeakerBlockEntityRenderer` 同步物理旋转；游戏内验证无明显问题
 - [x] A1d ASR/Spinorama 数据管线：只读 `SPL Horizontal.txt`/`SPL Vertical.txt`；保留原始 194/200 点频率网格、不降采样；补 `-180°`；按全频段能量平均计算 -10 dB 频率范围并取整到 1 Hz；删除 `quality`；21 个型号生成到本地 `run/cinema/speaker_data/profiles/`，**不打包**。转换器：`docs/examples/speaker_data/convert_spinorama.py`。待游戏内加载验证
 - [ ] A1e Spinorama 许可决策：已确认 CC BY-NC-SA 4.0；profile 仅作为用户本地导入数据，不随模组分发；仍需在发布文档/THIRD-PARTY 写 attribution
-- [ ] A2 直达声：距离/空气吸收/指向性/遮挡；空气吸收和指向性同时作用于直达声与反射；OpenAL 负责距离，Java 只计算非距离增益，避免双重衰减；空气吸收温湿度配置放 Mod Menu
+- [ ] A2 直达声：距离/空气吸收/指向性/遮挡；OpenAL 负责距离，Java 只计算非距离增益；指向性 FIR 已接入直达声，空气吸收/遮挡待做；空气吸收温湿度配置放 Mod Menu
 - [ ] A2b 一阶早期反射：镜像源法（6 平面 × 6 扬声器）、可见性、延迟/增益/频带、每个 tap 一个独立 OpenAL source（镜像源位置）、播放未处理 `sourceChannel` 的延迟副本、最多 24–36 taps、平滑；反射 source 由 OpenAL 负责方向/距离，不按 5.1 声道混入直达；增益按距离/空气吸收/材质/指向性计算，不设固定 -6..-12 dB 默认
-- [ ] A2c 扬声器指向性：用 Spinorama profile 查表；声学中心/朝向；低音炮 omni；同时作用于直达声（扬声器→听者）和反射（扬声器→反射点）；具体计算方法待用户说明
-- [ ] A2d 指向性渲染（直达声 + 反射）：频带精度待用户确定（3 频带 / 1/3 octave / 32–64 tap FIR）；空气吸收按路径长度和频率计算；A/B 实测
+- [x] A2c 扬声器指向性（直达）：用 Spinorama H/V profile 合成目标，4096-tap 最小相位 FIR @48k（cepstrum），以 on-axis 1 kHz 为 0 dB，整体偏移进 source gain；5° 角度缓存、异步设计、overlap-add 卷积；实测样本最大误差 <0.2 dB；声学中心/朝向/低音炮 omni 已接入
+- [ ] A2c-R 反射指向性：A2b 的反射角复用同一 FIR/查表；反射路径空气吸收/材质系数待接
+- [ ] A2d 直达声 A/B/CPU：4096-tap FIR 的听感、移动/转头更新、±1 dB 实测确认；空气吸收按路径长度和频率计算；遮挡低通/衰减
 - [ ] A2e Mod Menu 声学设置：空气吸收开关/温度/湿度、`earlyGainDb` 调试滑杆（仅调试，默认 0 dB）
 - [ ] A3 晚期混响：EAXReverb 仅 late tail（`REFLECTIONS_GAIN=0`、`ECHO_DEPTH=0`）、RT60 Eyring、HF/LF ratio、density/diffusion、modulation、air absorption
 - [ ] A3b 自定义 FDN 回退（可选）：8 线 FDN、吸收滤波、6 声道 wet、稳定性限制

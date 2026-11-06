@@ -41,7 +41,6 @@ public final class RoomDetector {
 	private static final int MAX_BOUNCES = 2;
 	private static final int MATERIAL_SAMPLE_RADIUS = 4;
 	private static final double SPEAKER_RADIUS = 48.0;
-	private static final double ACOUSTIC_FRONT_OFFSET = 0.45;
 	private static final double PLANE_STABILIZE_MARGIN = 1.5;
 	/** Missing-axis estimate: 16 m total span, centered or from a known plane. */
 	private static final double FALLBACK_HALF_XZ = 8.0;
@@ -541,10 +540,8 @@ public final class RoomDetector {
 						continue;
 					}
 					SpeakerType type = speaker.type();
-					double centerY = pos.getY() + acousticCenterOffset(type);
 					Vec3 forward = speaker.acousticForward();
-					Vec3 center = new Vec3(pos.getX() + 0.5, centerY, pos.getZ() + 0.5);
-					Vec3 position = center.add(forward.scale(ACOUSTIC_FRONT_OFFSET));
+					Vec3 position = speaker.acousticFrontPosition();
 					speakers.add(new AcousticSpeaker(pos, speaker.role(), type, position,
 						forward, speaker.acousticYawDegrees(), speaker.levelDb(),
 						profileId(speaker)));
@@ -561,20 +558,6 @@ public final class RoomDetector {
 		} catch (Throwable t) {
 			return "";
 		}
-	}
-
-	/**
-	 * Tweeter/driver height above the block's lower Y, derived from the block
-	 * models: floorstanding upper tweeter, bookshelf tweeter, center tweeter,
-	 * and subwoofer driver center.
-	 */
-	private static double acousticCenterOffset(SpeakerType type) {
-		return switch (type) {
-			case FLOORSTANDING -> 1.31;
-			case BOOKSHELF -> 0.77;
-			case CENTER -> 0.33;
-			case SUBWOOFER -> 0.48;
-		};
 	}
 
 	private record SurfaceHit(BlockHitResult hit, double distance, double planeCoordinate) {

@@ -7,6 +7,10 @@ import com.example.cinema.client.audio.acoustics.AcousticSpeaker;
 import com.example.cinema.client.audio.acoustics.AcousticSurface;
 import com.example.cinema.client.audio.acoustics.RoomAcousticSnapshot;
 import com.example.cinema.client.audio.acoustics.RoomFill;
+import com.example.cinema.client.audio.directivity.MinimumPhaseFir;
+import com.example.cinema.client.audio.directivity.SpeakerDirectivityService;
+import com.example.cinema.client.audio.speakerdata.SpeakerDataProfile;
+import com.example.cinema.client.audio.speakerdata.SpeakerDataRegistry;
 import com.mojang.brigadier.CommandDispatcher;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
@@ -82,6 +86,23 @@ public final class ClientAcousticsCommand {
 				speaker.yawDegrees(), speaker.forward().x, speaker.forward().z,
 				speaker.levelDb(),
 				speaker.profileId().isBlank() ? "-" : speaker.profileId())));
+			SpeakerDataProfile profile = SpeakerDataRegistry.find(speaker.type(),
+				speaker.profileId());
+			SpeakerDirectivityService.Angles angles = SpeakerDirectivityService.angles(
+				speaker.position(), speaker.forward(), snapshot.listener().eye());
+			MinimumPhaseFir filter = profile == null ? null
+				: SpeakerDirectivityService.get(profile, angles.horizontal(),
+				angles.vertical());
+			String state = profile == null ? "none"
+				: filter == null ? "pending" : filter.isFlat() ? "flat" : "ready";
+			source.sendFeedback(Component.literal(String.format(Locale.ROOT,
+				"acoustics: directivity %s h=%.1f v=%.1f eq=%s taps=%s maxErr=%s offset=%s",
+				speaker.role().label(), angles.horizontal(), angles.vertical(), state,
+				filter == null ? "-" : Integer.toString(filter.length()),
+				filter == null ? "-" : String.format(Locale.ROOT, "%.2f dB",
+					filter.maxErrorDb()),
+				filter == null ? "-" : String.format(Locale.ROOT, "%+.1f dB",
+					filter.offsetDb()))));
 		}
 		return 1;
 	}

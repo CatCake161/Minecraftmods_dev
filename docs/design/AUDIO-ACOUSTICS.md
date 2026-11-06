@@ -397,7 +397,7 @@ R_p(f) = sqrt(1 - α_p(f))
 
 ### 7.4 扬声器指向性（Spinorama 实测数据）
 
-> **计算方法待定（2026-11-06）**：用户稍后说明指向性的具体计算方法；以下 H/V 插值、separable 合成、频带划分均为草案，确认前不作为实现依据。
+> **计算方法已定（2026-11-06）**：先尝试 15 个 PEQ（peaking/LS/HS）拟合；实测 JBL A180 等原始 H/V 曲线在极端角度无法满足全频段 ±1 dB（垂直 20° 等位置误差更大），因此改用 **4096-tap 最小相位 FIR**。H/V 按 separable 合成目标幅度，以 1 kHz on-axis 为 0 dB 参考；整体偏移作为独立 source gain。实测样本（JBL A180、Genelec 8351B、Adam T5V）最大误差 <0.2 dB。FIR 目前用于直达声；反射路径在 A2b 复用同一设计。
 
 **范围**
 
@@ -434,11 +434,12 @@ R_p(f) = sqrt(1 - α_p(f))
 
 **渲染**
 
-- 频带精度待用户确定；当前草案为 3 频带（例如 <300 Hz / 300–2k / >2k）增益 + 可选 HF shelf，用 Linkwitz-Riley 或相位兼容分频，避免分频点染色。3 频带只是候选，不是已确认实现。
-- 每个反射 tap 的 `bandGains` 由该反射角查表得到；再乘材质 `sqrt(1-α)`、空气吸收 `A(L)` 和散射修正。距离由 OpenAL 按反射 source 的镜像源位置处理；若后续把反射 source 的 rolloff 设为 0，则在 Java 侧再乘 `1/L`。
-- 直达声：按玩家实际听者位置/角度计算，应用同一 profile 的带增益；直达声和反射使用同一份指向性数据，但各自独立计算一次，不假设固定皇帝位。直达声的离轴变化是物理计算的一部分，不是可选项。
-- 不建议直接用一个“低通截止频率”概括指向性；实测曲线可能有轴向隆起/分频 lobing，频带精度待定，1/3 octave/短 FIR 更忠实但更贵。
-- 频带精度确认后再决定是否升级到 1/3 octave 多频带（例如 10 段）或 32–64 tap FIR；CPU/延迟在 A2d 测量后决定。
+- **直达声 FIR**：按当前“扬声器 → 听者”的 H/V 角，从 profile 的 H/V 表合成相对 on-axis 的目标幅度；减去 1 kHz 偏移后，用 cepstrum 法设计 **4096-tap 最小相位 FIR @48 kHz**。4096 taps 的实测误差 <0.2 dB；1 kHz 偏移作为独立 source gain，不进入 FIR。
+- **缓存**：角度量化到 **5°**，按 profile + 角度缓存；4096-tap FIR 在单个 daemon worker 上异步设计，设计期间沿用上一个 FIR，避免卡渲染线程。缓存上限 1024 条。
+- **音频路径**：每个扬声器通道在 `CinemaAudioEngine` 中用 overlap-add FFT 卷积应用 FIR；引擎按 **2048 frame**（≈42.7 ms）小块排队，4 个缓冲 ≈171 ms 前瞻，使指向性更新不必等 0.5 s 解码块。卷积核 4096 taps 的 tail 跨块保留；FIR 改变时保留 tail，避免硬切；seek/flush 时清空。
+- **声学中心**：source 位置改用 `SpeakerBlockEntity.acousticFrontPosition()`（类型高度 + 0.45 m 前面板偏移）；直达角与 OpenAL 距离都用该位置。
+- **反射**：A2b 复用同一个 FIR 设计，角度改为“扬声器 → 反射点”；反射路径再乘材质 `sqrt(1-α)`、空气吸收 `A(L)` 和散射修正。当前还未接入反射 source。
+- **限制**：FIR 是 separable H/V 的最小相位近似，不是完整 3D balloon；最小相位会改变相位但不改变目标幅度。极端角度若个别频点超过 1 dB，worker 会记录 warning，命令可查看 `maxErr`。
 
 **数据管线**
 
@@ -474,7 +475,7 @@ R_p(f) = sqrt(1 - α_p(f))
 - **轴上 EQ 归一化**：`onAxisEqGainDb(f)` 保留原始 on-axis 形状，减去全频段能量平均电平，使不同型号的整体响度可比；当前尚未接入实际音频。
 - **入口**：空手右键扬声器方块打开该扬声器的 speaker data GUI；角色选择在 GUI 内。`/cinema_speaker_data` 是类型默认的调试入口；`reload` 重扫文件夹，`info` 打印每类当前 profile，`test <type> <h> <v> <hz>` 打印指定角度/频率的指向性增益和轴上 EQ 增益。
 - **示例/转换器**：`docs/examples/speaker_data/`（含 synthetic 测试表、cardioid 简单 profile 和 `convert_spinorama.py`）。
-- **边界**：这个 spike 不把 speaker data 应用到 `CinemaAudioEngine` 的实际音频；A2d 才把 profile 应用到实际音频（直达声 + 反射），具体计算方法待用户确认。`SPL gain dB` 目前只是保存/显示，尚未进入增益分配。
+- **边界**：A2d 已把 profile 应用到直达声的 4096-tap 最小相位 FIR（反射待 A2b）；`SPL gain dB` 已进入 `speakerGain`。早期 spike 的 3 频带/15-PEQ 方案未采用。
 - **暂停**：GUI 是否暂停由 Mod Menu 的 `Pause game in device GUIs` 控制，默认 false；单机打开面板不会暂停集成服务器/播放。
 - **许可**：内置 profile 和 synthetic 示例是项目自带/CC0；真实 ASR/Spinorama 数据为 CC BY-NC-SA 4.0，profile 只作为本地用户数据存在，GUI 会显示 source/license。
 

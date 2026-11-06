@@ -3,6 +3,7 @@ package com.example.cinema.client.gui;
 import com.example.cinema.block.entity.SpeakerBlockEntity;
 import com.example.cinema.block.entity.SpeakerRole;
 import com.example.cinema.block.entity.SpeakerType;
+import com.example.cinema.client.audio.directivity.SpeakerDirectivityService;
 import com.example.cinema.client.audio.speakerdata.SpeakerDataAssignments;
 import com.example.cinema.client.audio.speakerdata.SpeakerDataProfile;
 import com.example.cinema.client.audio.speakerdata.SpeakerDataRegistry;
@@ -360,6 +361,7 @@ public final class SpeakerDataConfigScreen extends Screen {
 
 	private void reloadProfiles() {
 		SpeakerDataRegistry.ReloadResult result = SpeakerDataRegistry.reloadProfiles();
+		SpeakerDirectivityService.clearCache();
 		if (SpeakerDataRegistry.find(selectedType, draftProfileId) == null) {
 			loadDraftFromRegistry();
 		}

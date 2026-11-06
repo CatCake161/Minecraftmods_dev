@@ -1,6 +1,8 @@
 package com.example.cinema.client.media;
 
 import com.example.cinema.Cinema;
+import com.example.cinema.client.audio.directivity.FirProcessor;
+import com.example.cinema.client.audio.directivity.MinimumPhaseFir;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.openal.AL;
 import org.lwjgl.openal.AL10;
@@ -44,6 +46,8 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	public static final int CHANNELS = 6;
 	private static final int SPEAKERS = 6;
 	private static final int BUFFER_COUNT = 4;
+	/** Small queue blocks keep directivity updates within ~170 ms of playback. */
+	private static final int BLOCK_FRAMES = 2_048;
 	private static final float BASE_GAIN = 0.65f;
 	private static final String[] LABELS = {"FL", "FR", "FC", "LFE", "BL", "BR"};
 	private static final Set<CinemaAudioEngine> OPEN_ENGINES = ConcurrentHashMap.newKeySet();
@@ -83,6 +87,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	private final DoubleBuffer latencyQuery = BufferUtils.createDoubleBuffer(2);
 
 	private AudioChunk pendingChunk;
+	private int pendingFrameOffset;
 	private volatile boolean startRequested;
 	private volatile boolean started;
 	private volatile boolean paused;
@@ -92,6 +97,8 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	private final AtomicInteger layoutVersion = new AtomicInteger();
 	private volatile float[][] channelPositions = copyDefaultPositions();
 	private volatile float[] channelGains = defaultChannelGains();
+	private volatile MinimumPhaseFir[] channelFilters = defaultFilters();
+	private final FirProcessor[] firProcessors = new FirProcessor[SPEAKERS];
 	private final float[] appliedGains = new float[SPEAKERS];
 	private int appliedLayoutVersion = -1;
 	private volatile double audiblePts;
@@ -108,6 +115,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		for (int i = 0; i < SPEAKERS; i++) {
 			freeBuffers[i] = new ArrayDeque<>(BUFFER_COUNT);
 			appliedGains[i] = Float.NaN;
+			firProcessors[i] = new FirProcessor();
 		}
 		thread = new Thread(this::run, "cinema-audio");
 		thread.setDaemon(true);
@@ -224,8 +232,14 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	 * +6 dB to match the receiver's level limit.
 	 */
 	public void setChannelLayout(float[][] positions, float[] gains) {
+		setChannelLayout(positions, gains, null);
+	}
+
+	public void setChannelLayout(float[][] positions, float[] gains,
+								 MinimumPhaseFir[] filters) {
 		float[][] nextPositions = new float[SPEAKERS][];
 		float[] nextGains = new float[SPEAKERS];
+		MinimumPhaseFir[] nextFilters = new MinimumPhaseFir[SPEAKERS];
 		for (int i = 0; i < SPEAKERS; i++) {
 			float[] position = positions != null && i < positions.length ? positions[i] : null;
 			nextPositions[i] = isValidPosition(position)
@@ -233,18 +247,23 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			float gain = gains != null && i < gains.length ? gains[i] : 1.0f;
 			nextGains[i] = Float.isFinite(gain)
 				? Math.max(0.0f, Math.min(2.0f, gain)) : 1.0f;
+			MinimumPhaseFir filter = filters != null && i < filters.length ? filters[i] : null;
+			nextFilters[i] = filter == null ? MinimumPhaseFir.FLAT : filter;
 		}
-		if (sameLayout(nextPositions, nextGains)) {
+		if (sameLayout(nextPositions, nextGains, nextFilters)) {
 			return;
 		}
 		channelPositions = nextPositions;
 		channelGains = nextGains;
+		channelFilters = nextFilters;
 		layoutVersion.incrementAndGet();
 	}
 
-	private boolean sameLayout(float[][] positions, float[] gains) {
+	private boolean sameLayout(float[][] positions, float[] gains,
+							   MinimumPhaseFir[] filters) {
 		float[][] currentPositions = channelPositions;
 		float[] currentGains = channelGains;
+		MinimumPhaseFir[] currentFilters = channelFilters;
 		for (int i = 0; i < SPEAKERS; i++) {
 			for (int axis = 0; axis < 3; axis++) {
 				if (Math.abs(positions[i][axis] - currentPositions[i][axis]) > 1.0e-4f) {
@@ -252,6 +271,9 @@ public final class CinemaAudioEngine implements AutoCloseable {
 				}
 			}
 			if (Math.abs(gains[i] - currentGains[i]) > 1.0e-4f) {
+				return false;
+			}
+			if (filters[i] != currentFilters[i]) {
 				return false;
 			}
 		}
@@ -278,6 +300,14 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			gains[i] = 1.0f;
 		}
 		return gains;
+	}
+
+	private static MinimumPhaseFir[] defaultFilters() {
+		MinimumPhaseFir[] filters = new MinimumPhaseFir[SPEAKERS];
+		for (int i = 0; i < SPEAKERS; i++) {
+			filters[i] = MinimumPhaseFir.FLAT;
+		}
+		return filters;
 	}
 
 	private void run() {
@@ -360,6 +390,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			alSourcef(sources[i], AL_ROLLOFF_FACTOR, 1.0f);
 			alSourcef(sources[i], AL_MAX_DISTANCE, 64f);
 			appliedGains[i] = Float.NaN;
+			firProcessors[i].reset();
 		}
 		applyChannelLayout();
 		applyChannelGains();
@@ -369,9 +400,11 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	private void applyChannelLayout() {
 		int version = layoutVersion.get();
 		float[][] positions = channelPositions;
+		MinimumPhaseFir[] filters = channelFilters;
 		for (int i = 0; i < SPEAKERS; i++) {
 			float[] position = positions[i];
 			alSource3f(sources[i], AL_POSITION, position[0], position[1], position[2]);
+			firProcessors[i].setFilter(filters[i]);
 		}
 		appliedLayoutVersion = version;
 	}
@@ -404,10 +437,22 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		reclaimProcessed();
 		if (pendingChunk == null) {
 			pendingChunk = input.poll();
+			pendingFrameOffset = 0;
 		}
 		while (pendingChunk != null && allSpeakersFree()) {
-			queueChunk(pendingChunk);
-			pendingChunk = input.poll();
+			int totalFrames = pendingChunk.samples().length / CHANNELS;
+			int frames = Math.min(BLOCK_FRAMES, totalFrames - pendingFrameOffset);
+			if (frames <= 0) {
+				pendingChunk = input.poll();
+				pendingFrameOffset = 0;
+				continue;
+			}
+			queueBlock(pendingChunk, pendingFrameOffset, frames);
+			pendingFrameOffset += frames;
+			if (pendingFrameOffset >= totalFrames) {
+				pendingChunk = input.poll();
+				pendingFrameOffset = 0;
+			}
 		}
 		if (!started && startRequested && masterQueue.size() >= 2) {
 			startAll();
@@ -427,9 +472,8 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		return true;
 	}
 
-	private void queueChunk(AudioChunk chunk) {
+	private void queueBlock(AudioChunk chunk, int frameOffset, int frames) {
 		short[] samples = chunk.samples();
-		int frames = samples.length / CHANNELS;
 		for (int channel = 0; channel < SPEAKERS; channel++) {
 			ShortBuffer mono = monoBuffers[channel];
 			if (mono.capacity() < frames) {
@@ -437,18 +481,18 @@ public final class CinemaAudioEngine implements AutoCloseable {
 				monoBuffers[channel] = mono;
 			}
 			mono.clear();
-			for (int frame = 0; frame < frames; frame++) {
-				mono.put(samples[frame * CHANNELS + channel]);
-			}
+			firProcessors[channel].process(samples, CHANNELS, channel, frameOffset,
+				frames, mono);
 			mono.flip();
 			int buffer = freeBuffers[channel].removeFirst();
 			alBufferData(buffer, AL_FORMAT_MONO16, mono, SAMPLE_RATE);
 			alSourceQueueBuffers(sources[channel], buffer);
 		}
+		double start = chunk.startPtsSeconds() + frameOffset / (double) SAMPLE_RATE;
 		double duration = frames / (double) SAMPLE_RATE;
-		masterQueue.addLast(new ChunkMeta(chunk.startPtsSeconds(), duration));
-		lastEndPts = chunk.startPtsSeconds() + duration;
-		checkError("queueChunk");
+		masterQueue.addLast(new ChunkMeta(start, duration));
+		lastEndPts = start + duration;
+		checkError("queueBlock");
 	}
 
 	private void startAll() {
@@ -593,6 +637,9 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			appliedGains[i] = Float.NaN;
 		}
 		appliedLayoutVersion = -1;
+		for (FirProcessor processor : firProcessors) {
+			processor.reset();
+		}
 		int error = alGetError();
 		if (error != AL_NO_ERROR) {
 			Cinema.LOGGER.warn("cinema audio: flush failed with OpenAL error 0x{}; rebuilding sources",
@@ -659,6 +706,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		input.clear();
 		masterQueue.clear();
 		pendingChunk = null;
+		pendingFrameOffset = 0;
 	}
 
 	@Override

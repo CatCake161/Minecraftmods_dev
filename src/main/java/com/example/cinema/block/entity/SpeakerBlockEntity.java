@@ -30,6 +30,8 @@ public class SpeakerBlockEntity extends BlockEntity {
 	public static final int MAX_NAME_LENGTH = CinemaNames.MAX_LENGTH;
 	public static final int ACOUSTIC_YAW_STEPS = 36;
 	public static final float ACOUSTIC_YAW_STEP_DEGREES = 10.0f;
+	/** Acoustic centre is this far behind the front baffle reference. */
+	public static final double ACOUSTIC_FRONT_OFFSET = 0.45;
 
 	private SpeakerRole role = SpeakerRole.NONE;
 	private double levelDb;
@@ -71,6 +73,23 @@ public class SpeakerBlockEntity extends BlockEntity {
 		// the speaker, increasing yaw moves the aim toward the player's right.
 		double radians = Math.toRadians(acousticYawDegrees());
 		return new Vec3(-Math.sin(radians), 0.0, -Math.cos(radians));
+	}
+
+	/** Tweeter/driver centre above the block's lower Y. */
+	public Vec3 acousticCenter() {
+		double offset = switch (type()) {
+			case FLOORSTANDING -> 1.31;
+			case BOOKSHELF -> 0.77;
+			case CENTER -> 0.33;
+			case SUBWOOFER -> 0.48;
+		};
+		BlockPos pos = getBlockPos();
+		return new Vec3(pos.getX() + 0.5, pos.getY() + offset, pos.getZ() + 0.5);
+	}
+
+	/** Acoustic centre shifted forward to the baffle reference. */
+	public Vec3 acousticFrontPosition() {
+		return acousticCenter().add(acousticForward().scale(ACOUSTIC_FRONT_OFFSET));
 	}
 
 	public int cycleAcousticYaw(boolean reverse) {
