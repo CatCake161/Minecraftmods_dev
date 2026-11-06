@@ -45,7 +45,7 @@
 > 方案、可行性/声学判断见 [AUDIO-ACOUSTICS.md](design/AUDIO-ACOUSTICS.md)。
 > M4 扬声器路由已完成；A0 EFX spike、A1d Spinorama 数据/许可可提前做。
 
-- [ ] A0 EFX/EAXReverb spike：在自定义 OpenAL context 中检测 `ALC_EXT_EFX`/`AL_EXT_EFX`；创建 aux slot；验证 per-source send、wet return、stereo/5.1/HRTF 设备、reset/设备切换、CPU/延迟
+- [ ] A0 EFX/EAXReverb spike：已实现 `/cinema_efx_spike`（loopback 5.1/HRTF 湿声布局、aux send、CPU、reset；真实设备临时 thread-local context EFX 检查；shared-caps 路径）。待用户游戏内运行并回报日志
 - [ ] A0b EFX 不可用回退：禁用 late reverb 或最小 Java FDN；干声/播放不受影响
 - [ ] A0c 决策门：按 spike 结果选择 EAXReverb late tail / FDN / 无混响，并把结论回写 AUDIO-ACOUSTICS.md
 - [ ] A1 声学数据模型：房间平面/包围盒、体积/表面积、材质吸收、扬声器位置/朝向/高度、玩家听者位置/朝向

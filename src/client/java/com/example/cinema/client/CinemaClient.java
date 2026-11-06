@@ -5,6 +5,7 @@ import com.example.cinema.block.SpeakerBlock;
 import com.example.cinema.block.entity.AvReceiverBlockEntity;
 import com.example.cinema.block.entity.ProjectorBlockEntity;
 import com.example.cinema.block.entity.SpeakerBlockEntity;
+import com.example.cinema.client.audio.EfxReverbSpike;
 import com.example.cinema.client.audio.InGameAudioSpike;
 import com.example.cinema.client.audio.speakerdata.SpeakerDataAssignments;
 import com.example.cinema.client.audio.speakerdata.SpeakerDataRegistry;
@@ -136,6 +137,14 @@ public class CinemaClient implements ClientModInitializer {
 					InGameAudioSpike.runAsync();
 					context.getSource().sendFeedback(Component.literal(
 						"cinema audio spike started; see the game log for the OpenAL result"));
+					return 1;
+				})));
+		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
+			dispatcher.register(ClientCommandManager.literal("cinema_efx_spike")
+				.executes(context -> {
+					EfxReverbSpike.runAsync();
+					context.getSource().sendFeedback(Component.literal(
+						"cinema EFX spike started; results go to chat and the game log"));
 					return 1;
 				})));
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->

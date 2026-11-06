@@ -569,6 +569,8 @@ for t in data:
   - effect slot 在 stereo / 5.1 / HRTF 设备上的输出布局；
   - 与 `AL_SOFT_source_latency`、device clock、reset 的交互；
   - EFX 不可用/设备切换时的回退。
+- **A0 probe（已实现）**：`/cinema_efx_spike` 使用 OpenAL Soft loopback 设备离线渲染，检查 shared-caps EFX、`ALC_MAX_AUXILIARY_SENDS`、per-source send、EAXReverb（关闭早期反射/echo）、5.1/HRTF 湿声布局、CPU 和 context reset；同时创建 Minecraft 真实设备上的临时 thread-local context，验证真实设备 EFX/aux slot，但不播放声音、不关闭设备。该命令**不会从扬声器出声**；进入世界后运行，结果会出现在聊天和日志。真实设备听觉测试后续做。物理设备切换仍需手动测试；游戏内 shared-caps/real-device 结果待用户运行命令确认。
+- **独立 loopback 预检（2026-11-06，未在 Minecraft 内）**：5.1 与 HRTF 格式均支持；`ALC_MAX_AUXILIARY_SENDS=2`；5.1 wet 出现在 5 个非 LFE 声道；HRTF 状态 enabled；reset/recreate OK；4 秒 5.1 渲染约 32 ms（约 120–124× realtime，CPU 约 0.8–1% 单核，wet/dry 差异低于测量噪声）。这些只是 loopback 数据，不能替代真实设备/游戏内验证。
 - 如果 EAXReverb 的早期反射无法可靠关闭，或 wet return 只有 front L/R、不能满足 5.1 包围感，则改用/补充 FDN。
 
 **回退：小型 FDN**
@@ -649,7 +651,7 @@ UI 归属：
 
 | 阶段 | 内容 | 依赖 | 验收 |
 |---|---|---|---|
-| A0 | EFX/EAXReverb 能力 spike：aux send、wet return、设备布局、CPU/延迟、reset | 无（可立即开始） | 能听到/关闭混响，无 OpenAL 错误，干声不受影响 |
+| A0 | EFX/EAXReverb 能力 spike：aux send、wet return、设备布局、CPU/延迟、reset | 无；已实现 `/cinema_efx_spike` | loopback 5.1/HRTF 与 reset 通过；游戏内 shared-caps/真实设备待验收 |
 | A1 | 声学数据模型、材质映射、房间检测、直达声距离/空气吸收/指向性 | M4 已完成（扬声器位置可用） | dump 出正确的房间尺寸/RT60；关闭声学层时与 M4 基线一致，开启后直达声距离/角度/空气吸收变化可解释 |
 | A1d | ASR/Spinorama 数据管线：21 个型号、只读 H/V 原始文件、保留原始频率网格、补 -180°、按全频段能量平均计算 -10 dB 频率范围并取整到 1 Hz、生成**本地** profile（不打包） | 无（已实现转换器） | 21 个 profile 可加载；来源/许可证/修改说明完整；无 `quality` 字段 |
 | A1e | 数据许可决策：CC BY-NC-SA 4.0 非商业/相同方式共享；profile 只作为用户本地导入数据，不随模组分发 | A1d | 发布包与仓库的许可证/attribution 明确，不违反 NC/SA |

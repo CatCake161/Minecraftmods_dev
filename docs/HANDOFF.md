@@ -80,7 +80,7 @@
 
 - **原地 seek 仍未启用**：当前 seek 复用音视频资源但会重新打开 FFmpeg 解码器，4K AV1/HEVC 仍可能需要数秒才出首帧；原地 seek 状态机未重新设计前不要直接恢复。
 - **BSL 下 ambient wash 某些值画面异常**：待确认是白色 overlay 的 bloom/exposure 还是 alpha 曲线；无音轨墙钟长播也未测试。两项按用户决定暂不处理，不阻塞当前验收。
-- **音频声学仍是规划**：见 `docs/design/AUDIO-ACOUSTICS.md`。EAXReverb 只计划用于晚期尾音；直达声与早期反射都应用距离、空气吸收和 Spinorama 实测扬声器指向性，反射增益按物理链路计算。早期反射采用独立 OpenAL source（镜像源位置，每 tap 一个，上限 24–36/接收器）。空气吸收温湿度、早反调试 gain 放 Mod Menu；频带精度与指向性计算方法待用户确认。EFX 可用性、材质吸收、型号映射都需 spike/校准。
+- **音频声学仍是规划**：见 `docs/design/AUDIO-ACOUSTICS.md`。EAXReverb 只计划用于晚期尾音；直达声与早期反射都应用距离、空气吸收和 Spinorama 实测扬声器指向性，反射增益按物理链路计算。早期反射采用独立 OpenAL source（镜像源位置，每 tap 一个，上限 24–36/接收器）。空气吸收温湿度、早反调试 gain 放 Mod Menu；频带精度与指向性计算方法待用户确认。A0 `/cinema_efx_spike` 已实现，待游戏内验证 shared-caps/真实设备；材质吸收、型号映射仍需校准。
 - **音频定位模型**：当前保留 `AL_SOURCE_RELATIVE = AL_TRUE`；世界坐标源迁移已完成评审，暂不迁移，需与 A2 声学一起做，见 `AUDIO-ACOUSTICS.md` §4.2.1。
 - Spinorama 数据默认 CC BY-NC-SA 4.0，与项目 CC0 不同；发布前必须做许可/attribution 决策。REST API 需要人工申请 Bearer key，key 只能放本地环境变量/转换工具，不能进仓库、发布包或日志。
 - 一阶声学模型不覆盖衍射、散射、高阶反射和低频房间模态；LFE 低频峰谷/驻波不会正确重现。
@@ -100,7 +100,7 @@
    - 按 `CHANNEL-LAYOUTS.md` 分阶段泛化 `CinemaAudioEngine`/`AudioChunk`/`SpeakerRole`，先保持 5.1 零回归。
 4. **房间声学**
    - 所有声学模拟原型/实验代码在 `acoustic-simulation` 分支开发，只有通过游戏内听感验收的部分才分段合并回 `main`。
-   - 先做 A1d Spinorama 数据 spike、A0 EFX/EAXReverb spike 与 A1e 许可决策；不要为了声学阻塞主线。
+   - A1d 数据管线已完成（profile 本地生成）；下一步在游戏内运行 `/cinema_efx_spike` 完成 A0 EFX/EAXReverb shared-caps/真实设备验证；A1e attribution 仍待补。不要为了声学阻塞主线。
 
 ## 6. 构建与运行
 
