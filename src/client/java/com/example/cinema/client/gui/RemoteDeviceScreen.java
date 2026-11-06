@@ -16,10 +16,12 @@ import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.network.chat.Component;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.util.FormattedCharSequence;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
@@ -285,7 +287,12 @@ public final class RemoteDeviceScreen extends Screen {
 		super.render(graphics, mouseX, mouseY, partialTick);
 		RemoteScanListPayload.Entry entry = entryAt(mouseX, mouseY);
 		if (entry != null) {
-			graphics.renderTooltip(font, Component.literal(fullEntryLabel(entry)), mouseX, mouseY);
+			int maxWidth = Math.max(100, Math.min(280, width - 32));
+			List<FormattedCharSequence> lines = new ArrayList<>();
+			for (String line : fullEntryLabel(entry).split("\\n")) {
+				lines.addAll(font.split(Component.literal(line), maxWidth));
+			}
+			graphics.renderTooltip(font, lines, mouseX, mouseY);
 		}
 	}
 

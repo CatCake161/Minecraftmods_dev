@@ -31,6 +31,7 @@ import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.util.FormattedCharSequence;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.ChunkPos;
@@ -893,7 +894,11 @@ public final class AvReceiverConfigScreen extends Screen {
 
 	private void renderWrappedTooltip(GuiGraphics graphics, String text, int mouseX, int mouseY) {
 		int maxWidth = Math.max(80, Math.min(240, width - 32));
-		graphics.renderTooltip(font, font.split(Component.literal(text), maxWidth), mouseX, mouseY);
+		List<FormattedCharSequence> lines = new ArrayList<>();
+		for (String line : text.split("\\n")) {
+			lines.addAll(font.split(Component.literal(line), maxWidth));
+		}
+		graphics.renderTooltip(font, lines, mouseX, mouseY);
 	}
 
 	private void drawHoverTooltip(GuiGraphics graphics, int mouseX, int mouseY) {
