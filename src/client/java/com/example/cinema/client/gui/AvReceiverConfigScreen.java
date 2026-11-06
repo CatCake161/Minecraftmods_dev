@@ -1290,7 +1290,7 @@ public final class AvReceiverConfigScreen extends Screen {
 			return;
 		}
 		if (minecraft.level.getBlockEntity(row.pos()) instanceof SpeakerBlockEntity speaker) {
-			minecraft.setScreen(new SpeakerSpecsConfigScreen(this, speaker));
+			minecraft.setScreen(new SpeakerDataConfigScreen(this, speaker));
 		} else {
 			setStatus("Speaker chunk is not loaded");
 		}

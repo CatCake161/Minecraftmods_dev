@@ -3,9 +3,9 @@ package com.example.cinema.client.gui;
 import com.example.cinema.block.entity.SpeakerBlockEntity;
 import com.example.cinema.block.entity.SpeakerRole;
 import com.example.cinema.block.entity.SpeakerType;
-import com.example.cinema.client.audio.speakerspecs.SpeakerSpecsAssignments;
-import com.example.cinema.client.audio.speakerspecs.SpeakerSpecsProfile;
-import com.example.cinema.client.audio.speakerspecs.SpeakerSpecsRegistry;
+import com.example.cinema.client.audio.speakerdata.SpeakerDataAssignments;
+import com.example.cinema.client.audio.speakerdata.SpeakerDataProfile;
+import com.example.cinema.client.audio.speakerdata.SpeakerDataRegistry;
 import com.example.cinema.client.config.CinemaClientConfig;
 import com.example.cinema.client.network.SpeakerNameClient;
 import com.example.cinema.client.network.SpeakerRoleClient;
@@ -27,14 +27,15 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Spike GUI for client-local speaker specs profiles.
+ * GUI for client-local speaker data profiles.
  *
- * <p>Profiles are loaded from {@code <game>/cinema/speaker_specs/profiles/}.
+ * <p>Profiles are loaded from {@code <game>/cinema/speaker_data/profiles/}.
  * Drop a JSON profile onto this screen to import it. Changes save immediately;
  * Close flushes any debounced field edit. Use Defaults to restore the selected
- * profile's defaults.
+ * profile's defaults. The profile button opens a paged picker so every profile
+ * for the selected cabinet type is directly selectable.
  */
-public final class SpeakerSpecsConfigScreen extends Screen {
+public final class SpeakerDataConfigScreen extends Screen {
 	private static final int ROW_HEIGHT = 16;
 	private static final int TYPE_ROW_HEIGHT = 18;
 	private static final long FIELD_SAVE_DEBOUNCE_MS = 250L;
@@ -81,12 +82,12 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 	private long fieldsDirtyAtMillis;
 	private boolean syncingFields;
 
-	public SpeakerSpecsConfigScreen(Screen parent) {
+	public SpeakerDataConfigScreen(Screen parent) {
 		this(parent, null);
 	}
 
-	public SpeakerSpecsConfigScreen(Screen parent, SpeakerBlockEntity speaker) {
-		super(Component.literal("Speaker Specs (Spike)"));
+	public SpeakerDataConfigScreen(Screen parent, SpeakerBlockEntity speaker) {
+		super(Component.literal("Speaker Data"));
 		this.parent = parent;
 		this.speaker = speaker;
 		this.fixedType = speaker != null;
@@ -94,8 +95,8 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 			this.selectedType = speaker.type();
 			this.draftRole = speaker.role();
 		}
-		SpeakerSpecsRegistry.load();
-		SpeakerSpecsAssignments.load();
+		SpeakerDataRegistry.load();
+		SpeakerDataAssignments.load();
 		loadDraftFromRegistry();
 	}
 
@@ -144,7 +145,7 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 			addRenderableWidget(roleButton);
 		}
 
-		profileButton = Button.builder(profileLabel(), button -> cycleProfile())
+		profileButton = Button.builder(profileLabel(), button -> openProfilePicker())
 			.bounds(contentLeft, profileY, contentWidth - 62, 18).build();
 		addRenderableWidget(profileButton);
 		addRenderableWidget(Button.builder(Component.literal("Reload"), button -> reloadProfiles())
@@ -220,9 +221,9 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 	}
 
 	private void loadDraftFromRegistry() {
-		SpeakerSpecsRegistry.SpeakerSettings settings = speaker != null
-			? SpeakerSpecsAssignments.settingsFor(speaker)
-			: SpeakerSpecsRegistry.settings(selectedType);
+		SpeakerDataRegistry.SpeakerSettings settings = speaker != null
+			? SpeakerDataAssignments.settingsFor(speaker)
+			: SpeakerDataRegistry.settings(selectedType);
 		if (settings == null) {
 			draftProfileId = "";
 			draftLowHz = 20.0;
@@ -241,9 +242,10 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 		fieldsDirty = false;
 		try {
 			if (lowBox != null) {
-				lowBox.setValue(format(draftLowHz, 1));
-				highBox.setValue(format(draftHighHz, 1));
+				lowBox.setValue(format(draftLowHz, 0));
+				highBox.setValue(format(draftHighHz, 0));
 				gainBox.setValue(format(draftGainDb, 2));
+				updateRangeEditing();
 			}
 			if (profileButton != null) {
 				profileButton.setMessage(profileLabel());
@@ -256,8 +258,28 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 		}
 	}
 
+	/**
+	 * Measured profiles have a fixed -10 dB frequency range. Only the level trim
+	 * remains editable; unmeasured/analytic profiles can still edit low/high Hz.
+	 */
+	private void updateRangeEditing() {
+		SpeakerDataProfile profile = selectedProfile();
+		boolean measured = profile != null && profile.isMeasured();
+		boolean editable = profile != null && !measured;
+		lowBox.setEditable(editable);
+		highBox.setEditable(editable);
+		lowBox.setTextColor(editable ? 0xE0E0E0 : 0x707070);
+		highBox.setTextColor(editable ? 0xE0E0E0 : 0x707070);
+		if (measured) {
+			draftLowHz = profile.lowHz();
+			draftHighHz = profile.highHz();
+			lowBox.setValue(format(draftLowHz, 0));
+			highBox.setValue(format(draftHighHz, 0));
+		}
+	}
+
 	private Component profileLabel() {
-		SpeakerSpecsProfile profile = selectedProfile();
+		SpeakerDataProfile profile = selectedProfile();
 		String name = profile == null ? "none" : profile.name();
 		int maxWidth = Math.max(80, contentWidth - 100);
 		return Component.literal("Profile: " + truncate(name, maxWidth));
@@ -289,46 +311,56 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 		setStatus("Role: " + draftRole.label() + " (saved)");
 	}
 
-	private void cycleProfile() {
-		List<SpeakerSpecsProfile> profiles = SpeakerSpecsRegistry.profilesFor(selectedType);
+	private void openProfilePicker() {
+		List<SpeakerDataProfile> profiles = SpeakerDataRegistry.profilesFor(selectedType);
 		if (profiles.isEmpty()) {
 			setStatus("No profiles for this type");
 			return;
 		}
-		int index = -1;
-		for (int i = 0; i < profiles.size(); i++) {
-			if (profiles.get(i).id().equals(draftProfileId)) {
-				index = i;
-				break;
+		if (fieldsDirty) {
+			fieldsDirty = false;
+			if (!applyDraftSettings(true)) {
+				return;
 			}
 		}
-		SpeakerSpecsProfile next = profiles.get((index + 1) % profiles.size());
-		SpeakerSpecsRegistry.SpeakerSettings defaults = settingsForProfile(next.id());
-		draftProfileId = next.id();
+		if (minecraft != null) {
+			minecraft.setScreen(new SpeakerDataSelectionScreen(this, selectedType,
+				draftProfileId, this::selectProfile));
+		}
+	}
+
+	private void selectProfile(String profileId) {
+		SpeakerDataProfile profile = SpeakerDataRegistry.find(selectedType, profileId);
+		if (profile == null) {
+			setStatus("Profile not found: " + profileId);
+			return;
+		}
+		SpeakerDataRegistry.SpeakerSettings defaults = settingsForProfile(profile.id());
+		draftProfileId = profile.id();
 		draftLowHz = defaults.lowHz();
 		draftHighHz = defaults.highHz();
 		draftGainDb = defaults.gainDb();
 		syncFields();
 		if (applyDraftSettings(true)) {
-			setStatus("Profile: " + next.name() + " (saved)");
+			setStatus("Profile: " + profile.name() + " (saved)");
 		}
 	}
 
-	private SpeakerSpecsRegistry.SpeakerSettings settingsForProfile(String profileId) {
+	private SpeakerDataRegistry.SpeakerSettings settingsForProfile(String profileId) {
 		if (speaker != null) {
-			SpeakerSpecsAssignments.Assignment assignment =
-				SpeakerSpecsAssignments.get(speaker);
+			SpeakerDataAssignments.Assignment assignment =
+				SpeakerDataAssignments.get(speaker);
 			if (assignment != null && assignment.type() == selectedType
 				&& assignment.settings().profileId().equals(profileId)) {
-				return assignment.settings();
+				return SpeakerDataRegistry.normalizeSettings(selectedType, assignment.settings());
 			}
 		}
-		return SpeakerSpecsRegistry.profileSettings(selectedType, profileId);
+		return SpeakerDataRegistry.profileSettings(selectedType, profileId);
 	}
 
 	private void reloadProfiles() {
-		SpeakerSpecsRegistry.ReloadResult result = SpeakerSpecsRegistry.reloadProfiles();
-		if (SpeakerSpecsRegistry.find(selectedType, draftProfileId) == null) {
+		SpeakerDataRegistry.ReloadResult result = SpeakerDataRegistry.reloadProfiles();
+		if (SpeakerDataRegistry.find(selectedType, draftProfileId) == null) {
 			loadDraftFromRegistry();
 		}
 		syncFields();
@@ -341,27 +373,27 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 
 	private void openFolder() {
 		try {
-			java.nio.file.Files.createDirectories(SpeakerSpecsRegistry.profilesDir());
-			Util.getPlatform().openPath(SpeakerSpecsRegistry.profilesDir());
-			setStatus("Opened " + SpeakerSpecsRegistry.profilesDir());
+			java.nio.file.Files.createDirectories(SpeakerDataRegistry.profilesDir());
+			Util.getPlatform().openPath(SpeakerDataRegistry.profilesDir());
+			setStatus("Opened " + SpeakerDataRegistry.profilesDir());
 		} catch (IOException e) {
 			setStatus("Could not open folder: " + e.getMessage());
 		}
 	}
 
 	private void resetDefaults() {
-		SpeakerSpecsRegistry.SpeakerSettings defaults = SpeakerSpecsRegistry.settings(selectedType);
-		if (defaults == null) {
+		SpeakerDataProfile profile = selectedProfile();
+		if (profile == null) {
 			setStatus("No profile available for this type");
 			return;
 		}
-		draftProfileId = defaults.profileId();
-		draftLowHz = defaults.lowHz();
-		draftHighHz = defaults.highHz();
-		draftGainDb = defaults.gainDb();
+		draftProfileId = profile.id();
+		draftLowHz = profile.lowHz();
+		draftHighHz = profile.highHz();
+		draftGainDb = 0.0;
 		syncFields();
 		if (applyDraftSettings(true)) {
-			setStatus("Defaults applied");
+			setStatus("Defaults applied for " + profile.name());
 		}
 	}
 
@@ -369,12 +401,12 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 		if (!readFields(quiet)) {
 			return false;
 		}
-		SpeakerSpecsRegistry.SpeakerSettings settings =
-			new SpeakerSpecsRegistry.SpeakerSettings(draftProfileId, draftLowHz,
+		SpeakerDataRegistry.SpeakerSettings settings =
+			new SpeakerDataRegistry.SpeakerSettings(draftProfileId, draftLowHz,
 				draftHighHz, draftGainDb);
-		SpeakerSpecsRegistry.SpeakerSettings current = speaker != null
-			? SpeakerSpecsAssignments.settingsFor(speaker)
-			: SpeakerSpecsRegistry.settings(selectedType);
+		SpeakerDataRegistry.SpeakerSettings current = speaker != null
+			? SpeakerDataAssignments.settingsFor(speaker)
+			: SpeakerDataRegistry.settings(selectedType);
 		if (settings.equals(current)) {
 			if (!quiet) {
 				setStatus("Saved");
@@ -382,13 +414,13 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 			return true;
 		}
 		if (speaker != null) {
-			SpeakerSpecsAssignments.apply(speaker, settings);
+			SpeakerDataAssignments.apply(speaker, settings);
 			// Also write type defaults in the current format so the first
 			// spike settings.json is migrated after a speaker edit.
-			SpeakerSpecsRegistry.saveSettings();
+			SpeakerDataRegistry.saveSettings();
 		} else {
-			SpeakerSpecsRegistry.applySettings(selectedType, settings);
-			SpeakerSpecsRegistry.saveSettings();
+			SpeakerDataRegistry.applySettings(selectedType, settings);
+			SpeakerDataRegistry.saveSettings();
 		}
 		if (!quiet) {
 			setStatus("Saved");
@@ -397,27 +429,38 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 	}
 
 	private boolean readFields(boolean quiet) {
-		if (selectedProfile() == null) {
+		SpeakerDataProfile profile = selectedProfile();
+		if (profile == null) {
 			if (!quiet) {
 				setStatus("Select a profile first");
 			}
 			return false;
 		}
 		try {
-			double low = Double.parseDouble(lowBox.getValue().trim());
-			double high = Double.parseDouble(highBox.getValue().trim());
 			double gain = Double.parseDouble(gainBox.getValue().trim());
-			if (!Double.isFinite(low) || !Double.isFinite(high) || !Double.isFinite(gain)) {
+			if (!Double.isFinite(gain)) {
 				throw new NumberFormatException("not finite");
 			}
-			if (low < 1.0 || high > 24_000.0 || high <= low) {
-				if (!quiet) {
-					setStatus("Frequency range must satisfy 1 <= low < high <= 24000");
+			if (profile.isMeasured()) {
+				draftLowHz = profile.lowHz();
+				draftHighHz = profile.highHz();
+			} else {
+				double low = Double.parseDouble(lowBox.getValue().trim());
+				double high = Double.parseDouble(highBox.getValue().trim());
+				if (!Double.isFinite(low) || !Double.isFinite(high)) {
+					throw new NumberFormatException("not finite");
 				}
-				return false;
+				long roundedLow = Math.round(low);
+				long roundedHigh = Math.round(high);
+				if (roundedLow < 1L || roundedHigh > 24_000L || roundedHigh <= roundedLow) {
+					if (!quiet) {
+						setStatus("Frequency range must satisfy 1 <= low < high <= 24000 (1 Hz)");
+					}
+					return false;
+				}
+				draftLowHz = roundedLow;
+				draftHighHz = roundedHigh;
 			}
-			draftLowHz = low;
-			draftHighHz = high;
 			draftGainDb = clamp(gain, -60.0, 60.0);
 			return true;
 		} catch (NumberFormatException e) {
@@ -434,10 +477,10 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 		List<String> errors = new ArrayList<>();
 		for (Path path : paths) {
 			try {
-				SpeakerSpecsProfile profile = SpeakerSpecsRegistry.importProfile(path);
+				SpeakerDataProfile profile = SpeakerDataRegistry.importProfile(path);
 				imported++;
 				if (profile.type() == selectedType) {
-					SpeakerSpecsRegistry.SpeakerSettings defaults =
+					SpeakerDataRegistry.SpeakerSettings defaults =
 						settingsForProfile(profile.id());
 					draftProfileId = profile.id();
 					draftLowHz = defaults.lowHz();
@@ -490,15 +533,17 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 		graphics.drawString(font, "High Hz", contentLeft + secondColumn, fieldY + 4, 0xB8B8B8, false);
 		graphics.drawString(font, "SPL gain dB", contentLeft, fieldY + 26, 0xB8B8B8, false);
 
-		SpeakerSpecsProfile profile = selectedProfile();
+		SpeakerDataProfile profile = selectedProfile();
 		if (profile == null) {
 			graphics.drawString(font, "No profile selected", contentLeft, sourceY, 0xFF7070, false);
 		} else {
 			if (!compact) {
 				String sourceLine = profile.patternLabel() + " · " + profile.source()
-					+ " · " + profile.license() + " · " + profile.quality();
+					+ " · " + profile.license();
 				if (profile.hasOnAxisResponse()) {
-					sourceLine += " · on-axis " + profile.onAxisBandCount() + " bands";
+					sourceLine += String.format(Locale.ROOT,
+						" · on-axis %d bands · ref %+.1f dB",
+						profile.onAxisBandCount(), profile.onAxisReferenceDb());
 				}
 				graphics.drawString(font, truncate(sourceLine, contentWidth), contentLeft, sourceY,
 					0xB8B8B8, false);
@@ -518,7 +563,7 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 			graphics.drawString(font,
 				truncate("Drop a .json profile here, or put it in the profiles folder.", contentWidth),
 				contentLeft, compactY, 0x808080, false);
-			graphics.drawString(font, truncate(SpeakerSpecsRegistry.profilesDir().toString(),
+			graphics.drawString(font, truncate(SpeakerDataRegistry.profilesDir().toString(),
 				contentWidth), contentLeft, compactY + 12, 0x707070, false);
 		}
 
@@ -554,13 +599,27 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 				mouseX, mouseY);
 			return;
 		}
+		if (lowBox != null && (inBox(mouseX, mouseY, lowBox.getX(), lowBox.getY(),
+			lowBox.getWidth(), lowBox.getHeight())
+			|| inBox(mouseX, mouseY, highBox.getX(), highBox.getY(),
+			highBox.getWidth(), highBox.getHeight()))) {
+			SpeakerDataProfile profile = selectedProfile();
+			if (profile != null && profile.isMeasured()) {
+				renderWrappedTooltip(graphics,
+					"Measured profile: Low/High Hz are fixed by the on-axis -10 dB "
+						+ "frequency range. Only SPL gain dB can be edited.",
+					mouseX, mouseY);
+				return;
+			}
+		}
 		if (profileButton != null && inBox(mouseX, mouseY, profileButton.getX(), profileButton.getY(),
 			profileButton.getWidth(), profileButton.getHeight())) {
-			SpeakerSpecsProfile profile = selectedProfile();
+			SpeakerDataProfile profile = selectedProfile();
 			if (profile != null) {
 				renderWrappedTooltip(graphics,
-					profile.name() + "\n" + profile.patternLabel() + " · " + profile.source()
-						+ "\nLicense: " + profile.license() + " · quality: " + profile.quality(),
+					"Click to choose any profile for this cabinet type.\n"
+						+ profile.name() + "\n" + profile.patternLabel() + " · " + profile.source()
+						+ "\nLicense: " + profile.license(),
 					mouseX, mouseY);
 			}
 			return;
@@ -568,8 +627,8 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 		if (!compact && mouseY >= compactY && mouseY < compactY + 22
 			&& mouseX >= contentLeft && mouseX < contentLeft + contentWidth) {
 			renderWrappedTooltip(graphics,
-				"Local folder:\n" + SpeakerSpecsRegistry.profilesDir()
-					+ "\n\nSettings file:\n" + SpeakerSpecsRegistry.settingsFile(),
+				"Local folder:\n" + SpeakerDataRegistry.profilesDir()
+					+ "\n\nSettings file:\n" + SpeakerDataRegistry.settingsFile(),
 				mouseX, mouseY);
 		}
 	}
@@ -587,11 +646,11 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 		return mouseX >= x && mouseX < x + width && mouseY >= y && mouseY < y + height;
 	}
 
-	private SpeakerSpecsProfile selectedProfile() {
-		return SpeakerSpecsRegistry.find(selectedType, draftProfileId);
+	private SpeakerDataProfile selectedProfile() {
+		return SpeakerDataRegistry.find(selectedType, draftProfileId);
 	}
 
-	private String previewLine(SpeakerSpecsProfile profile) {
+	private String previewLine(SpeakerDataProfile profile) {
 		return String.format(Locale.ROOT,
 			"1 kHz: 0° %+.1f · 45° %+.1f · 90° %+.1f · 135° %+.1f · 180° %+.1f dB",
 			profile.gainDb(0, 0, 1000),
@@ -607,9 +666,9 @@ public final class SpeakerSpecsConfigScreen extends Screen {
 		}
 		BlockPos receiver = speaker.receiverPos();
 		if (receiver == null) {
-			return Component.literal("Speaker Specs · Receiver: not linked");
+			return Component.literal("Speaker Data · Receiver: not linked");
 		}
-		return Component.literal("Speaker Specs · Receiver: "
+		return Component.literal("Speaker Data · Receiver: "
 			+ (receiverLinkMissing() ? "link missing @ " : "linked @ ")
 			+ receiver.toShortString());
 	}

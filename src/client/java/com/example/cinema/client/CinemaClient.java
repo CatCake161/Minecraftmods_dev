@@ -6,18 +6,18 @@ import com.example.cinema.block.entity.AvReceiverBlockEntity;
 import com.example.cinema.block.entity.ProjectorBlockEntity;
 import com.example.cinema.block.entity.SpeakerBlockEntity;
 import com.example.cinema.client.audio.InGameAudioSpike;
-import com.example.cinema.client.audio.speakerspecs.SpeakerSpecsAssignments;
-import com.example.cinema.client.audio.speakerspecs.SpeakerSpecsRegistry;
+import com.example.cinema.client.audio.speakerdata.SpeakerDataAssignments;
+import com.example.cinema.client.audio.speakerdata.SpeakerDataRegistry;
 import com.example.cinema.client.command.ClientHelpCommand;
 import com.example.cinema.client.command.ClientReceiverCommand;
 import com.example.cinema.client.command.ClientProjectorCommand;
-import com.example.cinema.client.command.ClientSpeakerSpecsCommand;
+import com.example.cinema.client.command.ClientSpeakerDataCommand;
 import com.example.cinema.client.config.CinemaClientConfig;
 import com.example.cinema.client.gui.AvReceiverConfigScreen;
 import com.example.cinema.client.gui.ProjectorConfigScreen;
 import com.example.cinema.client.gui.RemoteDeviceScreen;
 import com.example.cinema.client.gui.RemotePairingScreen;
-import com.example.cinema.client.gui.SpeakerSpecsConfigScreen;
+import com.example.cinema.client.gui.SpeakerDataConfigScreen;
 import com.example.cinema.client.item.RemoteControllerClient;
 import com.example.cinema.client.media.AvReceiverPlaybackManager;
 import com.example.cinema.client.media.CinemaPlayer;
@@ -73,8 +73,8 @@ public class CinemaClient implements ClientModInitializer {
 	@Override
 	public void onInitializeClient() {
 		CinemaPrewarm.start();
-		SpeakerSpecsRegistry.load();
-		SpeakerSpecsAssignments.load();
+		SpeakerDataRegistry.load();
+		SpeakerDataAssignments.load();
 
 		UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
 			InteractionResult remoteResult =
@@ -108,7 +108,7 @@ public class CinemaClient implements ClientModInitializer {
 				if (world.isClientSide) {
 					SpeakerBlockEntity speaker = findSpeaker(world, hitResult.getBlockPos());
 					if (speaker != null) {
-						Minecraft.getInstance().setScreen(new SpeakerSpecsConfigScreen(null, speaker));
+						Minecraft.getInstance().setScreen(new SpeakerDataConfigScreen(null, speaker));
 						return InteractionResult.SUCCESS;
 					}
 				}
@@ -144,7 +144,7 @@ public class CinemaClient implements ClientModInitializer {
 			ClientHelpCommand.register(dispatcher));
 
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
-			ClientSpeakerSpecsCommand.register(dispatcher));
+			ClientSpeakerDataCommand.register(dispatcher));
 
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
 			ClientReceiverCommand.register(dispatcher));

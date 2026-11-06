@@ -1,4 +1,4 @@
-package com.example.cinema.client.audio.speakerspecs;
+package com.example.cinema.client.audio.speakerdata;
 
 import com.example.cinema.block.entity.SpeakerType;
 import com.google.gson.JsonArray;
@@ -12,15 +12,20 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * One speaker specs profile.
+ * One speaker data profile.
  *
- * <p>This is the data model for the speaker specs spike. It supports two analytic
+ * <p>This is the data model for the speaker data spike. It supports two analytic
  * patterns used by subwoofers (omni and cardioid) and a measured table with
- * horizontal/vertical SPL cuts. The table is normalized to the on-axis response
- * at evaluation time. Absolute speaker sensitivity is intentionally not part of
- * this model; the client applies a single SPL gain per speaker instead.
+ * horizontal/vertical SPL cuts. Directivity is normalized to the on-axis
+ * response at evaluation time.
+ *
+ * <p>Measured profiles retain the raw measurement frequency grid and the raw
+ * on-axis absolute SPL. {@link #onAxisEqGainDb(double)} exposes the on-axis
+ * response normalized to its full-band energy average for future per-speaker
+ * EQ. This keeps the overall on-axis loudness comparable between models. The
+ * current playback path still applies only the per-speaker SPL gain.
  */
-public final class SpeakerSpecsProfile {
+public final class SpeakerDataProfile {
 	public enum Pattern {
 		OMNI,
 		CARDIOID,
@@ -31,10 +36,11 @@ public final class SpeakerSpecsProfile {
 	public record Row(double angle, double[] spl) {
 	}
 
-	private static final double MIN_DB = -60.0;
+	private static final double MIN_DB = -90.0;
 	private static final double MAX_DB = 12.0;
-	private static final int MAX_FREQUENCIES = 128;
+	private static final int MAX_FREQUENCIES = 256;
 	private static final int MAX_ANGLES = 181;
+	private static final double RANGE_THRESHOLD_DB = -10.0;
 
 	private final String id;
 	private final String name;
@@ -42,16 +48,16 @@ public final class SpeakerSpecsProfile {
 	private final Pattern pattern;
 	private final String source;
 	private final String license;
-	private final String quality;
 	private final double lowHz;
 	private final double highHz;
 	private final double[] frequencies;
 	private final double[] onAxisSpl;
+	private final double onAxisReferenceDb;
 	private final Row[] horizontal;
 	private final Row[] vertical;
 
-	SpeakerSpecsProfile(String id, String name, SpeakerType type, Pattern pattern,
-							  String source, String license, String quality,
+	SpeakerDataProfile(String id, String name, SpeakerType type, Pattern pattern,
+							  String source, String license,
 							  double lowHz, double highHz, double[] frequencies,
 							  double[] onAxisSpl, Row[] horizontal, Row[] vertical) {
 		this.id = id;
@@ -60,11 +66,11 @@ public final class SpeakerSpecsProfile {
 		this.pattern = pattern;
 		this.source = source;
 		this.license = license;
-		this.quality = quality;
 		this.lowHz = lowHz;
 		this.highHz = highHz;
 		this.frequencies = frequencies == null ? new double[0] : frequencies.clone();
 		this.onAxisSpl = onAxisSpl == null ? new double[0] : onAxisSpl.clone();
+		this.onAxisReferenceDb = energyAverageDb(this.onAxisSpl);
 		this.horizontal = copyRows(horizontal);
 		this.vertical = copyRows(vertical);
 	}
@@ -93,10 +99,6 @@ public final class SpeakerSpecsProfile {
 		return license;
 	}
 
-	public String quality() {
-		return quality;
-	}
-
 	public double lowHz() {
 		return lowHz;
 	}
@@ -111,6 +113,37 @@ public final class SpeakerSpecsProfile {
 
 	public int onAxisBandCount() {
 		return onAxisSpl.length;
+	}
+
+	/**
+	 * Full-band energy average of the on-axis response:
+	 * {@code 10 * log10(mean(10^(SPL/10)))} over every measured on-axis sample.
+	 * Returns 0 when no on-axis data is present. This is the loudness anchor
+	 * used by {@link #onAxisEqGainDb(double)} and by the -10 dB frequency-range
+	 * calculation.
+	 */
+	public double onAxisReferenceDb() {
+		return onAxisReferenceDb;
+	}
+
+	/**
+	 * On-axis response relative to {@link #onAxisReferenceDb()}, in dB. This is
+	 * the raw measured on-axis shape with its overall loudness normalized, ready
+	 * for per-speaker EQ. The value is not clamped: bass roll-off and treble
+	 * extension are retained exactly as measured.
+	 *
+	 * <p>CTA-2034-A defines 0° as the reference axis. Positive horizontal angles
+	 * are toward the listener's right when facing the speaker, and positive
+	 * vertical angles are up (CTA-2034-A Figure 1). Callers must convert their
+	 * world-space direction into those H/V angles before calling
+	 * {@link #gainDb(double, double, double)}.
+	 */
+	public double onAxisEqGainDb(double frequencyHz) {
+		if (onAxisSpl.length == 0) {
+			return 0.0;
+		}
+		double frequency = clampFrequency(frequencyHz);
+		return splAtFrequency(onAxisSpl, frequency) - onAxisReferenceDb;
 	}
 
 	public boolean isMeasured() {
@@ -136,8 +169,8 @@ public final class SpeakerSpecsProfile {
 				double h = Math.toRadians(horizontalDegrees);
 				double v = Math.toRadians(verticalDegrees);
 				double dot = Math.cos(h) * Math.cos(v);
-				double amplitude = Math.max(1.0e-3, 0.5 * (1.0 + dot));
-				yield clampDb(20.0 * Math.log10(amplitude));
+				double amplitude = Math.max(0.0, 0.5 * (1.0 + dot));
+				yield amplitude <= 0.0 ? MIN_DB : clampDb(20.0 * Math.log10(amplitude));
 			}
 			case MEASURED -> {
 				double h = horizontal.length == 0 ? 0.0 : tableGainDb(horizontal, horizontalDegrees, frequency);
@@ -265,6 +298,79 @@ public final class SpeakerSpecsProfile {
 		return Math.max(MIN_DB, Math.min(MAX_DB, value));
 	}
 
+	private static double energyAverageDb(double[] values) {
+		if (values == null || values.length == 0) {
+			return 0.0;
+		}
+		double power = 0.0;
+		for (double value : values) {
+			power += Math.pow(10.0, value / 10.0);
+		}
+		return 10.0 * Math.log10(power / values.length);
+	}
+
+	/**
+	 * Frequency range between the low and high -10 dB crossings of the on-axis
+	 * response, relative to its full-band energy average. The scan starts at
+	 * 1 kHz and walks outward, so a narrow dip inside the passband does not
+	 * truncate the range. The result is rounded to 1 Hz. Returns {@code null}
+	 * when a valid range cannot be found.
+	 */
+	static double[] computeFrequencyRange(double[] frequencies, double[] onAxis) {
+		if (frequencies == null || onAxis == null
+			|| frequencies.length < 2 || onAxis.length < 2) {
+			return null;
+		}
+		int count = Math.min(frequencies.length, onAxis.length);
+		double threshold = energyAverageDb(onAxis) + RANGE_THRESHOLD_DB;
+		int start = 0;
+		double bestDistance = Double.MAX_VALUE;
+		for (int i = 0; i < count; i++) {
+			double distance = Math.abs(frequencies[i] - 1_000.0);
+			if (distance < bestDistance) {
+				bestDistance = distance;
+				start = i;
+			}
+		}
+		double low = frequencies[0];
+		for (int i = start; i > 0; i--) {
+			if (onAxis[i] >= threshold && onAxis[i - 1] < threshold) {
+				low = crossingHz(frequencies[i - 1], frequencies[i],
+					onAxis[i - 1], onAxis[i], threshold);
+				break;
+			}
+		}
+		double high = frequencies[count - 1];
+		for (int i = start; i < count - 1; i++) {
+			if (onAxis[i] >= threshold && onAxis[i + 1] < threshold) {
+				high = crossingHz(frequencies[i], frequencies[i + 1],
+					onAxis[i], onAxis[i + 1], threshold);
+				break;
+			}
+		}
+		if (!Double.isFinite(low) || !Double.isFinite(high) || high <= low) {
+			return null;
+		}
+		double roundedLow = Math.round(low);
+		double roundedHigh = Math.round(high);
+		if (roundedHigh <= roundedLow) {
+			return null;
+		}
+		return new double[]{roundedLow, roundedHigh};
+	}
+
+	private static double crossingHz(double f0, double f1, double db0, double db1,
+									 double threshold) {
+		if (db1 == db0) {
+			return f0;
+		}
+		double t = (threshold - db0) / (db1 - db0);
+		t = Math.max(0.0, Math.min(1.0, t));
+		double log0 = Math.log(Math.max(1.0, f0));
+		double log1 = Math.log(Math.max(1.0, f1));
+		return Math.exp(log0 + t * (log1 - log0));
+	}
+
 	private static Row[] copyRows(Row[] rows) {
 		if (rows == null) {
 			return new Row[0];
@@ -277,7 +383,7 @@ public final class SpeakerSpecsProfile {
 		return copy;
 	}
 
-	public static SpeakerSpecsProfile fromJson(JsonObject json) {
+	public static SpeakerDataProfile fromJson(JsonObject json) {
 		String id = requiredString(json, "id");
 		if (!id.matches("[A-Za-z0-9_.-]+")) {
 			throw new IllegalArgumentException("id may only contain letters, digits, '_', '.', '-'");
@@ -286,7 +392,6 @@ public final class SpeakerSpecsProfile {
 		SpeakerType type = parseType(requiredString(json, "type"));
 		String source = optionalString(json, "source", "local");
 		String license = optionalString(json, "license", "unknown");
-		String quality = optionalString(json, "quality", "unknown");
 
 		double[] frequencies = parseFrequencies(json);
 		double[] onAxisSpl = parseOnAxis(json, frequencies);
@@ -303,15 +408,28 @@ public final class SpeakerSpecsProfile {
 				lowHz = array.get(0).getAsDouble();
 				highHz = array.get(1).getAsDouble();
 			}
-		} else if (frequencies.length >= 2) {
-			lowHz = frequencies[0];
-			highHz = frequencies[frequencies.length - 1];
+		} else {
+			double[] computed = pattern == Pattern.MEASURED
+				? computeFrequencyRange(frequencies, onAxisSpl)
+				: null;
+			if (computed != null) {
+				lowHz = computed[0];
+				highHz = computed[1];
+			} else if (frequencies.length >= 2) {
+				lowHz = frequencies[0];
+				highHz = frequencies[frequencies.length - 1];
+			}
 		}
 		if (!Double.isFinite(lowHz) || !Double.isFinite(highHz) || highHz <= lowHz) {
 			throw new IllegalArgumentException("frequencyRange must be [low, high] with low < high");
 		}
 		lowHz = Math.max(1.0, Math.min(23_999.0, lowHz));
 		highHz = Math.max(lowHz + 1.0, Math.min(24_000.0, highHz));
+		lowHz = Math.round(lowHz);
+		highHz = Math.round(highHz);
+		if (highHz <= lowHz) {
+			highHz = Math.min(24_000.0, lowHz + 1.0);
+		}
 
 		if (pattern == Pattern.MEASURED && frequencies.length < 2) {
 			throw new IllegalArgumentException("measured profile needs at least two frequencies");
@@ -322,7 +440,7 @@ public final class SpeakerSpecsProfile {
 		if (pattern == Pattern.MEASURED && horizontal.length == 0 && vertical.length == 0) {
 			throw new IllegalArgumentException("measured profile needs horizontal or vertical SPL rows");
 		}
-		return new SpeakerSpecsProfile(id, name, type, pattern, source, license, quality,
+		return new SpeakerDataProfile(id, name, type, pattern, source, license,
 			lowHz, highHz, frequencies, onAxisSpl, horizontal, vertical);
 	}
 

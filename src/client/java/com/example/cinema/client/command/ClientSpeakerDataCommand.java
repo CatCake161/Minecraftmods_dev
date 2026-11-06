@@ -1,9 +1,9 @@
 package com.example.cinema.client.command;
 
 import com.example.cinema.block.entity.SpeakerType;
-import com.example.cinema.client.audio.speakerspecs.SpeakerSpecsProfile;
-import com.example.cinema.client.audio.speakerspecs.SpeakerSpecsRegistry;
-import com.example.cinema.client.gui.SpeakerSpecsConfigScreen;
+import com.example.cinema.client.audio.speakerdata.SpeakerDataProfile;
+import com.example.cinema.client.audio.speakerdata.SpeakerDataRegistry;
+import com.example.cinema.client.gui.SpeakerDataConfigScreen;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
@@ -14,23 +14,23 @@ import net.minecraft.network.chat.Component;
 
 import java.util.Locale;
 
-/** Client-only commands for the speaker specs spike. */
-public final class ClientSpeakerSpecsCommand {
-	private ClientSpeakerSpecsCommand() {
+/** Client-only commands for the speaker data spike. */
+public final class ClientSpeakerDataCommand {
+	private ClientSpeakerDataCommand() {
 	}
 
 	public static void register(CommandDispatcher<FabricClientCommandSource> dispatcher) {
-		dispatcher.register(ClientCommandManager.literal("cinema_speaker_specs")
+		dispatcher.register(ClientCommandManager.literal("cinema_speaker_data")
 			.executes(context -> {
-				Minecraft.getInstance().setScreen(new SpeakerSpecsConfigScreen(null));
+				Minecraft.getInstance().setScreen(new SpeakerDataConfigScreen(null));
 				return 1;
 			})
 			.then(ClientCommandManager.literal("reload")
 				.executes(context -> {
-					SpeakerSpecsRegistry.ReloadResult result =
-						SpeakerSpecsRegistry.reloadProfiles();
+					SpeakerDataRegistry.ReloadResult result =
+						SpeakerDataRegistry.reloadProfiles();
 					context.getSource().sendFeedback(Component.literal(
-						"speaker specs: " + result.profileCount() + " profile(s) loaded"));
+						"speaker data: " + result.profileCount() + " profile(s) loaded"));
 					for (String error : result.errors()) {
 						context.getSource().sendError(Component.literal(error));
 					}
@@ -38,25 +38,26 @@ public final class ClientSpeakerSpecsCommand {
 				}))
 			.then(ClientCommandManager.literal("info")
 				.executes(context -> {
-					SpeakerSpecsRegistry.load();
+					SpeakerDataRegistry.load();
 					for (SpeakerType type : SpeakerType.values()) {
-						SpeakerSpecsRegistry.SpeakerSettings settings =
-							SpeakerSpecsRegistry.settings(type);
+						SpeakerDataRegistry.SpeakerSettings settings =
+							SpeakerDataRegistry.settings(type);
 						if (settings == null) {
 							continue;
 						}
-						SpeakerSpecsProfile profile =
-							SpeakerSpecsRegistry.find(type, settings.profileId());
+						SpeakerDataProfile profile =
+							SpeakerDataRegistry.find(type, settings.profileId());
 						if (profile == null) {
 							continue;
 						}
 						context.getSource().sendFeedback(Component.literal(String.format(Locale.ROOT,
-							"%s: %s | 1 kHz 0° %+.1f / 90° %+.1f / 180° %+.1f dB | range %.0f-%.0f Hz | SPL gain %+.1f dB",
+							"%s: %s | 1 kHz 0° %+.1f / 90° %+.1f / 180° %+.1f dB | range %.0f-%.0f Hz | SPL gain %+.1f dB | on-axis ref %+.1f dB",
 							type.id(), profile.name(),
 							profile.gainDb(0, 0, 1000),
 							profile.gainDb(90, 0, 1000),
 							profile.gainDb(180, 0, 1000),
-							settings.lowHz(), settings.highHz(), settings.gainDb())));
+							settings.lowHz(), settings.highHz(), settings.gainDb(),
+							profile.onAxisReferenceDb())));
 					}
 					return 1;
 				}))
@@ -79,22 +80,23 @@ public final class ClientSpeakerSpecsCommand {
 											"unknown speaker type"));
 										return 0;
 									}
-									SpeakerSpecsRegistry.SpeakerSettings settings =
-										SpeakerSpecsRegistry.settings(type);
-									SpeakerSpecsProfile profile = settings == null ? null
-										: SpeakerSpecsRegistry.find(type, settings.profileId());
+									SpeakerDataRegistry.SpeakerSettings settings =
+										SpeakerDataRegistry.settings(type);
+									SpeakerDataProfile profile = settings == null ? null
+										: SpeakerDataRegistry.find(type, settings.profileId());
 									if (profile == null) {
 										context.getSource().sendError(Component.literal(
-											"no speaker specs profile selected"));
+											"no speaker data profile selected"));
 										return 0;
 									}
 									double horizontal = DoubleArgumentType.getDouble(context, "horizontal");
 									double vertical = DoubleArgumentType.getDouble(context, "vertical");
 									double hz = DoubleArgumentType.getDouble(context, "hz");
 									context.getSource().sendFeedback(Component.literal(String.format(Locale.ROOT,
-										"%s / %s: h=%.1f° v=%.1f° f=%.1f Hz -> %+.2f dB",
+										"%s / %s: h=%.1f° v=%.1f° f=%.1f Hz -> %+.2f dB (on-axis EQ %+.2f dB)",
 										type.id(), profile.name(), horizontal, vertical, hz,
-										profile.gainDb(horizontal, vertical, hz))));
+										profile.gainDb(horizontal, vertical, hz),
+										profile.onAxisEqGainDb(hz))));
 									return 1;
 								}))))))
 		);

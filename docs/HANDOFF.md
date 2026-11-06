@@ -1,7 +1,7 @@
 # Cinema 交接清单
 
 > 新会话请按顺序读：本文件 → [PLANNING.md](PLANNING.md) → [TODO.md](TODO.md)。
-> 当前分支 `main`；开始工作前用 `git log -1` / `git status` 确认最新提交与工作区状态。
+> 当前分支 `acoustic-simulation`（声学实验分支）；`main` 保持稳定基线。开始工作前用 `git log -1` / `git status` 确认最新提交与工作区状态。
 
 ## 1. 当前状态
 
@@ -63,8 +63,8 @@
 
 - 四种箱体：落地式 `floorstanding_speaker`（两格高）、书架式 `bookshelf_speaker`（一格高）、中置 `center_speaker`（一格高，仅 FC）、低音炮 `subwoofer`（一格高，仅 LFE）。
 - 落地式下半格持有 block entity，上半格为无 block entity 的延伸；破坏任一半只掉一个物品。
-- 扬声器 GUI 可编辑名称、选择角色、查看/导入 speaker specs；角色选择通过 `SpeakerRolePayload` 提交服务端。
-- Speaker Specs spike：`cinema/speaker_specs/profiles/` 本地 JSON、拖放导入、水平/垂直指向性与轴上响应、低音炮内置 `sub-omni`/`sub-cardioid`；尚未应用到实际音频。
+- 扬声器 GUI 可编辑名称、选择角色、查看/导入 speaker data；角色选择通过 `SpeakerRolePayload` 提交服务端。
+- Speaker Data：`cinema/speaker_data/profiles/` 本地 JSON、拖放导入、分页选择器（21 个 ASR 型号全部可选）、H/V 原始 194/200 点 + `-180°` 行、`-10 dB` 频率范围（整数 Hz）、on-axis 全频段能量平均归一化；measured profile 的 low/high 固定，仅 `SPL gain dB` 可编辑；profile 只生成到本地 `run/` 目录（不打包、不提交），尚未应用到实际音频。
 - 接收器 Speakers 页：滚动列表、每只扬声器 `Level`、`Ping` 定位音 + 约 8 秒粒子光柱、自定义名称/角色/坐标/距离 tooltip。
 - Seat 可右键乘坐；`LocalPlayerSeatMixin` 修复乘坐时视角平滑/滞后；Seat 不参与音频、不定义皇帝位。
 
@@ -74,13 +74,13 @@
 - 屏幕单投影仪占用：`ScreenBlockEntity.ownerProjector` 同步整个连通屏幕；第二个投影仪配对被拒绝；拆除/解除/改配会释放；旧存档重复链接自动清理。
 - 设备命名：投影仪、接收器、屏幕、扬声器名称均服务端持久化/同步，最长 32 字符；显示在状态行、命令诊断和关联设备 GUI。
 - Mod Menu：屏幕尺寸 1..64；三项原版行为开关（设备 GUI 暂停、空手右键打开 GUI、spike 修改世界）；Mod Menu 为软依赖。
-- AV 接收器、投影仪、Speaker Specs、Mod Menu 设置页统一为“改动即保存 + Close”；投影仪/扬声器/设置页保留 Defaults。
+- AV 接收器、投影仪、Speaker Data、Mod Menu 设置页统一为“改动即保存 + Close”；投影仪/扬声器/设置页保留 Defaults。
 
 ## 4. 已知问题 / 风险
 
 - **原地 seek 仍未启用**：当前 seek 复用音视频资源但会重新打开 FFmpeg 解码器，4K AV1/HEVC 仍可能需要数秒才出首帧；原地 seek 状态机未重新设计前不要直接恢复。
 - **BSL 下 ambient wash 某些值画面异常**：待确认是白色 overlay 的 bloom/exposure 还是 alpha 曲线；无音轨墙钟长播也未测试。两项按用户决定暂不处理，不阻塞当前验收。
-- **音频声学仍是规划**：见 `docs/design/AUDIO-ACOUSTICS.md`。EAXReverb 只计划用于晚期尾音；早期反射用一阶镜像源 + Spinorama 实测扬声器指向性。EFX 可用性、材质吸收、型号映射都需 spike/校准。
+- **音频声学仍是规划**：见 `docs/design/AUDIO-ACOUSTICS.md`。EAXReverb 只计划用于晚期尾音；直达声与早期反射都应用距离、空气吸收和 Spinorama 实测扬声器指向性，反射增益按物理链路计算。早期反射采用独立 OpenAL source（镜像源位置，每 tap 一个，上限 24–36/接收器）。空气吸收温湿度、早反调试 gain 放 Mod Menu；频带精度与指向性计算方法待用户确认。EFX 可用性、材质吸收、型号映射都需 spike/校准。
 - **音频定位模型**：当前保留 `AL_SOURCE_RELATIVE = AL_TRUE`；世界坐标源迁移已完成评审，暂不迁移，需与 A2 声学一起做，见 `AUDIO-ACOUSTICS.md` §4.2.1。
 - Spinorama 数据默认 CC BY-NC-SA 4.0，与项目 CC0 不同；发布前必须做许可/attribution 决策。REST API 需要人工申请 Bearer key，key 只能放本地环境变量/转换工具，不能进仓库、发布包或日志。
 - 一阶声学模型不覆盖衍射、散射、高阶反射和低频房间模态；LFE 低频峰谷/驻波不会正确重现。
@@ -166,7 +166,7 @@ src/main/java/com/example/cinema/command/ProjectorCommand.java
 src/client/java/com/example/cinema/client/CinemaClient.java
 src/client/java/com/example/cinema/client/gui/ProjectorConfigScreen.java
 src/client/java/com/example/cinema/client/gui/AvReceiverConfigScreen.java
-src/client/java/com/example/cinema/client/gui/SpeakerSpecsConfigScreen.java
+src/client/java/com/example/cinema/client/gui/SpeakerDataConfigScreen.java
 src/client/java/com/example/cinema/client/gui/CinemaConfigScreen.java
 src/client/java/com/example/cinema/client/media/AvReceiverPlayback.java
 src/client/java/com/example/cinema/client/media/AvReceiverPlaybackManager.java
@@ -188,3 +188,4 @@ src/client/java/com/example/cinema/client/render/ScreenLimits.java
 - 删除功能前要明确确认。
 - 不在仓库文件里写个人绝对路径、姓名、邮箱、私人媒体文件名。
 - 测试时先确保 Minecraft 窗口置前。
+- `acoustic-simulation` 分支下的所有开发、代码实现和细节处理必须如实向用户汇报，由用户判断是否合理；不得自行决定声学行为、默认值或近似。

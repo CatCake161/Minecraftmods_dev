@@ -185,7 +185,7 @@ public final class RemoteDeviceScreen extends Screen {
 		}
 		if (entry.kind() == RemoteScanListPayload.Kind.SPEAKER
 			&& blockEntity instanceof SpeakerBlockEntity speaker) {
-			Minecraft.getInstance().setScreen(new SpeakerSpecsConfigScreen(this, speaker));
+			Minecraft.getInstance().setScreen(new SpeakerDataConfigScreen(this, speaker));
 			return;
 		}
 		if (player != null) {

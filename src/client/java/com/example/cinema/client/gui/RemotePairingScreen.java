@@ -214,7 +214,7 @@ public final class RemotePairingScreen extends Screen {
 		}
 		if (entry.kind() == RemotePairingListPayload.TargetKind.SPEAKER
 			&& blockEntity instanceof SpeakerBlockEntity speaker) {
-			Minecraft.getInstance().setScreen(new SpeakerSpecsConfigScreen(this, speaker));
+			Minecraft.getInstance().setScreen(new SpeakerDataConfigScreen(this, speaker));
 			return;
 		}
 		if (player != null) {

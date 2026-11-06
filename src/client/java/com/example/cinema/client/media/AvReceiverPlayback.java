@@ -5,7 +5,7 @@ import com.example.cinema.block.entity.AvReceiverBlockEntity;
 import com.example.cinema.block.entity.SpeakerBlockEntity;
 import com.example.cinema.block.entity.SpeakerRole;
 import com.example.cinema.block.entity.SpeakerType;
-import com.example.cinema.client.audio.speakerspecs.SpeakerSpecsAssignments;
+import com.example.cinema.client.audio.speakerdata.SpeakerDataAssignments;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
@@ -406,7 +406,7 @@ public final class AvReceiverPlayback {
 	}
 
 	private static float speakerGain(SpeakerBlockEntity speaker) {
-		double db = speaker.levelDb() + SpeakerSpecsAssignments.settingsFor(speaker).gainDb();
+		double db = speaker.levelDb() + SpeakerDataAssignments.settingsFor(speaker).gainDb();
 		double linear = Math.pow(10.0, db / 20.0);
 		double max = Math.pow(10.0, SpeakerBlockEntity.MAX_LEVEL_DB / 20.0);
 		return (float) Math.max(0.0, Math.min(max, linear));

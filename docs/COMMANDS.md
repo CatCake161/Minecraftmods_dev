@@ -83,8 +83,8 @@
 - 显式配对（影院线材）：右键接收器再右键扬声器，或反向顺序；双方保存双向链接。接收器 Speakers 页显示已连接扬声器的声道角色和 `Level` 滑块，可直接调整每只扬声器的电平（-12.0..+6.0 dB），改动即保存；列表超过可视行数时用滚轮查看，右侧显示滚动条。未连接对应声道的扬声器时该声道回退虚拟 5.1。
 - 空手右键投影仪打开正式 GUI：状态区显示屏幕/灯泡/AV 输入；自动/手动投掷比、自动/手动焦距、梯形、亮度、wash、Power ON/OFF、Focus/Keystone/Wash/Warmup 模拟开关都**改动即保存**（按钮立即，滑块约 200ms debounce；Close/Esc 前 flush）。手持物品时保留原版物品/方块交互，不打开 GUI。命令 `/cinema_projector[_client]` 仍可用于调试。
 - AV 接收器与四种扬声器同样只有空手右键打开 GUI；手持物品时保留原版交互。AV 接收器不再向聊天栏打印状态，状态可用 `/cinema_receiver` 查看。
-- 空手右键扬声器打开 Speaker Specs，可在顶部编辑自定义名称（最长 32 字符，服务端同步）；接收器 Speakers 列表优先显示该名称。未命名时显示角色/箱体/坐标。列表每行还有 `Ping` 按钮，播放定位音并在方块位置生成约 8 秒粒子光柱。
-- 设备命名：投影仪 GUI 顶部有 `Projector` 名称框，并可在同一行编辑当前配对屏幕的 `Screen` 名称（会写入所有连通屏幕格）；AV 接收器 GUI 顶部有 `Receiver` 名称框；扬声器名称在 Speaker Specs 顶部编辑。命名用于状态行、命令诊断和跨设备识别。
+- 空手右键扬声器打开 Speaker Data，可在顶部编辑自定义名称（最长 32 字符，服务端同步）；接收器 Speakers 列表优先显示该名称。未命名时显示角色/箱体/坐标。列表每行还有 `Ping` 按钮，播放定位音并在方块位置生成约 8 秒粒子光柱。
+- 设备命名：投影仪 GUI 顶部有 `Projector` 名称框，并可在同一行编辑当前配对屏幕的 `Screen` 名称（会写入所有连通屏幕格）；AV 接收器 GUI 顶部有 `Receiver` 名称框；扬声器名称在 Speaker Data 顶部编辑。命名用于状态行、命令诊断和跨设备识别。
 - 拆掉投影仪后屏幕保持黑屏，接收器音频继续；重新放回后需要再用线材配对投影仪与接收器/屏幕。
 - 拆掉接收器后屏幕立即黑屏、音频停止。
 - `/time set midnight` / `/time set noon` 可测试环境光洗白。
@@ -95,10 +95,10 @@
 |---|---|---|
 | AV 接收器 | `cinema:av_receiver` | 空手右键打开接收器 GUI（媒体/扬声器/信号/设置）；手持物品保留原版交互 |
 | 影院座位 | `cinema:seat` | 可空手右键乘坐（潜行/下车键离开）；仅作装饰和座位，不参与声场校准或听者定位 |
-| 落地式扬声器 | `cinema:floorstanding_speaker` | 两格高；空手右键打开 speaker specs GUI；角色在 GUI 内选择 `NONE/FL/FR/BL/BR` |
-| 书架式扬声器 | `cinema:bookshelf_speaker` | 一格高；空手右键打开 speaker specs GUI；角色在 GUI 内选择 `NONE/FL/FR/BL/BR` |
-| 中置扬声器 | `cinema:center_speaker` | 一格高；空手右键打开 speaker specs GUI；角色在 GUI 内选择 `NONE/FC` |
-| 低音炮 | `cinema:subwoofer` | 一格高；空手右键打开 speaker specs GUI；角色在 GUI 内选择 `NONE/LFE` |
+| 落地式扬声器 | `cinema:floorstanding_speaker` | 两格高；空手右键打开 speaker data GUI；角色在 GUI 内选择 `NONE/FL/FR/BL/BR` |
+| 书架式扬声器 | `cinema:bookshelf_speaker` | 一格高；空手右键打开 speaker data GUI；角色在 GUI 内选择 `NONE/FL/FR/BL/BR` |
+| 中置扬声器 | `cinema:center_speaker` | 一格高；空手右键打开 speaker data GUI；角色在 GUI 内选择 `NONE/FC` |
+| 低音炮 | `cinema:subwoofer` | 一格高；空手右键打开 speaker data GUI；角色在 GUI 内选择 `NONE/LFE` |
 | 影院线材 | `cinema:cable` | 两次右键配对：投影仪↔屏幕、接收器↔投影仪、接收器↔扬声器；潜行右键两个设备解除它们之间的连接 |
 | 影院遥控器 | `cinema:remote_controller` | 右键打开三栏扫描面板（AV 接收器/投影仪/扬声器），Ping 定位、Access 打开 GUI；128 格内生效；配对在接收器/投影仪 GUI 或线材中完成 |
 
@@ -110,7 +110,7 @@
 
 | 指令 | 说明 |
 |---|---|
-| `/cinema_speaker_specs` | 打开 Speaker Specs 的类型默认编辑器；`reload` 重新读取 profiles，`info` 打印类型默认，`test <type> <h> <v> <hz>` 打印指向性采样 |
+| `/cinema_speaker_data` | 打开 Speaker Data 的类型默认编辑器；`reload` 重新读取 profiles，`info` 打印类型默认与 on-axis 参考电平，`test <type> <h> <v> <hz>` 打印指向性采样与 on-axis EQ 增益 |
 | `/cinema_audio_spike` | 运行 5.1/OpenAL 音频测试，结果写入游戏日志 |
 
 ## 5. 手动 / 自动测试

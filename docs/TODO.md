@@ -51,15 +51,16 @@
 - [ ] A1 声学数据模型：房间平面/包围盒、体积/表面积、材质吸收、扬声器位置/朝向/高度、玩家听者位置/朝向
 - [ ] A1b 材质映射：block/tag → 低/中/高频吸收 + 散射；屏幕/羊毛/地毯/木板/石砖/玻璃/树叶/水默认值；数据驱动
 - [ ] A1c 房间检测：6 方向 raycast + 凸盒验证；缓存/失效；非矩形/室外 fallback
-- [ ] A1d Spinorama 数据管线：申请 API Bearer key（key 仅本地 env）；实现 Plotly `bdata` 解码 + `SPL Horizontal`/`SPL Vertical`/`On Axis` → `speaker_specs` 转换器；选 4 类代表型号；用轴上响应归一化/1/3 octave 降采样/量化；生成 speaker specs 资源与 metadata（source/version/changes/quality/license）
-- [ ] A1e Spinorama 许可决策：CC BY-NC-SA 4.0 非商业/相同方式共享，或改用宽松数据/用户本地导入；加 attribution/THIRD-PARTY
-- [ ] A2 直达声：距离/空气吸收/遮挡/指向性；明确 OpenAL 距离衰减与自定义增益分工，避免双重衰减
-- [ ] A2b 一阶早期反射：镜像源法（6 平面 × 6 扬声器）、可见性、延迟/增益/频带、VBAP/最近声道路由、最多 24–36 taps、平滑
-- [ ] A2c 扬声器指向性：用 Spinorama profile 查表（水平/垂直角插值、1/3 octave）；声学中心/朝向；低音炮 omni；只作用于反射相对增益
-- [ ] A2d 指向性渲染：3 频带增益/相位兼容分频；条件允许升级 1/3 octave 多频带或 32–64 tap FIR；A/B 实测
+- [x] A1d ASR/Spinorama 数据管线：只读 `SPL Horizontal.txt`/`SPL Vertical.txt`；保留原始 194/200 点频率网格、不降采样；补 `-180°`；按全频段能量平均计算 -10 dB 频率范围并取整到 1 Hz；删除 `quality`；21 个型号生成到本地 `run/cinema/speaker_data/profiles/`，**不打包**。转换器：`docs/examples/speaker_data/convert_spinorama.py`。待游戏内加载验证
+- [ ] A1e Spinorama 许可决策：已确认 CC BY-NC-SA 4.0；profile 仅作为用户本地导入数据，不随模组分发；仍需在发布文档/THIRD-PARTY 写 attribution
+- [ ] A2 直达声：距离/空气吸收/指向性/遮挡；空气吸收和指向性同时作用于直达声与反射；OpenAL 负责距离，Java 只计算非距离增益，避免双重衰减；空气吸收温湿度配置放 Mod Menu
+- [ ] A2b 一阶早期反射：镜像源法（6 平面 × 6 扬声器）、可见性、延迟/增益/频带、每个 tap 一个独立 OpenAL source（镜像源位置）、播放未处理 `sourceChannel` 的延迟副本、最多 24–36 taps、平滑；反射 source 由 OpenAL 负责方向/距离，不按 5.1 声道混入直达；增益按距离/空气吸收/材质/指向性计算，不设固定 -6..-12 dB 默认
+- [ ] A2c 扬声器指向性：用 Spinorama profile 查表；声学中心/朝向；低音炮 omni；同时作用于直达声（扬声器→听者）和反射（扬声器→反射点）；具体计算方法待用户说明
+- [ ] A2d 指向性渲染（直达声 + 反射）：频带精度待用户确定（3 频带 / 1/3 octave / 32–64 tap FIR）；空气吸收按路径长度和频率计算；A/B 实测
+- [ ] A2e Mod Menu 声学设置：空气吸收开关/温度/湿度、`earlyGainDb` 调试滑杆（仅调试，默认 0 dB）
 - [ ] A3 晚期混响：EAXReverb 仅 late tail（`REFLECTIONS_GAIN=0`、`ECHO_DEPTH=0`）、RT60 Sabine/Eyring、HF/LF ratio、density/diffusion、modulation、air absorption
 - [ ] A3b 自定义 FDN 回退（可选）：8 线 FDN、吸收滤波、6 声道 wet、稳定性限制
-- [ ] A4 接收器集成：Speakers/Settings 页声学开关、early/late 电平、房间预设/重扫；服务端字段/网络包
+- [ ] A4 接收器集成：Speakers/Settings 页声学总开关、late reverb 电平、房间预设/重扫；服务端字段/网络包；`earlyGainDb` 放 Mod Menu，不进接收器 GUI
 - [ ] A4b 听者策略（决策已定，待 A4 接入）：始终使用玩家实际耳朵位置/朝向；不做 Seat 皇帝位、固定监听点或声场校正
 - [ ] A5 调试/验收：dump 房间/RT60/taps；A/B 开关；矩形房间、材质、旋转、移动、5.1、4K/BSL、设备切换
 - [ ] A6 后续：低频模态/多低音炮/模态 EQ、衍射/散射、测量 RIR/卷积、HRTF

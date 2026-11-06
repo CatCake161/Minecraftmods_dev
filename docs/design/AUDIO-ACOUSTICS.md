@@ -4,6 +4,15 @@
 > `main` 只保留已稳定、已验收的接口与文档。未经游戏内听感验收的 EFX/早期反射/Spinorama
 > 实验代码不得直接合并回 `main`。
 >
+> **协作规则（2026-11-06）**：`acoustic-simulation` 分支下的所有开发、代码实现和细节处理必须如实向用户汇报，
+> 由用户判断是否合理；不得自行决定声学行为、默认值或“听起来差不多”的近似。
+>
+> **已确认决策（2026-11-06）**：
+> - 早期反射采用独立 OpenAL source（方案 C）：每个 tap 一个 source，位置为镜像源，OpenAL 负责方向/声像/距离；不按 5.1 声道混入直达声道。
+> - 空气吸收同时作用于直达声和反射；温湿度等配置放 Mod Menu（客户端）。
+> - 早反 gain 放 Mod Menu，仅调试用，默认 0 dB。
+> - 频带精度、指向性计算方法待用户后续确认。
+>
 > 状态：分析与规划，尚未实现。本文评估 OpenAL EFX / EAXReverb、早期反射与扬声器指向性方案，
 > 并给出与当前 Cinema 音频管线（`CinemaAudioEngine` + AV Receiver + Speaker）的集成计划。
 > 相关文档：[项目规划](../PLANNING.md)、[待办](../TODO.md)、[AV Receiver](AV-RECEIVER.md)、[指令](../COMMANDS.md)。
@@ -12,7 +21,7 @@
 
 目标：
 
-- 在现有 5.1 回放上加入**客户端本地**的房间声学层：直达声距离/空气吸收、一阶早期反射、晚期混响、扬声器指向性。
+- 在现有 5.1 回放上加入**客户端本地**的房间声学层：直达声距离/空气吸收/指向性、一阶早期反射、晚期混响。
 - 保持接收器对媒体/播放状态的权威；声学计算不改变播放位置、音画时钟或服务端状态。
 - 可开关、可调试、可回退：没有 EFX、没有扬声器方块时仍能正常播放；Seat 不参与声学，只作可乘坐装饰。
 - 在 M4 扬声器 5.1 路由之上提供声学数据接口；听者始终是玩家实际耳朵位置/朝向，不做皇帝位或固定监听点。
@@ -73,8 +82,9 @@
 2. **一阶镜像源 + 指向性是性价比最高的几何声学部分。** 对矩形/近似矩形影院，一阶反射是最强、最有方向性的早期能量；
    更高阶反射迅速扩散，用晚期混响统计近似更合理。
 3. **晚期混响不需要逐反射计算。** 用 EAXReverb 的 late tail 或小型 FDN 提供扩散能量即可；关键是 RT60、频响和 wet/dry 合理。
-4. **指向性应作用于“声源到反射点”的辐射角，以及必要时的听者侧角度。** 首版只做前者，并只把指向性用于反射相对增益；
-   直达声按玩家实际听者位置计算，不假设固定皇帝位；首版只把指向性用于反射相对增益，避免双重处理。
+4. **指向性同时作用于直达声和一阶反射。** 直达声使用扬声器到听者的辐射角，反射使用扬声器到反射点的辐射角；
+   两者都按扬声器局部坐标查同一份 H/V 指向性表。为避免双重处理，所有声学增益必须在同一条“扬声器辐射 → 传播 → 听者”链路中只计算一次；
+   早期反射采用独立 source 后，每个 tap 使用绝对物理增益，距离/声像交给 OpenAL，不能再混入直达声道重复衰减。
 5. **低频不能用几何声学解释。** LFE/低频的波长与房间尺寸相当，模态、驻波和边界干涉占主导；首版不建模，明确这是限制。
 6. **材质数据是近似。** Minecraft 方块没有吸声系数；用 block/tag 映射到低/中/高频吸收，必须允许调试和覆盖。
 7. **只做扬声器指向性，不做原始声源指向性。** 对话讨论的是人声/乐器等原始声源的辐射指向性；
@@ -117,6 +127,8 @@
 - 六个 source 仍是 `AL_SOURCE_RELATIVE = AL_TRUE`；M4 每个 sync 把物理扬声器世界坐标转换为听者相对坐标并通过 `setChannelLayout()` 快照更新，音频线程不读世界/玩家状态。世界坐标源迁移评审见 §4.2.1，当前暂不迁移。
 - `StreamingAudioDecoder` 的 FFmpeg stderr 没有单独消费（`redirectErrorStream(false)`，靠 `-loglevel error` 降低输出）；极端情况下仍可能因 stderr 管道填满而阻塞，后续可加 drain 线程。
 - `CinemaPlayer` 的 A/V 时钟使用音频设备时钟/PTS；声学处理不得改变 chunk 的 `startPtsSeconds` 或引入不可控 lookahead。
+- **声学增益归属（待实现，方案 C）**：直达声仍由 6 个物理扬声器 source 播放，OpenAL 负责距离衰减；Java 负责直达声的空气吸收、指向性和遮挡。每个早期反射 tap 使用独立 OpenAL source，位置为镜像源，OpenAL 负责方向/声像/距离；Java 负责该 source 的空气吸收、材质反射、指向性和散射增益。反射 tap 不再混入 5.1 直达声道。
+- **反射 source 池（待实现）**：反射 source 上限建议 24–36/接收器，需要独立的 source/buffer 池和房间快照生命周期；不能复用 6 个直达 source，也不参与 `setChannelLayout()` 的物理扬声器布局。
 
 ### 4.2.1 定位模型评审：相对源 vs 世界坐标源（暂不迁移）
 
@@ -179,16 +191,17 @@ FFmpeg 5.1 PCM（48 kHz, FL/FR/FC/LFE/BL/BR）
         ▼
 [5.1 channel bus]
         │
-        ├─► 直达声：距离/空气吸收/遮挡/（可选）指向性（听者按玩家实际位置）
+        ├─► 直达声：距离/空气吸收/指向性/遮挡（听者按玩家实际位置）
         │
         ├─► 一阶早期反射：镜像源 + 材质吸收 + 扬声器指向性
-        │        └─ 稀疏 delay/gain/low-pass taps，按 5.1 声道路由
+        │        └─ 每个 tap 一个独立 OpenAL source（镜像源位置）
         │
         └─► 晚期混响 send：EAXReverb（仅 late tail）或 FDN 回退
                  └─ wet return
         │
         ▼
 六个 mono OpenAL source（M4 实体扬声器位置；未配对声道回退虚拟 5.1）
++ 最多 24–36 个反射 source（镜像源位置，独立 source 池）
         │
         ▼
 OpenAL device / Minecraft 音频输出
@@ -218,23 +231,24 @@ AcousticSpeaker
   position           世界坐标（含高度偏移）
   facing             水平朝向
   gain               校准增益
-  speakerSpecsProfileId
+  speakerDataProfileId
   acousticCenterY    声学中心（高音轴）高度偏移
 
-SpeakerSpecsProfile
-  id                 例如 kef-r11 / kef-ls50 / kef-r2c / sub-omni
-  brand/model        被测音箱
-  source             测量来源（ASR/Erin's Audio Corner/厂商等）
+SpeakerDataProfile
+  id                 例如 kef-r11-meta / revel-f206 / sub-omni
+  name               被测音箱显示名
+  type               floorstanding/bookshelf/center/subwoofer
+  pattern            measured/omni/cardioid/unmeasured
+  source             测量来源（ASR/Spinorama 等）
   license            测量数据的许可证/署名
-  changes            对数据的修改（归一化/降采样/量化等）
-  quality            High/Medium/Low
-  frequencies        1/3 octave 频带
+  frequencyRange     on-axis 相对全频段能量平均的 -10 dB 低/高交点（整数 Hz）
+  frequencies        原始测量频率网格（194/200 点，无降采样，max 256）
   onAxisSpl[band]    轴上响应（绝对 SPL，与 H/V 同尺度）
-  horizontalAngles   -180..180
-  verticalAngles     -90..90
+  onAxisReferenceDb  全频段能量平均电平（EQ 归一化锚点）
+  horizontalAngles   -180..180（37 行，含 -180/+180）
+  verticalAngles     -180..180（37 行，含 -180/+180）
   horizontalSpl      水平指向性原始 SPL
   verticalSpl        垂直指向性原始 SPL
-  is3D               是否有完整 3D/球面数据
 
 AcousticListener
   position           玩家实际眼睛位置
@@ -242,11 +256,13 @@ AcousticListener
 
 ReflectionTap
   sourceChannel      0..5
+  sourceSpeaker      原始扬声器角色/位置
+  mirrorPosition     镜像源位置（反射 OpenAL source 位置）
   delaySamples       相对直达声的延迟
-  gain               相对直达声的宽带增益
-  bandGains          低/中/高（或更多频带）指向性增益
-  direction          到达听者的方向
-  channelWeights     路由到 5.1 的权重
+  gain               物理增益（不含 OpenAL 距离衰减）
+  bandGains          材质/空气/指向性频带增益（频带精度待定）
+  direction          到达听者的方向（调试/校验）
+  filter             频带/滤波参数
 
 RoomAcousticSnapshot
   version
@@ -298,11 +314,14 @@ RT60  ≈ 0.161 · V / (-S · ln(1 - α_avg)) // Eyring，高吸收
 
 ### 7.2 直达声
 
-- **距离衰减只做一次。** M4 已把 source 放到真实扬声器位置，由 OpenAL 的 inverse distance 处理直达声距离；自定义 DSP 只计算反射/混响的相对增益，避免双重衰减。
+- **距离衰减只做一次。** M4 已把 source 放到真实扬声器位置，由 OpenAL 的 inverse distance 处理直达声距离；Java 声学层不再重复乘距离衰减。
 - 若继续使用固定虚拟布局，则在 Java 侧按扬声器到听者的距离计算增益，并关闭/固定 OpenAL 的距离模型，二者只能选一个。
-- **空气吸收**：高频随距离衰减；可用一阶低通/高频 shelf 近似，或 EFX 的 air absorption 参数。首版可先只对反射/混响做，直达声保持中性。
+- **空气吸收（直达声 + 反射）**：按路径长度 `x` 和频率计算空气吸收，压力增益记为 `A(x, f)`；可用 ISO 9613-1（默认 20 °C、50% RH）的 `α(f)` dB/m 得到 `A(x,f)=10^(-α(f)·x/20)`，或等效的高频 shelf/一阶低通。温湿度等配置放 Mod Menu（客户端）。直达声必须应用，不允许保持中性；反射 source 单独使用 `A(L,f)`。若 OpenAL/EFX 已应用同一空气吸收，Java 侧必须关闭对应处理，二者只能选一个。
+- **指向性（直达声 + 反射）**：见 7.4。直达声按“扬声器 → 听者”的角度查表，反射按“扬声器 → 反射点”的角度查表；直达声不再假设 on-axis，也不使用固定皇帝位。
+- **未配对声道 fallback**：回退虚拟 5.1 时没有物理扬声器朝向/型号；首版对该声道使用 omni 指向性（或跳过指向性），空气吸收/距离仍按虚拟 source 位置计算，并在调试信息中标注 fallback。
 - **遮挡**：直达声 raycast；被挡住时低通 + 衰减。EFX 可用 `AL_DIRECT_FILTER`；没有 EFX 时在 Java 侧对相应声道滤波。
-- **指向性**：见 7.4。首版只用于反射相对增益；直达声按玩家实际位置计算，不假设固定皇帝位或 on-axis。
+- **增益归属（方案 C）**：直达声与每个反射 tap 各有独立 OpenAL source；OpenAL 负责方向/声像和距离衰减；Java 只计算空气吸收、指向性、材质反射和散射等非距离增益。反射 tap 不混入 5.1 直达声道，避免重复距离衰减。
+- **source 增益**：直达 source 的 Java 增益为 `D_s(θ_listener,f) · A(d,f)`；反射 source 为 `D_s(θ_r,f) · A(L,f) · R_p(f) · S_p(f)`。两者都不含 `1/r` 距离衰减，距离由 OpenAL 按 source 位置处理。
 
 ### 7.3 一阶早期反射（镜像源）
 
@@ -313,79 +332,91 @@ RT60  ≈ 0.161 · V / (-S · ln(1 - α_avg)) // Eyring，高吸收
 3. 检查 `s → r` 与 `r → listener` 的可见性（可选，但推荐）；被遮挡则跳过或衰减。
 4. 路径长度 `L = |s' - listener|`；直达距离 `d = |s - listener|`。
 5. 延迟 `Δt = (L - d) / c`，`c ≈ 343 m/s`；过小（< 1 ms）或过大（> 80 ms）可跳过。
-6. 相对增益：
+6. 反射 source 的非距离增益（按频带计算）：
 
 ```text
-G = (d / L) · R_p · D(θ_source→r) / D(θ_source→listener) · S_p
-R_p = sqrt(1 - α_p)
+G_reflection_source(f) = D(θ_s→r, f) · A(L, f) · R_p(f) · S_p(f)
+R_p(f) = sqrt(1 - α_p(f))
 ```
 
-   其中 `α_p` 是能量吸声系数，`R_p` 是压力反射系数；`D` 为按频带查 7.4 表的指向性，
-   `S_p` 为散射/扩散修正（首版可设 1）。`G` 按频带计算并 clamp，避免贴墙时爆炸。
-7. 按 7.4 的 Spinorama 指向性表，计算该反射角在各频带的增益；再叠加材质 HF 吸收和空气吸收。
-   首版至少用低/中/高 3 个频带（或 3 段 Linkwitz-Riley 分频），条件允许再用 1/3 octave 多频带/短 FIR。
-8. 到达方向 `dir = normalize(listener - r)`；按 5.1 布局做 VBAP/最近声道路由，得到 `channelWeights`。
-9. 每个扬声器最多保留若干最强 taps；全局上限建议 24–36，避免延迟线/CPU 膨胀。
+   其中 `α_p(f)` 是能量吸声系数，`R_p(f)` 是压力反射系数；`D` 为按频带查 7.4 表的指向性；
+   `A(L,f)` 是反射路径上的空气吸收；`S_p` 为散射/扩散修正（首版可设 1）。
+   该增益不含 `1/L` 距离衰减：反射 source 放在镜像源位置，OpenAL 按 `L` 计算距离增益。
+   若实测 OpenAL `inverse distance clamped` 不满足物理 `1/L`，可把反射 source 的 rolloff 设为 0，
+   在 Java 侧显式乘 `1/L`；该选择在 A2 实测后由用户确认。所有项按频带计算并做数值 clamp，
+   clamp 只用于防止贴墙/零距离爆炸，不作为默认衰减。
+7. 指向性 `D` 由 7.4 的 Spinorama 表按反射角查得；材质吸收 `R_p`、空气吸收 `A(L)` 已在上式按频带计入，
+   不要在这些项之外再叠加一次“材质 HF 吸收”或“空气吸收”。
+   频带精度待用户确定（3 频带 / 1/3 octave / 32–64 tap FIR 均可选），确认前不锁定实现。
+8. 为每个反射 tap 分配一个独立 OpenAL source，位置设为镜像源 `s'`（相对听者坐标）；
+   该 source 播放 `sourceChannel` 的延迟/滤波副本。OpenAL 用 `s'` 到听者的距离 `L` 做距离衰减，
+   方向即反射到达方向。**不再按 5.1 布局做 VBAP/最近声道路由，也不把 tap 混入直达声道。**
+9. 每个扬声器最多保留若干最强 taps；全局上限建议 24–36/接收器；每个 tap 一个 source，
+   需要独立的 source/buffer 池，受 OpenAL source 数量、延迟线和 CPU 限制。
 
 补充：
 
 - 只做一阶；二阶及以上交给晚期混响。
 - 镜面反射假设；不做衍射/边缘绕射。柱子、屏幕边框、家具的散射不建模。
 - LFE 默认不参与早期反射，避免低频梳状滤波；低频交给独立低频管理（多低音炮/模态 EQ，后续）。
-- 反射增益默认比直达声低 6–12 dB；提供总 early reflection 电平。
-- 参数变化时交叉淡化 100–200 ms；延迟变化用分数延迟/交叉淡化，避免 zipper noise。
+- 不设置“反射比直达声低 6–12 dB”的固定默认值；每个 tap 的增益由距离、空气吸收、材质反射系数、指向性和散射项计算。`earlyGainDb` 放 Mod Menu，仅调试用，默认 0 dB，不作为正式声学校准。
+- 反射 source 的信号必须取自**未应用直达声空气吸收/指向性/遮挡的原始 `sourceChannel`**，再单独应用反射路径的 `A(L)`、`D(θ_r)`、`R_p`、`S_p`；不能复制已经处理过的直达声道，否则会双重滤波。
+- 参数变化时交叉淡化 100–200 ms；延迟变化用分数延迟/交叉淡化，避免 zipper noise。听者/房间变化导致镜像源位置、`L`、延迟变化时，对 source 位置/延迟/增益做平滑，避免声像跳变。
 
 ### 7.4 扬声器指向性（Spinorama 实测数据）
+
+> **计算方法待定（2026-11-06）**：用户稍后说明指向性的具体计算方法；以下 H/V 插值、separable 合成、频带划分均为草案，确认前不作为实现依据。
 
 **范围**
 
 - 只做扬声器箱体指向性，不做原始声源指向性；5.1 bus 已经混合，无法恢复每个原始声源的方向。
-- 指向性用于：一阶反射的源侧辐射角；可选地用于离轴直达声。不用于 EAXReverb 的 `REFLECTIONS_PAN` / `LATE_REVERB_PAN`。
+- 指向性同时用于：直达声（扬声器 → 听者的辐射角）和一阶反射（扬声器 → 反射点的辐射角）。不用于 EAXReverb 的 `REFLECTIONS_PAN` / `LATE_REVERB_PAN`。
 
 **数据源与格式**
 
-- Spinorama 提供站点/API/测量 JSON（API 需人工申请 Bearer key，见 7.4.2）；可用测量名包括 `SPL Horizontal`、`SPL Vertical`、`SPL Horizontal Contour`、`SPL Vertical Contour`、3D 变体、`CEA2034`、`Early Reflections` 等。API 不可用时用站点导出或仓库数据。
-- 从 Spinorama 取三组数据：**水平指向性**（`SPL Horizontal`）、**垂直指向性**（`SPL Vertical`）、**轴上响应**（on-axis SPL）。
-  归一化时用轴上响应作为每个频带的 0 dB 参考；如果有 3D/球面数据，优先用 3D，否则用 H/V 两切面做 separable 近似。
-- 选 High 质量（Klippel NFS/消声室）、尽量同一测量来源/版本；记录 measurement source、版本、日期和质量。
-- 数据做 1/3 octave 降采样、归一化、量化（例如 0.1–0.5 dB）；角度按原始或 5°/10° 网格保留，不足则插值；生成紧凑资源，不要把整站原始数据打包。
+- 用户提供的 ASR/Spinorama 数据：只读取每个型号的 `SPL Horizontal.txt` 与 `SPL Vertical.txt`；**CEA2034、Directivity Index、Early Reflections 等派生文件全部忽略**。
+- 从 H/V 取三组数据：**水平指向性**、**垂直指向性**、**轴上响应**（`On-Axis` 列）。
+  归一化时用轴上响应作为每个频带的 0 dB 参考；H/V 两切面做 separable 近似，不做 3D 重建。
+- 保留原始 194/200 点频率网格，不降采样、不平滑、不量化；源数据 36 个角度 + 补 `-180°` = 37 行。
+- 不再使用 `quality` 字段；只记录 `source` 与 `license`。21 个型号均为 ASR `CC BY-NC-SA 4.0`。
+- 生成 profile 写到本地 `run/cinema/speaker_data/profiles/`，不打包进 mod；转换器见 `docs/examples/speaker_data/convert_spinorama.py`。
 
-**四类箱体的代表型号（候选，最终以数据可用性/试听决定）**
+**当前数据覆盖**
 
-| 方块类型 | 候选 Spinorama 型号（示例） | 说明 |
+| 方块类型 | 型号数 | 说明 |
 |---|---|---|
-| floorstanding | KEF R11 / Revel F328Be | 塔式、较宽水平扩散 |
-| bookshelf | KEF LS50 Meta / Genelec 8030C | 书架/监听 |
-| center | KEF R2c / Revel C208 | MTM 中置，注意垂直 lobing |
-| subwoofer | 无合适数据时用 omni 模型 | Spinorama 以全频音箱为主；低音炮通带内近似全指向 |
+| floorstanding | 4 | JBL A180、KEF R11 Meta、Polk T50、Revel F206 |
+| bookshelf | 13 | Adam T5V、Ascilab F6B、Edifier MR4、Genelec 8351B、JBL 308P MkII、Kali LP6、Neumann KH80/KH120 II/KH150/KH310、PreSonus Eris 3.5 Gen 2/E5 XT、Topping MA4 |
+| center | 4 | Ascilab C8C、JBL Project Array 880 Center、KEF Reference 4C、Revel C208 |
+| subwoofer | 0 | 没有合适的 ASR H/V 数据；继续使用内置 `sub-omni`/`sub-cardioid` |
 
-- 这些只是候选，不代表已经确认数据版本/许可；A1d 数据管线要逐个确认。
 - 方块是风格化模型，不需要与真实型号完全一致；但要在 tooltip/文档中写明“指向性 profile 来源”，避免误导。
 - 低音炮：通带内按全指向；如果找到高质量 sub 测量，再替换。LFE 默认不参与早期反射/混响。
 
 **角度与坐标**
 
 - 扬声器朝向由 `SpeakerBlock.FACING` 定义；声学中心取高音轴高度偏移：落地式约 0.9–1.0 m，书架式约 0.6–0.8 m，中置约 0.6 m，低音炮约 0.3 m（按模型再校准）。
-- 对反射点 `r`，计算从扬声器到 `r` 的方向，投影到扬声器局部坐标得到水平角 `θh` 和垂直角 `θv`。
-- `θh` 归一化到 -180..180，`θv` 到 -90..90；H/V 表做双线性插值；3D 表做三线性/最近邻插值。
-- 归一化：每个频带减去 `onAxisSpl[band]`；只保留相对指向性，扬声器声压由 GUI 的 `SPL gain dB` 调整。
+- **角度定义采用 ANSI/CTA-2034-A §5.1 与 Figure 1**：0° 是 reference axis（on-axis）；正水平角在面向扬声器时指向听者右侧（即扬声器自身左侧）；正垂直角向上；+180° 与 -180° 是同一个后方点。源数据只有 +180°，导入时补一行 -180°，SPL 与 +180° 相同；H/V 表均为 -180..180 共 37 行。
+- 由世界坐标方向 `d`（扬声器 → 听者或反射点）计算：`f` 为扬声器前方单位向量，`u` 为世界上方，`r = normalize(cross(u, f))`（面向扬声器时的听者右侧）；`θh = atan2(dot(d, r), dot(d, f))`，`θv = asin(clamp(dot(d, u), -1, 1))`。`θh` 归一化到 -180..180，`θv` 到 -90..90；H/V 表做双线性插值。
+- 指向性归一化：每个频带减去 `onAxisSpl[band]`，只保留相对指向性。轴上 EQ 另行使用 `onAxisEqGainDb(f) = onAxisSpl(f) - onAxisReferenceDb`；`onAxisReferenceDb` 是**全频段能量平均** `10*log10(mean(10^(SPL/10)))`，对每个 on-axis 采样点等权（原始网格为对数间隔，近似 log-frequency 等权，不是线性频率积分），用来归一化整体响度，不参与 H/V 相对指向性。
 
 **渲染**
 
-- 首版建议 3 频带（例如 <300 Hz / 300–2k / >2k）增益 + 可选 HF shelf；用 Linkwitz-Riley 或相位兼容分频，避免分频点染色。
-- 每个反射 tap 的 `bandGains` 由该反射角查表得到；再乘材质 `sqrt(1-α)`、距离 `d/L` 和散射修正。
-- 直达声：按玩家实际听者位置/角度计算，不假设固定皇帝位；首版可不额外滤波，避免双重处理，离轴情况再用同一 profile 的带增益（可选）。
-- 不建议直接用一个“低通截止频率”概括指向性；实测曲线可能有轴向隆起/分频 lobing，3 频带是最低限度，1/3 octave/短 FIR 更忠实但更贵。
-- 如果 3 频带不够，升级到 1/3 octave 多频带（例如 10 段）或 32–64 tap FIR；CPU/延迟在 A2d 测量后决定。
+- 频带精度待用户确定；当前草案为 3 频带（例如 <300 Hz / 300–2k / >2k）增益 + 可选 HF shelf，用 Linkwitz-Riley 或相位兼容分频，避免分频点染色。3 频带只是候选，不是已确认实现。
+- 每个反射 tap 的 `bandGains` 由该反射角查表得到；再乘材质 `sqrt(1-α)`、空气吸收 `A(L)` 和散射修正。距离由 OpenAL 按反射 source 的镜像源位置处理；若后续把反射 source 的 rolloff 设为 0，则在 Java 侧再乘 `1/L`。
+- 直达声：按玩家实际听者位置/角度计算，应用同一 profile 的带增益；直达声和反射使用同一份指向性数据，但各自独立计算一次，不假设固定皇帝位。直达声的离轴变化是物理计算的一部分，不是可选项。
+- 不建议直接用一个“低通截止频率”概括指向性；实测曲线可能有轴向隆起/分频 lobing，频带精度待定，1/3 octave/短 FIR 更忠实但更贵。
+- 频带精度确认后再决定是否升级到 1/3 octave 多频带（例如 10 段）或 32–64 tap FIR；CPU/延迟在 A2d 测量后决定。
 
 **数据管线**
 
-1. 选型号/测量版本（High quality，记录 source/license）。
-2. 通过 API/JSON 获取 `SPL Horizontal` / `SPL Vertical`（或 3D）。
-3. 解析角度/频率/SPL 与轴上响应；用 on-axis 数据归一化 H/V；1/3 octave 重采样；缺失角度插值；量化。
-4. 生成 `assets/cinema/speaker_specs/<id>.json`（或二进制）；带 metadata：brand/model/source/license/changes/quality/date。
-5. 运行时只读表，不在音频线程解析 JSON；启动/资源重载时加载。
-6. 数据文件单独标注许可证；不默认并入 CC0 代码许可。
+1. 选型号/测量版本，记录 source/license；`quality` 字段已删除。
+2. 只读取 `SPL Horizontal.txt` / `SPL Vertical.txt`；不使用 CEA2034、Directivity Index、Early Reflections 等派生文件。
+3. 解析原始角度/频率/SPL 与轴上响应；**保留原始 194/200 点频率网格，不做 1/3 octave 降采样**；补 `-180°` 行（= `+180°`）。
+4. 用 on-axis 全频段能量平均计算 `-10 dB` 低/高交点，写入 `frequencyRange`（四舍五入到 1 Hz）；保留原始 on-axis 绝对 SPL。
+5. 生成 JSON profile 到本地 `<game>/cinema/speaker_data/profiles/`，**不打包进 mod**；转换脚本为 `docs/examples/speaker_data/convert_spinorama.py`。
+6. 运行时只读表，不在音频线程解析 JSON；启动/资源重载时加载。
+7. 数据文件单独标注许可证；不默认并入 CC0 代码许可。
 
 **许可（重要）**
 
@@ -396,22 +427,24 @@ R_p = sqrt(1 - α_p)
 
 #### 7.4.1 Spike 实现（本地 profile / 客户端 GUI）
 
-已落地的第一个 speaker specs spike（只做数据/UI/求值，不改变播放）：
+已落地的第一个 speaker data spike（只做数据/UI/求值，不改变播放）：
 
 - **内置低音炮模式**：`sub-omni`（全指向）和 `sub-cardioid`（心形指向）。
-  - 心形按 3D `0.5 * (1 + cos θ)` 计算，0° = 0 dB，90° ≈ -6 dB，180° 截断到 -60 dB。
+  - 心形按 3D `0.5 * (1 + cos θ)` 计算，0° = 0 dB，90° ≈ -6 dB，180° 截断到 -90 dB。
   - 其他箱体先提供 `unmeasured`（omni 占位）profile，等真实 Spinorama 数据导入。
-- **本地 profile**：`<game>/cinema/speaker_specs/profiles/*.json`；支持把 `.json` 拖到 GUI 导入，文件大小限制 1 MB。旧 `speaker_directivity` 文件夹会尝试一次性迁移。
-- **三组测量数据**：measured profile 包含水平指向性、垂直指向性、轴上响应（`onAxis`）；H/V 用轴上响应归一化，三者必须使用同一 SPL 尺度。
-- **简单参数**：客户端 GUI 可编辑频响范围 low/high Hz、`SPL gain dB`，并循环选择 profile；类型默认保存到 `settings.json`，具体扬声器保存到 `assignments.json`。
+- **本地 profile**：`<game>/cinema/speaker_data/profiles/*.json`；支持把 `.json` 拖到 GUI 导入，文件大小限制 1 MB。旧 `speaker_specs` 与更早的 `speaker_directivity` 文件夹会**直接删除，不做迁移**。
+- **三组原始测量数据**：measured profile 包含水平指向性、垂直指向性、轴上响应（`onAxis`）；三者使用同一 SPL 尺度，原始频率网格不降采样。H/V 表补 `-180°` 行，范围 -180..180。
+- **简单参数**：`SPL gain dB` 始终可编辑；**measured profile 的 low/high Hz 固定为 profile 的 `frequencyRange`，GUI 只读**，只有 `unmeasured`/analytic profile 可以编辑 low/high Hz。Profile 按钮打开分页选择器，**所有 profile 直接可选，不再循环**。类型默认保存到 `settings.json`，具体扬声器保存到 `assignments.json`。
 - **角色选择**：per-speaker GUI 内直接循环合法角色；点击即通过 C2S `SpeakerRolePayload` 提交到服务端，服务端校验距离/方块/箱体类型后写入 block entity。
 - **按扬声器保存**：`assignments.json` 以“维度 + 方块坐标”为 key，保存该扬声器自己的 profile 和参数；没有 assignment 的扬声器回退到类型默认。
-- **求值**：`SpeakerSpecsProfile.gainDb(horizontal, vertical, frequency)`；measured profile 对 H/V 表做频率/角度插值，减去轴上响应，再以 separable（dB 相加）方式合成；结果 clamp 到 -60..+12 dB。
-- **入口**：空手右键扬声器方块打开该扬声器的 speaker specs GUI；角色选择在 GUI 内。`/cinema_speaker_specs` 是类型默认的调试入口；`reload` 重扫文件夹，`info` 打印每类当前 profile，`test <type> <h> <v> <hz>` 打印指定角度/频率的增益。
-- **示例**：`docs/examples/speaker_specs/`（含 synthetic 测试表和 cardioid 简单 profile）。
-- **边界**：这个 spike 不把 speaker specs 应用到 `CinemaAudioEngine` 的实际音频；A2d 才做反射/离轴渲染。`SPL gain dB` 目前只是保存/显示，尚未进入增益分配。
+- **求值**：`SpeakerDataProfile.gainDb(horizontal, vertical, frequency)`；measured profile 对 H/V 表做频率/角度插值，减去轴上响应，再以 separable（dB 相加）方式合成；结果 clamp 到 **-90..+12 dB**。
+- **频率范围**：从 on-axis 的 -10 dB 低/高交点计算；参考电平为 on-axis 全频段能量平均，结果四舍五入到 1 Hz。没有交点时使用测量边界。
+- **轴上 EQ 归一化**：`onAxisEqGainDb(f)` 保留原始 on-axis 形状，减去全频段能量平均电平，使不同型号的整体响度可比；当前尚未接入实际音频。
+- **入口**：空手右键扬声器方块打开该扬声器的 speaker data GUI；角色选择在 GUI 内。`/cinema_speaker_data` 是类型默认的调试入口；`reload` 重扫文件夹，`info` 打印每类当前 profile，`test <type> <h> <v> <hz>` 打印指定角度/频率的指向性增益和轴上 EQ 增益。
+- **示例/转换器**：`docs/examples/speaker_data/`（含 synthetic 测试表、cardioid 简单 profile 和 `convert_spinorama.py`）。
+- **边界**：这个 spike 不把 speaker data 应用到 `CinemaAudioEngine` 的实际音频；A2d 才把 profile 应用到实际音频（直达声 + 反射），具体计算方法待用户确认。`SPL gain dB` 目前只是保存/显示，尚未进入增益分配。
 - **暂停**：GUI 是否暂停由 Mod Menu 的 `Pause game in device GUIs` 控制，默认 false；单机打开面板不会暂停集成服务器/播放。
-- **许可**：内置 profile 和 synthetic 示例是项目自带/CC0；用户导入的真实 Spinorama 数据仍受其原始 license 约束，GUI 会显示 source/license。
+- **许可**：内置 profile 和 synthetic 示例是项目自带/CC0；真实 ASR/Spinorama 数据为 CC BY-NC-SA 4.0，profile 只作为本地用户数据存在，GUI 会显示 source/license。
 
 #### 7.4.2 Spinorama API 使用（2026-11 核对）
 
@@ -489,13 +522,14 @@ for t in data:
 
 **转换到本模组格式**
 
-1. 读取 `On Axis`：`frequencies = x`，`onAxis = y`。
-2. 读取 `SPL Horizontal` / `SPL Vertical`：每个 trace → `{angle, spl}`。
-3. 重采样到同一 1/3 octave 频率网格。
+1. 读取 `On Axis`：`frequencies = x`，`onAxis = y`，保留原始频率网格。
+2. 读取 `SPL Horizontal` / `SPL Vertical`：每个 trace → `{angle, spl}`；补 `-180°` 行（= `+180°`）。
+3. 不重采样、不降采样、不量化；允许 194/200 点原始网格（max 256）。
 4. 用 `onAxis` 归一化 H/V（H/V 与 onAxis 必须是同一 SPL 尺度）。
-5. 写出本模组的 measured profile：
-   `frequencies`、`onAxis`、`horizontal`、`vertical`、`source`、`license`、`quality`。
-6. 当前模组的本地导入器**不接受原始 Plotly JSON**，只接受转换后的 `speaker_specs` JSON；A1d 需要提供转换脚本/工具。
+5. 由 on-axis 的 -10 dB 交点计算 `frequencyRange`；参考为全频段能量平均，结果取整到 1 Hz。
+6. 写出本模组的 measured profile：
+   `frequencies`、`onAxis`、`horizontal`、`vertical`、`frequencyRange`、`source`、`license`；**没有 `quality`**。
+7. 当前模组的本地导入器**不接受原始 Plotly JSON**，只接受转换后的 `speaker_data` JSON；转换器见 `docs/examples/speaker_data/convert_spinorama.py`。生成的 profile 只写入本地游戏目录，不打包进 mod。
 
 **静态站点 JSON（API 不可用时的备选）**
 
@@ -508,7 +542,7 @@ for t in data:
 **key 使用建议**
 
 - 只在本地转换工具/脚本中读取环境变量，例如 `SPINORAMA_API_KEY`；不要写进仓库、日志或 GUI。
-- 模组运行时不需要 Spinorama key；它只读取本地 `speaker_specs` JSON。
+- 模组运行时不需要 Spinorama key；它只读取本地 `speaker_data` JSON。
 - 申请和再分发前确认测量 license；API key 不授予商业使用权，也不覆盖测量许可。
 
 ### 7.5 晚期混响
@@ -574,8 +608,9 @@ for t in data:
 - 干声路径不引入 lookahead；反射用因果 delay line，播放开始后先填零，前 100 ms 没有反射是可接受的。
 - 每个 chunk 处理；delay line 预分配；避免在音频循环中创建 `Vec3`/集合。
 - CPU 预算：Java DSP 目标 < 1 ms / 10 ms 音频（约 10% 单核）；EFX 混响 < 1%。
-- 指向性渲染：3 频带/反射 tap 很便宜；可每声道先分 3 频带、共享 delay line，每个 tap 只做延迟读取 + 带增益 + 路由。
-- 1/3 octave 多频带或 32–64 tap FIR 会明显增加成本，先做 3 频带并实测。
+- 指向性与空气吸收：直达声每声道使用同一套频带增益/滤波（频带精度待定），开销可忽略；反射 tap 共享每声道 delay line，每个 tap 读取延迟副本并送入自己的反射 source。
+- 反射 source：每接收器最多 24–36 个额外 source + buffer；source/buffer 预分配并随房间快照复用；多接收器、HRTF、设备切换下要实测 OpenAL source 上限和 CPU。
+- 1/3 octave 多频带或 32–64 tap FIR 会明显增加成本；频带精度待用户确定，3 频带只是候选。
 - 参数平滑：增益/滤波系数一阶平滑；延迟变化交叉淡化。
 - EFX 生命周期：context/reset/device switch 时重建 effect/slot/filter；失败则禁用混响，不影响干声。
 - M3 已选择每接收器独立引擎/context；声学 effect/slot 也按接收器 context 隔离。后续若要跨接收器共享 aux slot，需要重新评估资源与隔离。
@@ -587,21 +622,26 @@ for t in data:
 ```text
 roomAcousticsEnabled   true
 earlyReflections       true
-earlyGainDb            -9
+earlyGainDb            0                 // Mod Menu, debug only
 lateReverb             true
 lateGainDb             -12
 directivity            true
 occlusion              true
 airAbsorption          true
+airTemperatureC        20                // Mod Menu
+airHumidityPercent     50                // Mod Menu
 maxReflectionTaps      24
 geometryUpdateHz       2–5
 rt60Clamp              0.3–2.5 s
 ```
 
+`earlyGainDb` 放 Mod Menu，仅调试用；早期反射的基础电平由 7.3 的物理链路计算，不再默认压低 6–12 dB。`lateGainDb` 仍属接收器/声学设置，最终以试听为准。
+
 UI 归属：
 
-- AV Receiver 的 Speakers/Settings 页：声学开关、early/late 电平、房间预设、重新扫描房间、调试信息。
-- Speakers 页显示每只扬声器的 speaker specs profile（品牌/型号/测量来源/许可证），允许切换 profile 或恢复默认。
+- Mod Menu（客户端，`CinemaClientConfig` / `CinemaConfigScreen`）：空气吸收开关、温度、湿度、`earlyGainDb` 调试滑杆；这些是客户端本地设置，不写入接收器。
+- AV Receiver 的 Speakers/Settings 页：声学总开关、late reverb 电平、房间预设、重新扫描房间、调试信息；不放 `earlyGainDb`。
+- Speakers 页显示每只扬声器的 speaker data profile（品牌/型号/测量来源/许可证），允许切换 profile 或恢复默认。
 - 投影仪 GUI 不放音频设置。
 - 调试命令（后续实现）：dump 房间尺寸/RT60/taps 数、指向性表、A/B 开关、强制材质、强制座位。
 
@@ -610,25 +650,26 @@ UI 归属：
 | 阶段 | 内容 | 依赖 | 验收 |
 |---|---|---|---|
 | A0 | EFX/EAXReverb 能力 spike：aux send、wet return、设备布局、CPU/延迟、reset | 无（可立即开始） | 能听到/关闭混响，无 OpenAL 错误，干声不受影响 |
-| A1 | 声学数据模型、材质映射、房间检测、直达声距离/空气吸收 | M4 已完成（扬声器位置可用） | dump 出正确的房间尺寸/RT60；干声电平一致 |
-| A1d | Spinorama 数据管线：选 4 类代表型号、抓取 H/V（或 3D）、归一化/降采样、生成资源和 metadata | 无（可提前） | 每类有一张可追溯的 speaker specs 数据表；来源/许可证/质量记录完整 |
-| A1e | 数据许可决策：CC BY-NC-SA 4.0 非商业/相同方式共享，或改宽松数据/用户本地导入 | A1d | 发布包与仓库的许可证/attribution 明确，不违反 NC/SA |
-| A2 | 一阶镜像源早期反射 + 5.1 路由 + 平滑 | M4 已完成 | 矩形房间反射延迟/方向合理；开关可辨；无爆音 |
-| A2d | 指向性渲染：角度插值 + 3 频带/短 FIR + 声学中心高度 | A1d；M4 已完成 | 旋转/离轴变化与实测曲线趋势一致；无分频染色/爆音 |
-| A3 | 遮挡 + 空气吸收 + 指向性/反射整合 | A2/A2d | 遮挡可闻；离轴反射变暗/变弱合理 |
+| A1 | 声学数据模型、材质映射、房间检测、直达声距离/空气吸收/指向性 | M4 已完成（扬声器位置可用） | dump 出正确的房间尺寸/RT60；关闭声学层时与 M4 基线一致，开启后直达声距离/角度/空气吸收变化可解释 |
+| A1d | ASR/Spinorama 数据管线：21 个型号、只读 H/V 原始文件、保留原始频率网格、补 -180°、按全频段能量平均计算 -10 dB 频率范围并取整到 1 Hz、生成**本地** profile（不打包） | 无（已实现转换器） | 21 个 profile 可加载；来源/许可证/修改说明完整；无 `quality` 字段 |
+| A1e | 数据许可决策：CC BY-NC-SA 4.0 非商业/相同方式共享；profile 只作为用户本地导入数据，不随模组分发 | A1d | 发布包与仓库的许可证/attribution 明确，不违反 NC/SA |
+| A2 | 一阶镜像源早期反射 + 独立反射 OpenAL source（镜像源位置）+ 平滑；反射增益按距离/空气吸收/材质/指向性计算 | M4 已完成 | 每个 tap 的镜像源位置/延迟/方向正确；反射/直达比与物理计算一致；24–36 source 无爆音/掉帧 |
+| A2d | 指向性渲染（直达声 + 反射）；频带精度与计算方法待用户确认（3 频带/1/3 octave/FIR 均可选） | A1d；M4 已完成 | 直达声与反射的旋转/离轴变化都与实测曲线趋势一致；无分频染色/爆音 |
+| A3 | 遮挡 + 反射可见性 + 直达声/反射综合校准 | A2/A2d | 遮挡可闻；离轴直达声与反射同时变暗/变弱且量级合理 |
 | A4 | 晚期混响 EAXReverb late tail + 参数映射 + 回退 | A0/A1 | RT60/材质变化可闻；无早期反射叠加 |
 | A5 | 接收器 GUI 开关/校准/预设 + 性能/设备切换验收 | M4/M3 已完成 | 4K/BSL 下无音频掉帧；设备切换可恢复 |
 | A6 | 后续：低频模态/多低音炮、衍射/散射、测量 RIR、HRTF | — | 另行设计 |
 
 ## 10. 测试清单
 
-- 几何/单元：镜像源延迟与增益、房间体积/表面积、Sabine/Eyring、指向性插值、FDN 稳定性。
-- 指向性数据：Spinorama 表归一化/角度方向/插值正确；3 频带近似与 1/3 octave/FIR 的 A/B；profile 来源/许可证记录完整。
-- 游戏内：10×6×4 m 与 20×10×6 m 矩形房间；吸声/反射材质切换；扬声器旋转；听者移动（含走出影院）；Seat 仅验证可乘坐，不参与声学。
-- A/B：干声、仅早期反射、仅晚期混响、两者；确认没有双早期反射/梳状滤波。
+- 几何/单元：镜像源位置/延迟/增益、房间体积/表面积、Sabine/Eyring、空气吸收曲线、指向性插值、FDN 稳定性。
+- 直达声：空气吸收随距离/频率变化、指向性随扬声器旋转/听者角度变化；与反射使用同一套系数，确认没有双重衰减。
+- 指向性数据：Spinorama 表归一化/角度方向/插值正确；频带精度待定，3 频带/1/3 octave/FIR 做 A/B；profile 来源/许可证记录完整。
+- 游戏内：10×6×4 m 与 20×10×6 m 矩形房间；吸声/反射材质切换；扬声器旋转；听者移动（含走出影院）；反射 source 的镜像位置/方向/距离 L 正确；Seat 仅验证可乘坐，不参与声学。
+- A/B：关闭声学层（M4 基线）、仅直达声处理、仅早期反射、仅晚期混响、两者；确认没有双早期反射/梳状滤波，也没有直达声双重距离/空气吸收/指向性。
 - A/V：播放/暂停/seek 后无漂移；音频时钟/PTS 不变；视频帧选择不受影响。
 - 性能：4K HEVC/AV1 + BSL + 声学；无 audio dropout；CPU/内存记录。
-- 兼容：EFX 不可用、设备切换、资源重载、世界卸载、M3 多接收器。
+- 兼容：EFX 不可用、设备切换、资源重载、世界卸载、M3 多接收器、24–36 个反射 source 的上限。
 - 边界：室外/非矩形/无天花板、无扬声器、LFE-only、单声道/立体声源、玩家远离影院/背对屏幕。
 - 最终由用户游戏内验收，不以截图/日志代替听感。
 
@@ -637,6 +678,10 @@ UI 归属：
 - **EAXReverb 可用性/语义**：自定义 context、OpenAL Soft 1.23.1、设备切换、aux send 发送量、wet return 声道布局都需要 spike 验证。
 - **EAXReverb 早期反射**：固定 5 m 模型不适合不同房间；计划关闭，仅作无几何 fallback。
 - **一阶近似的局限**：忽略衍射、散射、高阶反射、房间模态；对低频/LFE 不准确。
+- **直达声/反射 source 的双重处理**：直达声与反射各自独立 source；OpenAL 负责距离/方向，Java 只负责非距离增益，避免同一距离/空气吸收/指向性在两边各乘一次。反射 source 位置必须是镜像源 `s'`，不能放在反射点 `r`，否则 OpenAL 距离不是 `L`。
+- **反射 source 数量/性能**：每接收器最多 24–36 个额外 source + buffer；多接收器、HRTF、设备切换、OpenAL source 上限和 CPU 都需实测。
+- **OpenAL 距离模型**：`inverse distance clamped` 不是纯 `1/L`；若要求严格物理距离，需把反射 source 的 rolloff 设为 0 并由 Java 计算 `1/L`，待 A2 实测确认。
+- **空气吸收/指向性校准**：ISO 9613-1 与 Spinorama 数据都是近似；温湿度、扬声器型号映射和 H/V 两切面都会造成偏差，必须提供开关和 A/B。
 - **材质数据**：Minecraft 方块没有实测吸声系数；材质吸收仍是近似，需要试听校准。
 - **Spinorama 型号映射**：方块是风格化模型，映射到某个真实型号必然有偏差；需要 tooltip/文档标明 profile 来源，并允许替换。
 - **Spinorama 数据质量/角度**：不同测量来源、平滑、测量轴、缺失角度/低频数据会影响结果；H/V 两切面不能完全代表 3D 指向性，分频 lobing 可能被简化。
@@ -653,13 +698,13 @@ UI 归属：
 
 - EAXReverb 的结构描述与 OpenAL Soft 经典 `alcReverb.c` 的公开资料一致；但不同版本实现可能变化，实际行为以运行时 EFX API 为准。
 - 共享对话中引用的心理声学研究（一阶反射/指向性）未在本仓库独立复核；本文将其作为设计启发式，不当作严格结论。
-- Spinorama 测量数据来自第三方，默认 CC BY-NC-SA 4.0；每个 measurement 的 source/license/quality 必须逐条确认，不能只看站点默认。
+- Spinorama 测量数据来自第三方，默认 CC BY-NC-SA 4.0；每个 measurement 的 source/license 必须逐条确认，不能只看站点默认。`quality` 字段已删除。
 - Minecraft 方块没有真实声学参数；材质吸收仍是工程近似，必须通过游戏内试听校准；扬声器指向性只做“代表性型号映射”，不是方块本身的实测数据。
 
 ## 13. 建议的下一步
 
-1. 先做 **A1d Spinorama 数据 spike**：选 4 类代表型号，抓取 H/V（或 3D）数据，归一化/降采样，确认格式、质量、source/license；同时做 **A1e 许可决策**。
+1. **A1d/A1e 已完成数据侧工作**：21 个 ASR 型号的 H/V 原始数据转换为本地 profile（不打包），并确认 CC BY-NC-SA 4.0；下一步是在游戏内验证 profile 加载和选择器，不改动实际音频。
 2. 做 **A0 EFX spike**：确认 EAXReverb 在自定义 context 中可用，验证 aux send/wet return/reset，记录 OpenAL Soft 1.23.1 行为。
-3. M4 扬声器路由已完成，接下来做 **A1–A2**：房间检测 + 一阶镜像源 + 5.1 路由。
-4. 做 **A2d–A4**：Spinorama 指向性渲染、遮挡、晚期混响参数映射；用 A/B 试听决定 early/late 默认电平。
+3. M4 扬声器路由已完成，接下来做 **A1–A2**：房间检测 + 直达声空气吸收/指向性 + 一阶镜像源 + 独立反射 source。
+4. 做 **A2d–A4**：指向性渲染（频带精度/计算方法待用户确认）、遮挡、晚期混响参数映射；用 A/B 试听决定 early/late 默认电平。
 5. 如果 EFX spike 失败，改用小型 FDN 或暂时只做早期反射 + 无混响；不要为了混响阻塞主线。
