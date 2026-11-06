@@ -240,13 +240,15 @@ public final class RoomDetector {
 										   AcousticSurface.Axis axis, double coordinate,
 										   double normal, double minU, double maxU,
 										   double minV, double maxV) {
-		MaterialSample sample = sampleMaterial(level, hit.hit, axis);
+		MaterialSample sample = sampleMaterial(level, hit.hit, axis, minU, maxU,
+			minV, maxV);
 		return new AcousticSurface(axis, coordinate, normal, minU, maxU, minV, maxV,
 			sample.material, sample.samples);
 	}
 
 	private static MaterialSample sampleMaterial(Level level, BlockHitResult hit,
-												 AcousticSurface.Axis axis) {
+												 AcousticSurface.Axis axis, double minU,
+												 double maxU, double minV, double maxV) {
 		BlockPos center = hit.getBlockPos();
 		double low = 0.0;
 		double mid = 0.0;
@@ -260,6 +262,9 @@ public final class RoomDetector {
 					case Y -> center.offset(du, 0, dv);
 					case Z -> center.offset(du, dv, 0);
 				};
+				if (!insidePlane(pos, axis, minU, maxU, minV, maxV)) {
+					continue;
+				}
 				BlockState state = level.getBlockState(pos);
 				if (state.isAir() || AcousticMaterials.isIgnoredObstacle(state)) {
 					continue;
@@ -278,6 +283,28 @@ public final class RoomDetector {
 		}
 		return new MaterialSample(AcousticMaterial.mix("mixed", low, mid, high,
 			scattering, samples), samples);
+	}
+
+	private static boolean insidePlane(BlockPos pos, AcousticSurface.Axis axis,
+									   double minU, double maxU, double minV, double maxV) {
+		double u;
+		double v;
+		switch (axis) {
+			case X -> {
+				u = pos.getY() + 0.5;
+				v = pos.getZ() + 0.5;
+			}
+			case Y -> {
+				u = pos.getX() + 0.5;
+				v = pos.getZ() + 0.5;
+			}
+			case Z -> {
+				u = pos.getX() + 0.5;
+				v = pos.getY() + 0.5;
+			}
+			default -> throw new IllegalStateException();
+		}
+		return u >= minU && u <= maxU && v >= minV && v <= maxV;
 	}
 
 	/**
