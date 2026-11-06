@@ -310,7 +310,7 @@ RT60  ≈ 0.161 · V / (-S · ln(1 - α_avg)) // Eyring
 
 A1 只使用 Eyring。Sabine 仅适用于极低吸收/扩散场的粗略估计；用户决定不采用。Fitzroy 作为非扩散/不规则房间的备选公式，列入 TODO，暂不替换 Eyring。
 
-- RT60 只设上限 5.0 s，不设最低 clamp；Eyring 在低吸收时自然给出长尾音，高吸收时自然给出短尾音。
+- RT60 不设上下限；Eyring 在低吸收时自然给出长尾音，高吸收时自然给出短尾音。α=0 时理论为无穷，A3 映射到 EAXReverb 时再 clamp。
 - 材质吸收是近似值，必须提供调试/覆盖入口。
 
 **A1 初始实现（2026-11-06）**
@@ -320,7 +320,7 @@ A1 只使用 Eyring。Sabine 仅适用于极低吸收/扩散场的粗略估计�
 - 墙面材质：命中点周围 **9×9（半径 4）** 方块采样，跳过空气/设备，按样本数平均；屏幕单独映射。
 - 凸盒验证：监听者必须在六面内；盒内 1/3、2/3 的 2×2×2 点采样，仅在 **8/8 全为固体** 时判为不可信（避免墙角/家具误判）。
 - 失败 fallback：优先使用已命中的平面；缺失的对面按听者镜像估计，完全没有命中时使用以听者为中心的 **16×16×16 m** 估计盒（受世界高度限制）。`valid=false`，仍保留体积/表面积/材质/RT60 供 late reverb 使用。
-- RT60：只用 **Eyring** `0.161 V / (-S ln(1-α))`，只设上限 **5.0 s**，不设最低 clamp。Sabine 不采用；Fitzroy 作为待办备选。
+- RT60：只用 **Eyring** `0.161 V / (-S ln(1-α))`，**不设上下限**；α=0 时输出无穷，A3 再映射到 EAXReverb 的合法范围。Sabine 不采用；Fitzroy 作为待办备选。
 - 材质表（`AcousticMaterials`，low/mid/high 分别取 125/250、500/1k、2k/4k 的平均）：
   - screen `0.05/0.10/0.15`，scattering `0.10`（声学透声幕布估计）
   - fabric（羊毛/窗帘，14 oz 褶皱帘）`0.19/0.62/0.65`，`0.35`
@@ -664,7 +664,7 @@ airTemperatureC        20                // Mod Menu
 airHumidityPercent     50                // Mod Menu
 maxReflectionTaps      24
 geometryUpdateHz       2–5
-rt60Max                5.0 s              // no minimum clamp
+rt60Clamp              none               // Eyring; clamp only when mapping to EAX
 ```
 
 `earlyGainDb` 放 Mod Menu，仅调试用；早期反射的基础电平由 7.3 的物理链路计算，不再默认压低 6–12 dB。`lateGainDb` 仍属接收器/声学设置，最终以试听为准。

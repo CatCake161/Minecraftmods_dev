@@ -13,7 +13,6 @@ public record AcousticRoom(boolean valid, String fallbackReason,
 						   double alphaLow, double alphaMid, double alphaHigh,
 						   double rt60Low, double rt60Mid, double rt60High,
 						   List<AcousticSurface> surfaces) {
-	private static final double MAX_RT60 = 5.0;
 	private static final double EYRING = 0.161;
 
 	public AcousticRoom {
@@ -81,9 +80,10 @@ public record AcousticRoom(boolean valid, String fallbackReason,
 
 	private static double rt60(double volume, double area, double alpha) {
 		if (volume <= 0.0 || area <= 0.0 || alpha <= 0.0) {
-			return MAX_RT60;
+			// Zero absorption has no finite Sabine/Eyring decay time. A3 will
+			// clamp the value when mapping it to EAXReverb.
+			return Double.POSITIVE_INFINITY;
 		}
-		double value = EYRING * volume / (-area * Math.log(1.0 - alpha));
-		return Math.min(MAX_RT60, value);
+		return EYRING * volume / (-area * Math.log(1.0 - alpha));
 	}
 }

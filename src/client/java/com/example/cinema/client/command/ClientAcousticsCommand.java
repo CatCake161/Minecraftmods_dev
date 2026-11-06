@@ -25,6 +25,11 @@ public final class ClientAcousticsCommand {
 				AcousticScene.refresh(Minecraft.getInstance()))));
 	}
 
+	private static String rt60(double value) {
+		return Double.isFinite(value)
+			? String.format(Locale.ROOT, "%.2f", value) : "inf";
+	}
+
 	private static int dump(FabricClientCommandSource source, RoomAcousticSnapshot snapshot) {
 		if (snapshot == null) {
 			source.sendError(Component.literal("acoustics: no client world/player"));
@@ -39,9 +44,9 @@ public final class ClientAcousticsCommand {
 			"acoustics: size=%s volume=%.1f m3 surface=%.1f m2",
 			room.sizeLabel(), room.volume(), room.surfaceArea())));
 		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
-			"acoustics: alpha L/M/H=%.3f/%.3f/%.3f RT60 L/M/H=%.2f/%.2f/%.2f s",
+			"acoustics: alpha L/M/H=%.3f/%.3f/%.3f RT60 L/M/H=%s/%s/%s s",
 			room.alphaLow(), room.alphaMid(), room.alphaHigh(),
-			room.rt60Low(), room.rt60Mid(), room.rt60High())));
+			rt60(room.rt60Low()), rt60(room.rt60Mid()), rt60(room.rt60High()))));
 		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
 			"acoustics: listener eye=(%.2f, %.2f, %.2f) look=(%.2f, %.2f, %.2f)",
 			snapshot.listener().eye().x, snapshot.listener().eye().y,
