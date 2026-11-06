@@ -7,8 +7,10 @@ import com.example.cinema.block.entity.ProjectorBlockEntity;
 import com.example.cinema.block.entity.SpeakerBlockEntity;
 import com.example.cinema.client.audio.EfxReverbSpike;
 import com.example.cinema.client.audio.InGameAudioSpike;
+import com.example.cinema.client.audio.acoustics.AcousticScene;
 import com.example.cinema.client.audio.speakerdata.SpeakerDataAssignments;
 import com.example.cinema.client.audio.speakerdata.SpeakerDataRegistry;
+import com.example.cinema.client.command.ClientAcousticsCommand;
 import com.example.cinema.client.command.ClientHelpCommand;
 import com.example.cinema.client.command.ClientReceiverCommand;
 import com.example.cinema.client.command.ClientProjectorCommand;
@@ -156,6 +158,9 @@ public class CinemaClient implements ClientModInitializer {
 			ClientSpeakerDataCommand.register(dispatcher));
 
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
+			ClientAcousticsCommand.register(dispatcher));
+
+		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
 			ClientReceiverCommand.register(dispatcher));
 
 		ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
@@ -163,12 +168,14 @@ public class CinemaClient implements ClientModInitializer {
 			AvReceiverPlaybackManager.shutdown();
 			ProjectorOptics.clearCache();
 			SpeakerLocator.clear();
+			AcousticScene.invalidate();
 		});
 		ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
 			CinemaPlayer.stopActive(client);
 			AvReceiverPlaybackManager.shutdown();
 			ProjectorOptics.clearCache();
 			SpeakerLocator.clear();
+			AcousticScene.invalidate();
 			spikeEnvironmentPrepared = false;
 			fixedPlayerPos = null;
 		});
@@ -182,6 +189,7 @@ public class CinemaClient implements ClientModInitializer {
 		});
 		ClientTickEvents.END_CLIENT_TICK.register(AvReceiverPlaybackManager::tick);
 		ClientTickEvents.END_CLIENT_TICK.register(SpeakerLocator::tick);
+		ClientTickEvents.END_CLIENT_TICK.register(AcousticScene::tick);
 
 		Cinema.LOGGER.info(
 			"cinema screen: max rendered size {}x{} ({})",

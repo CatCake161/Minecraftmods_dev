@@ -113,6 +113,7 @@
 | `/cinema_speaker_data` | 打开 Speaker Data 的类型默认编辑器；`reload` 重新读取 profiles，`info` 打印类型默认与 on-axis 参考电平，`test <type> <h> <v> <hz>` 打印指向性采样与 on-axis EQ 增益 |
 | `/cinema_audio_spike` | 运行 5.1/OpenAL 音频测试，结果写入游戏日志 |
 | `/cinema_efx_spike` | A0 EFX/EAXReverb 能力测试：loopback 5.1/HRTF 湿声布局、aux send、CPU、reset；结果到聊天和日志 |
+| `/cinema_acoustics` | A1 调试：输出当前房间平面/尺寸/体积/表面积、材质吸收、RT60、听者和附近扬声器 |
 
 ## 5. 手动 / 自动测试
 

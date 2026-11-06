@@ -65,6 +65,7 @@ public final class ClientHelpCommand {
 			"§7真实方块用 /cinema_projector；客户端调参用 /cinema_projector_client。",
 			"§e/cinema_audio_spike§f  运行 5.1/OpenAL 测试",
 			"§e/cinema_efx_spike§f  运行 A0 EFX/EAXReverb 能力测试",
+			"§e/cinema_acoustics§f  输出 A1 房间/材质/扬声器快照",
 			"§7找不到新命令时重启客户端；帮助命令本身不会修改世界。"
 		),
 		List.of(
