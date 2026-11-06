@@ -13,9 +13,9 @@ public record AcousticRoom(boolean valid, String fallbackReason,
 						   double alphaLow, double alphaMid, double alphaHigh,
 						   double rt60Low, double rt60Mid, double rt60High,
 						   List<AcousticSurface> surfaces) {
-	private static final double MIN_RT60 = 0.3;
-	private static final double MAX_RT60 = 2.5;
-	private static final double SABINE = 0.161;
+	private static final double MIN_RT60 = 0.15;
+	private static final double MAX_RT60 = 5.0;
+	private static final double EYRING = 0.161;
 
 	public AcousticRoom {
 		fallbackReason = fallbackReason == null ? "" : fallbackReason;
@@ -84,9 +84,7 @@ public record AcousticRoom(boolean valid, String fallbackReason,
 		if (volume <= 0.0 || area <= 0.0 || alpha <= 0.0) {
 			return MAX_RT60;
 		}
-		double value = alpha < 0.2
-			? SABINE * volume / (area * alpha)
-			: SABINE * volume / (-area * Math.log(1.0 - alpha));
+		double value = EYRING * volume / (-area * Math.log(1.0 - alpha));
 		return Math.max(MIN_RT60, Math.min(MAX_RT60, value));
 	}
 }

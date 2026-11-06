@@ -7,6 +7,7 @@ import com.example.cinema.block.SeatBlock;
 import com.example.cinema.block.SpeakerBlock;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.CarpetBlock;
 import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.state.BlockState;
 
@@ -19,23 +20,25 @@ import net.minecraft.world.level.block.state.BlockState;
  */
 public final class AcousticMaterials {
 	public static final AcousticMaterial SCREEN =
-		new AcousticMaterial("screen", 0.15, 0.20, 0.25, 0.10);
+		new AcousticMaterial("screen", 0.05, 0.10, 0.15, 0.10);
 	public static final AcousticMaterial FABRIC =
-		new AcousticMaterial("fabric", 0.15, 0.40, 0.60, 0.35);
+		new AcousticMaterial("fabric", 0.19, 0.62, 0.65, 0.35);
+	public static final AcousticMaterial CARPET =
+		new AcousticMaterial("carpet", 0.04, 0.255, 0.625, 0.35);
 	public static final AcousticMaterial WOOD =
-		new AcousticMaterial("wood", 0.10, 0.08, 0.06, 0.15);
+		new AcousticMaterial("wood", 0.25, 0.13, 0.105, 0.15);
 	public static final AcousticMaterial STONE =
-		new AcousticMaterial("stone", 0.02, 0.02, 0.02, 0.10);
+		new AcousticMaterial("stone", 0.015, 0.05, 0.09, 0.10);
 	public static final AcousticMaterial GLASS =
-		new AcousticMaterial("glass", 0.03, 0.02, 0.02, 0.05);
+		new AcousticMaterial("glass", 0.12, 0.035, 0.02, 0.05);
 	public static final AcousticMaterial VEGETATION =
 		new AcousticMaterial("vegetation", 0.10, 0.20, 0.30, 0.40);
 	public static final AcousticMaterial WATER =
-		new AcousticMaterial("water", 0.01, 0.01, 0.01, 0.00);
+		new AcousticMaterial("water", 0.01, 0.01, 0.02, 0.00);
 	public static final AcousticMaterial SNOW =
-		new AcousticMaterial("snow", 0.15, 0.25, 0.35, 0.30);
+		new AcousticMaterial("snow", 0.20, 0.40, 0.60, 0.30);
 	public static final AcousticMaterial POROUS =
-		new AcousticMaterial("porous", 0.10, 0.15, 0.20, 0.30);
+		new AcousticMaterial("porous", 0.10, 0.20, 0.30, 0.30);
 	public static final AcousticMaterial METAL =
 		new AcousticMaterial("metal", 0.02, 0.03, 0.04, 0.05);
 	public static final AcousticMaterial DEFAULT =
@@ -48,7 +51,11 @@ public final class AcousticMaterials {
 		if (state.getBlock() instanceof ScreenBlock) {
 			return SCREEN;
 		}
-		if (state.is(BlockTags.WOOL) || state.is(BlockTags.WOOL_CARPETS)) {
+		if (state.getBlock() instanceof CarpetBlock
+			|| state.is(BlockTags.WOOL_CARPETS)) {
+			return CARPET;
+		}
+		if (state.is(BlockTags.WOOL)) {
 			return FABRIC;
 		}
 		if (state.is(BlockTags.PLANKS)) {

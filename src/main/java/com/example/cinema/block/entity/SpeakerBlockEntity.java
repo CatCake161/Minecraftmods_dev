@@ -4,6 +4,7 @@ import com.example.cinema.Cinema;
 import com.example.cinema.block.SpeakerBlock;
 import com.example.cinema.util.CinemaNames;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
@@ -16,6 +17,7 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.phys.Vec3;
 
 import java.util.Locale;
 import java.util.Objects;
@@ -26,11 +28,15 @@ public class SpeakerBlockEntity extends BlockEntity {
 	public static final double MIN_LEVEL_DB = -12.0;
 	public static final double MAX_LEVEL_DB = 6.0;
 	public static final int MAX_NAME_LENGTH = CinemaNames.MAX_LENGTH;
+	public static final int ACOUSTIC_YAW_STEPS = 36;
+	public static final float ACOUSTIC_YAW_STEP_DEGREES = 10.0f;
 
 	private SpeakerRole role = SpeakerRole.NONE;
 	private double levelDb;
 	private String name = "";
 	private BlockPos receiverPos;
+	/** -1 = derive from the block's four-way FACING; 0..35 = 10 degree steps. */
+	private int acousticYawStep = -1;
 
 	public SpeakerBlockEntity(BlockPos pos, BlockState blockState) {
 		super(Cinema.speakerBlockEntity, pos, blockState);
@@ -45,6 +51,36 @@ public class SpeakerBlockEntity extends BlockEntity {
 
 	public SpeakerRole role() {
 		return role;
+	}
+
+	/**
+	 * Acoustic aim in 10 degree steps. The block state keeps the four-way
+	 * placement facing; this field allows the player to aim the acoustic model
+	 * and its rendered model with the alignment tool.
+	 */
+	public int acousticYawStep() {
+		return acousticYawStep >= 0 ? acousticYawStep : yawStepFor(blockFacing());
+	}
+
+	public float acousticYawDegrees() {
+		return acousticYawStep() * ACOUSTIC_YAW_STEP_DEGREES;
+	}
+
+	public Vec3 acousticForward() {
+		double radians = Math.toRadians(acousticYawDegrees());
+		return new Vec3(Math.sin(radians), 0.0, -Math.cos(radians));
+	}
+
+	public int cycleAcousticYaw(boolean reverse) {
+		acousticYawStep = Math.floorMod(acousticYawStep() + (reverse ? -1 : 1),
+			ACOUSTIC_YAW_STEPS);
+		markUpdated();
+		return acousticYawStep;
+	}
+
+	public void setAcousticYawStep(int step) {
+		acousticYawStep = Math.floorMod(step, ACOUSTIC_YAW_STEPS);
+		markUpdated();
 	}
 
 	public double levelDb() {
@@ -121,11 +157,28 @@ public class SpeakerBlockEntity extends BlockEntity {
 		return Math.max(MIN_LEVEL_DB, Math.min(MAX_LEVEL_DB, value));
 	}
 
+	private Direction blockFacing() {
+		if (getBlockState().getBlock() instanceof SpeakerBlock) {
+			return getBlockState().getValue(SpeakerBlock.FACING);
+		}
+		return Direction.NORTH;
+	}
+
+	private static int yawStepFor(Direction direction) {
+		return switch (direction) {
+			case NORTH -> 0;
+			case EAST -> 9;
+			case SOUTH -> 18;
+			case WEST -> 27;
+			default -> 0;
+		};
+	}
+
 	public Component status() {
 		return Component.literal(String.format(Locale.ROOT,
-			"Speaker %s (%s): name=%s role=%s level=%+.1f dB receiver=%s",
+			"Speaker %s (%s): name=%s role=%s level=%+.1f dB yaw=%.1f° receiver=%s",
 			worldPosition.toShortString(), type().id(), name.isEmpty() ? "unnamed" : name,
-			role.label(), levelDb,
+			role.label(), levelDb, acousticYawDegrees(),
 			receiverPos == null ? "none" : receiverPos.toShortString()));
 	}
 
@@ -166,6 +219,9 @@ public class SpeakerBlockEntity extends BlockEntity {
 		tag.putString("role", role.name());
 		tag.putDouble("levelDb", levelDb);
 		tag.putString("name", name);
+		if (acousticYawStep >= 0) {
+			tag.putInt("acousticYawStep", acousticYawStep);
+		}
 		if (receiverPos != null) {
 			tag.putLong("receiverPos", receiverPos.asLong());
 		}
@@ -187,6 +243,8 @@ public class SpeakerBlockEntity extends BlockEntity {
 			levelDb = 0.0;
 		}
 		name = sanitizeName(tag.getString("name"));
+		acousticYawStep = tag.contains("acousticYawStep")
+			? Math.floorMod(tag.getInt("acousticYawStep"), ACOUSTIC_YAW_STEPS) : -1;
 		receiverPos = tag.contains("receiverPos") ? BlockPos.of(tag.getLong("receiverPos")) : null;
 	}
 

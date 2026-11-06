@@ -10,6 +10,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.EntityBlock;
 import net.minecraft.world.level.block.HorizontalDirectionalBlock;
+import net.minecraft.world.level.block.RenderShape;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityTicker;
 import net.minecraft.world.level.block.entity.BlockEntityType;
@@ -42,6 +43,13 @@ public class SpeakerBlock extends Block implements EntityBlock {
 	public BlockState getStateForPlacement(BlockPlaceContext context) {
 		// The driver faces the player who placed the speaker.
 		return defaultBlockState().setValue(FACING, context.getHorizontalDirection().getOpposite());
+	}
+
+	@Override
+	public RenderShape getRenderShape(BlockState state) {
+		// The speaker model is rendered by SpeakerBlockEntityRenderer so the
+		// acoustic yaw can rotate it beyond the four blockstate directions.
+		return RenderShape.ENTITYBLOCK_ANIMATED;
 	}
 
 	@Override

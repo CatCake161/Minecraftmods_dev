@@ -101,8 +101,9 @@
 | 低音炮 | `cinema:subwoofer` | 一格高；空手右键打开 speaker data GUI；角色在 GUI 内选择 `NONE/LFE` |
 | 影院线材 | `cinema:cable` | 两次右键配对：投影仪↔屏幕、接收器↔投影仪、接收器↔扬声器；潜行右键两个设备解除它们之间的连接 |
 | 影院遥控器 | `cinema:remote_controller` | 右键打开三栏扫描面板（AV 接收器/投影仪/扬声器），Ping 定位、Access 打开 GUI；128 格内生效；配对在接收器/投影仪 GUI 或线材中完成 |
+| 扬声器朝向校准器 | `cinema:speaker_alignment_tool` | 右键扬声器 +10° 声学 yaw，潜行右键 -10°；方块模型同步旋转到相同物理朝向 |
 
-创造模式位置：接收器/座位/扬声器在 Functional Blocks，线材/遥控器在 Tools & Utilities。
+创造模式位置：接收器/座位/扬声器在 Functional Blocks，线材/遥控器/朝向校准器在 Tools & Utilities。
 
 5.1 音频路由：接收器用线材连接的扬声器会按 FL/FR/FC/LFE/BL/BR 角色映射到实际位置，每只扬声器可在接收器 Speakers 页调整 `Level`（-12.0..+6.0 dB）；未连接对应声道的扬声器时，该声道回退虚拟 5.1。双声道/单声道媒体会自动上混为 5.1：FL/FR 保持原样，FC 取中置，LFE 取 120 Hz 低通中置，BL/BR 取左右差信号。听者始终使用玩家实际耳朵位置和朝向，不做 Seat/皇帝位或屏幕锁定的声场校正，因此玩家走出影院后空间定位仍然正确。主音量使用 dBFS（-60..+6，+6 为最大增益），静音独立。
 

@@ -49,8 +49,9 @@
 - [ ] A0b EFX 不可用回退：禁用 late reverb 或最小 Java FDN；干声/播放不受影响
 - [x] A0c 决策门：EAXReverb late tail 可用且 wet 能覆盖 5.1；选择 EAXReverb 作为 late-tail 首选，FDN 仅作为 EFX 不可用/布局不合适的回退。结论已回写 AUDIO-ACOUSTICS.md
 - [x] A1 声学数据模型：房间平面/包围盒、体积/表面积、材质吸收、扬声器位置/朝向/高度、玩家听者位置/朝向。已实现 `/cinema_acoustics` 快照；待游戏内 dump 验证
-- [ ] A1b 材质映射：初版 block tag/sound → 低/中/高频吸收 + 散射已实现；外部 JSON/数据驱动覆盖和试听校准待补
-- [x] A1c 房间检测：6 方向 raycast + 凸盒/内部空气验证 + 5 Hz 缓存 + 非矩形/室外 fallback 已实现；待游戏内验证
+- [ ] A1b 材质映射：已改为现实吸声系数的 3 频带估算（CDC/NIOSH、acoustic.ua；screen/植被/雪/多孔/金属为估计）；外部 JSON/数据驱动覆盖和试听校准待补
+- [x] A1c 房间检测：6 轴 × 9 射线扇形 + 中位平面 + 9×9 材质采样 + 宽松内部空气验证 + 5 Hz 缓存 + 非矩形/室外 fallback；RT60 clamp 0.15–5.0 s；待游戏内验证
+- [x] A1 扬声器朝向：36 档 10° 声学 yaw + Speaker Alignment Tool（右键 +10°，潜行 -10°）；方块模型由 `SpeakerBlockEntityRenderer` 同步物理旋转；待游戏内验证
 - [x] A1d ASR/Spinorama 数据管线：只读 `SPL Horizontal.txt`/`SPL Vertical.txt`；保留原始 194/200 点频率网格、不降采样；补 `-180°`；按全频段能量平均计算 -10 dB 频率范围并取整到 1 Hz；删除 `quality`；21 个型号生成到本地 `run/cinema/speaker_data/profiles/`，**不打包**。转换器：`docs/examples/speaker_data/convert_spinorama.py`。待游戏内加载验证
 - [ ] A1e Spinorama 许可决策：已确认 CC BY-NC-SA 4.0；profile 仅作为用户本地导入数据，不随模组分发；仍需在发布文档/THIRD-PARTY 写 attribution
 - [ ] A2 直达声：距离/空气吸收/指向性/遮挡；空气吸收和指向性同时作用于直达声与反射；OpenAL 负责距离，Java 只计算非距离增益，避免双重衰减；空气吸收温湿度配置放 Mod Menu
@@ -58,7 +59,7 @@
 - [ ] A2c 扬声器指向性：用 Spinorama profile 查表；声学中心/朝向；低音炮 omni；同时作用于直达声（扬声器→听者）和反射（扬声器→反射点）；具体计算方法待用户说明
 - [ ] A2d 指向性渲染（直达声 + 反射）：频带精度待用户确定（3 频带 / 1/3 octave / 32–64 tap FIR）；空气吸收按路径长度和频率计算；A/B 实测
 - [ ] A2e Mod Menu 声学设置：空气吸收开关/温度/湿度、`earlyGainDb` 调试滑杆（仅调试，默认 0 dB）
-- [ ] A3 晚期混响：EAXReverb 仅 late tail（`REFLECTIONS_GAIN=0`、`ECHO_DEPTH=0`）、RT60 Sabine/Eyring、HF/LF ratio、density/diffusion、modulation、air absorption
+- [ ] A3 晚期混响：EAXReverb 仅 late tail（`REFLECTIONS_GAIN=0`、`ECHO_DEPTH=0`）、RT60 Eyring、HF/LF ratio、density/diffusion、modulation、air absorption
 - [ ] A3b 自定义 FDN 回退（可选）：8 线 FDN、吸收滤波、6 声道 wet、稳定性限制
 - [ ] A4 接收器集成：Speakers/Settings 页声学总开关、late reverb 电平、房间预设/重扫；服务端字段/网络包；`earlyGainDb` 放 Mod Menu，不进接收器 GUI
 - [ ] A4b 听者策略（决策已定，待 A4 接入）：始终使用玩家实际耳朵位置/朝向；不做 Seat 皇帝位、固定监听点或声场校正

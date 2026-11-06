@@ -16,6 +16,7 @@ import com.example.cinema.command.ProjectorCommand;
 import com.example.cinema.entity.SeatEntity;
 import com.example.cinema.item.CableItem;
 import com.example.cinema.item.RemoteControllerItem;
+import com.example.cinema.item.SpeakerAlignmentToolItem;
 import com.example.cinema.pairing.CinemaPairing;
 import com.example.cinema.network.ProjectorSettingsHandler;
 import com.example.cinema.network.ProjectorSettingsPayload;
@@ -90,6 +91,8 @@ public class Cinema implements ModInitializer {
 	public static final Item SUBWOOFER_ITEM = new BlockItem(SUBWOOFER_BLOCK, new Item.Properties());
 	public static final Item CABLE_ITEM = new CableItem(new Item.Properties());
 	public static final Item REMOTE_CONTROLLER_ITEM = new RemoteControllerItem(new Item.Properties());
+	public static final Item SPEAKER_ALIGNMENT_TOOL_ITEM =
+		new SpeakerAlignmentToolItem(new Item.Properties().stacksTo(1));
 	public static BlockEntityType<ScreenBlockEntity> screenBlockEntity;
 	public static BlockEntityType<ProjectorBlockEntity> projectorBlockEntity;
 	public static BlockEntityType<AvReceiverBlockEntity> avReceiverBlockEntity;
@@ -117,6 +120,8 @@ public class Cinema implements ModInitializer {
 		Registry.register(BuiltInRegistries.ITEM, id("subwoofer"), SUBWOOFER_ITEM);
 		Registry.register(BuiltInRegistries.ITEM, id("cable"), CABLE_ITEM);
 		Registry.register(BuiltInRegistries.ITEM, id("remote_controller"), REMOTE_CONTROLLER_ITEM);
+		Registry.register(BuiltInRegistries.ITEM, id("speaker_alignment_tool"),
+			SPEAKER_ALIGNMENT_TOOL_ITEM);
 		screenBlockEntity = Registry.register(BuiltInRegistries.BLOCK_ENTITY_TYPE, id("screen"),
 			BlockEntityType.Builder.of(ScreenBlockEntity::new, SCREEN_BLOCK).build(null));
 		projectorBlockEntity = Registry.register(BuiltInRegistries.BLOCK_ENTITY_TYPE, id("projector"),
@@ -186,6 +191,7 @@ public class Cinema implements ModInitializer {
 		ItemGroupEvents.modifyEntriesEvent(CreativeModeTabs.TOOLS_AND_UTILITIES).register(entries -> {
 			entries.accept(CABLE_ITEM);
 			entries.accept(REMOTE_CONTROLLER_ITEM);
+			entries.accept(SPEAKER_ALIGNMENT_TOOL_ITEM);
 		});
 
 		LOGGER.info("Cinema is loading!");

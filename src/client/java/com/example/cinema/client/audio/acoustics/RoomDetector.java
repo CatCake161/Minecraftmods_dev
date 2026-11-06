@@ -1,6 +1,5 @@
 package com.example.cinema.client.audio.acoustics;
 
-import com.example.cinema.block.SpeakerBlock;
 import com.example.cinema.block.entity.SpeakerBlockEntity;
 import com.example.cinema.block.entity.SpeakerRole;
 import com.example.cinema.block.entity.SpeakerType;
@@ -34,13 +33,14 @@ import java.util.List;
  */
 public final class RoomDetector {
 	private static final double MAX_RAY_DISTANCE = 48.0;
-	private static final double MIN_WALL_DISTANCE = 0.5;
 	private static final double MIN_ROOM_DIMENSION = 1.5;
 	private static final double WALL_MARGIN = 0.05;
 	private static final double SKIP_OBSTACLE_EPSILON = 0.05;
+	private static final double FAN_OFFSET = 0.12;
 	private static final int MAX_SKIP_ITERATIONS = 16;
-	private static final int MATERIAL_SAMPLE_RADIUS = 2;
+	private static final int MATERIAL_SAMPLE_RADIUS = 4;
 	private static final double SPEAKER_RADIUS = 48.0;
+	private static final double ACOUSTIC_FRONT_OFFSET = 0.45;
 	private static final double FALLBACK_HALF_XZ = 6.0;
 	private static final double FALLBACK_DOWN = 3.0;
 	private static final double FALLBACK_UP = 4.0;
@@ -53,28 +53,23 @@ public final class RoomDetector {
 		AcousticListener listener = new AcousticListener(eye, player.getLookAngle(),
 			new Vec3(0.0, 1.0, 0.0));
 
-		SurfaceHit east = cast(level, player, eye, Direction.EAST);
-		SurfaceHit west = cast(level, player, eye, Direction.WEST);
-		SurfaceHit up = cast(level, player, eye, Direction.UP);
-		SurfaceHit down = cast(level, player, eye, Direction.DOWN);
-		SurfaceHit south = cast(level, player, eye, Direction.SOUTH);
-		SurfaceHit north = cast(level, player, eye, Direction.NORTH);
+		SurfaceHit east = castPlane(level, player, eye, Direction.EAST);
+		SurfaceHit west = castPlane(level, player, eye, Direction.WEST);
+		SurfaceHit up = castPlane(level, player, eye, Direction.UP);
+		SurfaceHit down = castPlane(level, player, eye, Direction.DOWN);
+		SurfaceHit south = castPlane(level, player, eye, Direction.SOUTH);
+		SurfaceHit north = castPlane(level, player, eye, Direction.NORTH);
 		if (east == null || west == null || up == null || down == null
 			|| south == null || north == null) {
 			return fallback(level, player, listener, version, "missing room plane");
 		}
-		if (east.distance < MIN_WALL_DISTANCE || west.distance < MIN_WALL_DISTANCE
-			|| up.distance < MIN_WALL_DISTANCE || down.distance < MIN_WALL_DISTANCE
-			|| south.distance < MIN_WALL_DISTANCE || north.distance < MIN_WALL_DISTANCE) {
-			return fallback(level, player, listener, version, "wall too close");
-		}
 
-		double westX = west.hit.getLocation().x;
-		double eastX = east.hit.getLocation().x;
-		double downY = down.hit.getLocation().y;
-		double upY = up.hit.getLocation().y;
-		double northZ = north.hit.getLocation().z;
-		double southZ = south.hit.getLocation().z;
+		double westX = west.planeCoordinate;
+		double eastX = east.planeCoordinate;
+		double downY = down.planeCoordinate;
+		double upY = up.planeCoordinate;
+		double northZ = north.planeCoordinate;
+		double southZ = south.planeCoordinate;
 		double minX = Math.min(westX, eastX);
 		double maxX = Math.max(westX, eastX);
 		double minY = Math.min(downY, upY);
@@ -90,8 +85,8 @@ public final class RoomDetector {
 		if (!contains(eye, minX, maxX, minY, maxY, minZ, maxZ)) {
 			return fallback(level, player, listener, version, "listener outside box");
 		}
-		if (!mostlyAir(level, minX, maxX, minY, maxY, minZ, maxZ)) {
-			return fallback(level, player, listener, version, "interior mostly solid");
+		if (!hasOpenInterior(level, minX, maxX, minY, maxY, minZ, maxZ)) {
+			return fallback(level, player, listener, version, "interior fully solid");
 		}
 
 		List<AcousticSurface> surfaces = new ArrayList<>(6);
@@ -142,26 +137,30 @@ public final class RoomDetector {
 			&& eye.z > minZ + WALL_MARGIN && eye.z < maxZ - WALL_MARGIN;
 	}
 
-	private static boolean mostlyAir(Level level, double minX, double maxX,
-									 double minY, double maxY, double minZ, double maxZ) {
+	/**
+	 * Very loose sanity check: reject only a box whose sampled interior is
+	 * entirely solid. Furniture and non-rectangular corners are common, so a
+	 * majority-solid rule produces too many false fallbacks near room corners.
+	 */
+	private static boolean hasOpenInterior(Level level, double minX, double maxX,
+										   double minY, double maxY, double minZ, double maxZ) {
 		int solid = 0;
 		int total = 0;
-		for (int ix = 0; ix < 3; ix++) {
-			double x = minX + (maxX - minX) * (0.25 + 0.25 * ix);
-			for (int iy = 0; iy < 3; iy++) {
-				double y = minY + (maxY - minY) * (0.25 + 0.25 * iy);
-				for (int iz = 0; iz < 3; iz++) {
-					double z = minZ + (maxZ - minZ) * (0.25 + 0.25 * iz);
+		for (int ix = 1; ix <= 2; ix++) {
+			double x = minX + (maxX - minX) * (ix / 3.0);
+			for (int iy = 1; iy <= 2; iy++) {
+				double y = minY + (maxY - minY) * (iy / 3.0);
+				for (int iz = 1; iz <= 2; iz++) {
+					double z = minZ + (maxZ - minZ) * (iz / 3.0);
 					BlockPos pos = BlockPos.containing(x, y, z);
-					BlockState state = level.getBlockState(pos);
-					if (!state.getCollisionShape(level, pos).isEmpty()) {
+					if (!level.getBlockState(pos).getCollisionShape(level, pos).isEmpty()) {
 						solid++;
 					}
 					total++;
 				}
 			}
 		}
-		return total == 0 || solid <= total / 2;
+		return total == 0 || solid < total;
 	}
 
 	private static AcousticSurface surface(Level level, SurfaceHit hit,
@@ -208,10 +207,70 @@ public final class RoomDetector {
 			scattering, samples), samples);
 	}
 
-	private static SurfaceHit cast(Level level, Player player, Vec3 start,
-								   Direction direction) {
-		Vec3 dir = new Vec3(direction.getStepX(), direction.getStepY(), direction.getStepZ());
-		Vec3 end = start.add(dir.scale(MAX_RAY_DISTANCE));
+	/**
+	 * Casts a small fan around the axis and picks the median plane hit. This
+	 * avoids a single ray slipping through a doorway or grazing a corner.
+	 */
+	private static SurfaceHit castPlane(Level level, Player player, Vec3 start,
+										Direction axis) {
+		Vec3 axisVector = new Vec3(axis.getStepX(), axis.getStepY(), axis.getStepZ());
+		Vec3 u;
+		Vec3 v;
+		switch (axis.getAxis()) {
+			case X -> {
+				u = new Vec3(0.0, 1.0, 0.0);
+				v = new Vec3(0.0, 0.0, 1.0);
+			}
+			case Y -> {
+				u = new Vec3(1.0, 0.0, 0.0);
+				v = new Vec3(0.0, 0.0, 1.0);
+			}
+			case Z -> {
+				u = new Vec3(1.0, 0.0, 0.0);
+				v = new Vec3(0.0, 1.0, 0.0);
+			}
+			default -> throw new IllegalStateException();
+		}
+		List<SurfaceHit> hits = new ArrayList<>(9);
+		for (int iu = -1; iu <= 1; iu++) {
+			for (int iv = -1; iv <= 1; iv++) {
+				Vec3 direction = axisVector
+					.add(u.scale(iu * FAN_OFFSET))
+					.add(v.scale(iv * FAN_OFFSET))
+					.normalize();
+				SurfaceHit hit = castRay(level, player, start, axis, direction);
+				if (hit != null) {
+					hits.add(hit);
+				}
+			}
+		}
+		if (hits.isEmpty()) {
+			return null;
+		}
+		Direction expectedFace = expectedFace(axis);
+		List<SurfaceHit> filtered = new ArrayList<>();
+		for (SurfaceHit hit : hits) {
+			if (hit.hit.getDirection() == expectedFace) {
+				filtered.add(hit);
+			}
+		}
+		List<SurfaceHit> chosen = filtered.isEmpty() ? hits : filtered;
+		double median = medianCoordinate(chosen);
+		SurfaceHit representative = chosen.get(0);
+		double best = Double.MAX_VALUE;
+		for (SurfaceHit hit : chosen) {
+			double distance = Math.abs(hit.planeCoordinate - median);
+			if (distance < best) {
+				best = distance;
+				representative = hit;
+			}
+		}
+		return new SurfaceHit(representative.hit, representative.distance, median);
+	}
+
+	private static SurfaceHit castRay(Level level, Player player, Vec3 start,
+									  Direction axis, Vec3 direction) {
+		Vec3 end = start.add(direction.scale(MAX_RAY_DISTANCE));
 		Vec3 cursor = start;
 		for (int i = 0; i < MAX_SKIP_ITERATIONS; i++) {
 			BlockHitResult hit = level.clip(new ClipContext(cursor, end,
@@ -221,9 +280,14 @@ public final class RoomDetector {
 			}
 			BlockState state = level.getBlockState(hit.getBlockPos());
 			if (!AcousticMaterials.isIgnoredObstacle(state)) {
-				return new SurfaceHit(hit, hit.getLocation().distanceTo(start));
+				double coordinate = switch (axis.getAxis()) {
+					case X -> hit.getLocation().x;
+					case Y -> hit.getLocation().y;
+					case Z -> hit.getLocation().z;
+				};
+				return new SurfaceHit(hit, hit.getLocation().distanceTo(start), coordinate);
 			}
-			cursor = hit.getLocation().add(dir.scale(skipDistance(hit, direction)));
+			cursor = hit.getLocation().add(direction.scale(skipDistance(hit, direction)));
 			if (cursor.distanceTo(start) > MAX_RAY_DISTANCE) {
 				return null;
 			}
@@ -231,14 +295,41 @@ public final class RoomDetector {
 		return null;
 	}
 
-	private static double skipDistance(BlockHitResult hit, Direction direction) {
+	private static Direction expectedFace(Direction axis) {
+		return switch (axis) {
+			case EAST -> Direction.WEST;
+			case WEST -> Direction.EAST;
+			case UP -> Direction.DOWN;
+			case DOWN -> Direction.UP;
+			case SOUTH -> Direction.NORTH;
+			case NORTH -> Direction.SOUTH;
+		};
+	}
+
+	private static double medianCoordinate(List<SurfaceHit> hits) {
+		double[] values = new double[hits.size()];
+		for (int i = 0; i < hits.size(); i++) {
+			values[i] = hits.get(i).planeCoordinate;
+		}
+		java.util.Arrays.sort(values);
+		int middle = values.length / 2;
+		return values.length % 2 == 0
+			? (values[middle - 1] + values[middle]) * 0.5
+			: values[middle];
+	}
+
+	private static double skipDistance(BlockHitResult hit, Vec3 direction) {
 		BlockPos pos = hit.getBlockPos();
 		Vec3 location = hit.getLocation();
-		double distance = switch (direction.getAxis()) {
-			case X -> (direction.getStepX() > 0 ? pos.getX() + 1.0 : pos.getX()) - location.x;
-			case Y -> (direction.getStepY() > 0 ? pos.getY() + 1.0 : pos.getY()) - location.y;
-			case Z -> (direction.getStepZ() > 0 ? pos.getZ() + 1.0 : pos.getZ()) - location.z;
-		};
+		double distance;
+		if (Math.abs(direction.x) >= Math.abs(direction.y)
+			&& Math.abs(direction.x) >= Math.abs(direction.z)) {
+			distance = (direction.x > 0 ? pos.getX() + 1.0 : pos.getX()) - location.x;
+		} else if (Math.abs(direction.y) >= Math.abs(direction.z)) {
+			distance = (direction.y > 0 ? pos.getY() + 1.0 : pos.getY()) - location.y;
+		} else {
+			distance = (direction.z > 0 ? pos.getZ() + 1.0 : pos.getZ()) - location.z;
+		}
 		return Math.max(0.1, Math.abs(distance) + SKIP_OBSTACLE_EPSILON);
 	}
 
@@ -265,10 +356,12 @@ public final class RoomDetector {
 					}
 					SpeakerType type = speaker.type();
 					double centerY = pos.getY() + acousticCenterOffset(type);
-					Vec3 position = new Vec3(pos.getX() + 0.5, centerY, pos.getZ() + 0.5);
-					Direction facing = speaker.getBlockState().getValue(SpeakerBlock.FACING);
+					Vec3 forward = speaker.acousticForward();
+					Vec3 center = new Vec3(pos.getX() + 0.5, centerY, pos.getZ() + 0.5);
+					Vec3 position = center.add(forward.scale(ACOUSTIC_FRONT_OFFSET));
 					speakers.add(new AcousticSpeaker(pos, speaker.role(), type, position,
-						facing, speaker.levelDb(), profileId(speaker)));
+						forward, speaker.acousticYawDegrees(), speaker.levelDb(),
+						profileId(speaker)));
 				}
 			}
 		}
@@ -284,16 +377,21 @@ public final class RoomDetector {
 		}
 	}
 
+	/**
+	 * Tweeter/driver height above the block's lower Y, derived from the block
+	 * models: floorstanding upper tweeter, bookshelf tweeter, center tweeter,
+	 * and subwoofer driver center.
+	 */
 	private static double acousticCenterOffset(SpeakerType type) {
 		return switch (type) {
-			case FLOORSTANDING -> 1.0;
-			case BOOKSHELF -> 0.7;
-			case CENTER -> 0.6;
-			case SUBWOOFER -> 0.3;
+			case FLOORSTANDING -> 1.31;
+			case BOOKSHELF -> 0.77;
+			case CENTER -> 0.33;
+			case SUBWOOFER -> 0.48;
 		};
 	}
 
-	private record SurfaceHit(BlockHitResult hit, double distance) {
+	private record SurfaceHit(BlockHitResult hit, double distance, double planeCoordinate) {
 	}
 
 	private record MaterialSample(AcousticMaterial material, int samples) {

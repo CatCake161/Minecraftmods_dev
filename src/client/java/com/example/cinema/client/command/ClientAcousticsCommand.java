@@ -58,10 +58,11 @@ public final class ClientAcousticsCommand {
 			"acoustics: speakers=" + snapshot.speakers().size()));
 		for (AcousticSpeaker speaker : snapshot.speakers()) {
 			source.sendFeedback(Component.literal(String.format(Locale.ROOT,
-				"acoustics: %s %s pos=(%.2f, %.2f, %.2f) facing=%s level=%+.1f dB profile=%s",
+				"acoustics: %s %s pos=(%.2f, %.2f, %.2f) yaw=%.1f forward=(%.2f, %.2f) level=%+.1f dB profile=%s",
 				speaker.role().label(), speaker.type().id(),
 				speaker.position().x, speaker.position().y, speaker.position().z,
-				speaker.facing().getName(), speaker.levelDb(),
+				speaker.yawDegrees(), speaker.forward().x, speaker.forward().z,
+				speaker.levelDb(),
 				speaker.profileId().isBlank() ? "-" : speaker.profileId())));
 		}
 		return 1;

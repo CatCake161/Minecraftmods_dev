@@ -229,10 +229,10 @@ AcousticSpeaker
   role               FL/FR/FC/LFE/BL/BR
   type               floorstanding/bookshelf/center/subwoofer
   position           世界坐标（含高度偏移）
-  facing             水平朝向
+  facing             36 档声学 yaw（10° 步进，0..350°）
   gain               校准增益
   speakerDataProfileId
-  acousticCenterY    声学中心（高音轴）高度偏移
+  acousticCenter     高音/驱动轴位置（含前 baffle 偏移）
 
 SpeakerDataProfile
   id                 例如 kef-r11-meta / revel-f206 / sub-omni
@@ -305,34 +305,39 @@ RoomAcousticSnapshot
 
 ```text
 α_avg = Σ(S_i · α_i) / ΣS_i
-RT60  ≈ 0.161 · V / (S · α_avg)          // Sabine，低吸收
-RT60  ≈ 0.161 · V / (-S · ln(1 - α_avg)) // Eyring，高吸收
+RT60  ≈ 0.161 · V / (-S · ln(1 - α_avg)) // Eyring
 ```
 
-- RT60 建议 clamp 到 0.3–2.5 s；过长的尾音在游戏内会掩盖对白。
+A1 只使用 Eyring。Sabine 仅适用于极低吸收/扩散场的粗略估计；用户决定不采用。
+
+- RT60 clamp 到 0.15–5.0 s；过长的尾音在游戏内会掩盖对白，但硬表面房间需要保留真实长尾音。
 - 材质吸收是近似值，必须提供调试/覆盖入口。
 
 **A1 初始实现（2026-11-06）**
 
 - 数据模型：`AcousticMaterial`、`AcousticSurface`、`AcousticRoom`、`AcousticSpeaker`、`AcousticListener`、`RoomAcousticSnapshot`。
-- 房间检测：从玩家眼睛沿 ±X/±Y/±Z 各 raycast 48 m；跳过扬声器、座椅、投影仪、接收器，屏幕作为墙面；最近墙面 <0.5 m 或房间任一维 <1.5 m 则失败。
-- 墙面材质：命中点周围 5×5（半径 2）方块采样，跳过空气/设备，按样本数平均；屏幕单独映射。
-- 凸盒验证：监听者必须在六面内；在盒内 25/50/75% 的 3×3×3 点采样，超过 13/27 为固体则判为不可信。
+- 房间检测：从玩家眼睛沿 ±X/±Y/±Z 各发 **9 条射线扇形**（3×3，约 ±6.8°），共 54 条；取同轴向、同命中面的中位平面，避免墙角/门洞单条射线失败。跳过扬声器、座椅、投影仪、接收器，屏幕作为墙面；不再因“墙面太近”直接失败，仅保留任一维 <1.5 m 的失败条件。
+- 墙面材质：命中点周围 **9×9（半径 4）** 方块采样，跳过空气/设备，按样本数平均；屏幕单独映射。
+- 凸盒验证：监听者必须在六面内；盒内 1/3、2/3 的 2×2×2 点采样，仅在 **8/8 全为固体** 时判为不可信（避免墙角/家具误判）。
 - 失败 fallback：以听者为中心取 12×7×12 m 盒（x/z ±6、y -3/+4），`valid=false`，仍保留体积/表面积/默认材质/RT60 供 late reverb 使用。
-- RT60：`α<0.2` 用 Sabine，否则用 Eyring；全部 clamp 到 0.3–2.5 s。
-- 初始材质表（代码 `AcousticMaterials`，仅占位，需试听/实测校准）：
-  - screen `0.15/0.20/0.25`，scattering `0.10`
-  - fabric（羊毛/地毯）`0.15/0.40/0.60`，`0.35`
-  - wood `0.10/0.08/0.06`，`0.15`
-  - stone `0.02/0.02/0.02`，`0.10`
-  - glass `0.03/0.02/0.02`，`0.05`
-  - vegetation（树叶/草）`0.10/0.20/0.30`，`0.40`
-  - water `0.01/0.01/0.01`，`0.00`
-  - snow `0.15/0.25/0.35`，`0.30`
-  - porous（泥土/沙/砂砾）`0.10/0.15/0.20`，`0.30`
-  - metal `0.02/0.03/0.04`，`0.05`
+- RT60：只用 **Eyring** `0.161 V / (-S ln(1-α))`，clamp 到 **0.15–5.0 s**。Sabine 不采用。
+- 材质表（`AcousticMaterials`，low/mid/high 分别取 125/250、500/1k、2k/4k 的平均）：
+  - screen `0.05/0.10/0.15`，scattering `0.10`（声学透声幕布估计）
+  - fabric（羊毛/窗帘，14 oz 褶皱帘）`0.19/0.62/0.65`，`0.35`
+  - carpet（地毯，heavy carpet on concrete）`0.04/0.255/0.625`，`0.35`
+  - wood（3/4" 胶合板护墙）`0.25/0.13/0.105`，`0.15`
+  - stone（粗糙混凝土/砖石）`0.015/0.05/0.09`，`0.10`
+  - glass（6 mm 玻璃）`0.12/0.035/0.02`，`0.05`
+  - vegetation（树叶/草）`0.10/0.20/0.30`，`0.40`（估计）
+  - water `0.01/0.01/0.02`，`0.00`
+  - snow `0.20/0.40/0.60`，`0.30`（估计）
+  - porous（泥土/沙/砂砾）`0.10/0.20/0.30`，`0.30`（估计）
+  - metal `0.02/0.03/0.04`，`0.05`（估计）
   - default `0.05/0.05/0.05`，`0.10`
-- 扬声器声学中心：落地 +1.0 m、书架 +0.7 m、中置 +0.6 m、低音炮 +0.3 m（相对方块 y）；朝向取 `SpeakerBlock.FACING`；同时记录 role/type/level/profile。
+  - 主要来源：CDC/NIOSH《Compendium of Materials for Noise Control》Table 5、`acoustic.ua` absorption coefficients；screen/vegetation/snow/porous/metal 缺少直接对应项，为估计值。
+- 扬声器声学中心：落地 **+1.31 m**（上层高音）、书架 **+0.77 m**、中置 **+0.33 m**、低音炮 **+0.48 m**（相对方块 y，来自方块模型）；声学中心再沿朝向向前面板偏移 **0.45 m**。
+- 扬声器朝向：新增 **36 档 10° 声学 yaw**（0=N，9=E，18=S，27=W），不再受方块四向 `FACING` 限制；方块模型通过 `SpeakerBlockEntityRenderer` 同步旋转到同一物理朝向。
+- 朝向校准物品：**Speaker Alignment Tool**（`cinema:speaker_alignment_tool`，铁锭+指南针合成）；右键 +10°，潜行右键 -10°，action bar 显示当前角度。
 - 缓存：移动/转头时约 5 Hz 更新，静止时每 20 tick 更新；断线/退出清空。A1 只生成快照，不改变任何音频。
 - 调试：`/cinema_acoustics` 强制刷新并输出房间、六个平面、材质、RT60、听者和附近扬声器。
 
@@ -419,7 +424,7 @@ R_p(f) = sqrt(1 - α_p(f))
 
 **角度与坐标**
 
-- 扬声器朝向由 `SpeakerBlock.FACING` 定义；声学中心取高音轴高度偏移：落地式约 0.9–1.0 m，书架式约 0.6–0.8 m，中置约 0.6 m，低音炮约 0.3 m（按模型再校准）。
+- 扬声器朝向由 **36 档声学 yaw** 定义（对齐工具设置，10° 步进）；方块 `FACING` 只保留放置基准，实际模型由 `SpeakerBlockEntityRenderer` 按声学 yaw 旋转。声学中心按模型取高音/驱动轴：落地 +1.31 m、书架 +0.77 m、中置 +0.33 m、低音炮 +0.48 m（相对方块 y），再沿朝向向前面板偏移 0.45 m。
 - **角度定义采用 ANSI/CTA-2034-A §5.1 与 Figure 1**：0° 是 reference axis（on-axis）；正水平角在面向扬声器时指向听者右侧（即扬声器自身左侧）；正垂直角向上；+180° 与 -180° 是同一个后方点。源数据只有 +180°，导入时补一行 -180°，SPL 与 +180° 相同；H/V 表均为 -180..180 共 37 行。
 - 由世界坐标方向 `d`（扬声器 → 听者或反射点）计算：`f` 为扬声器前方单位向量，`u` 为世界上方，`r = normalize(cross(u, f))`（面向扬声器时的听者右侧）；`θh = atan2(dot(d, r), dot(d, f))`，`θv = asin(clamp(dot(d, u), -1, 1))`。`θh` 归一化到 -180..180，`θv` 到 -90..90；H/V 表做双线性插值。
 - 指向性归一化：每个频带减去 `onAxisSpl[band]`，只保留相对指向性。轴上 EQ 另行使用 `onAxisEqGainDb(f) = onAxisSpl(f) - onAxisReferenceDb`；`onAxisReferenceDb` 是**全频段能量平均** `10*log10(mean(10^(SPL/10)))`，对每个 on-axis 采样点等权（原始网格为对数间隔，近似 log-frequency 等权，不是线性频率积分），用来归一化整体响度，不参与 H/V 相对指向性。
@@ -576,7 +581,7 @@ for t in data:
 - 在自定义 OpenAL context 中检测 `ALC_EXT_EFX` / `AL_EXT_EFX`；创建 effect + auxiliary effect slot。
 - 每个 source 设置 aux send（发送量按 wet 需求）；effect slot 输出湿声到主输出。
 - 参数映射建议：
-  - `DECAY_TIME` = clamp(RT60, 0.3, 2.5)。
+  - `DECAY_TIME` = clamp(RT60, 0.15, 5.0)。
   - `DECAY_HFRATIO` / `DECAY_LFRATIO`：由材质高频/低频吸收决定；HF 吸收强则 HF ratio < 1。
   - `GAINHF` / `GAINLF`：由材质频响决定。
   - `DENSITY` / `DIFFUSION`：影院建议较高密度/扩散；具体值试听。
@@ -658,7 +663,7 @@ airTemperatureC        20                // Mod Menu
 airHumidityPercent     50                // Mod Menu
 maxReflectionTaps      24
 geometryUpdateHz       2–5
-rt60Clamp              0.3–2.5 s
+rt60Clamp              0.15–5.0 s
 ```
 
 `earlyGainDb` 放 Mod Menu，仅调试用；早期反射的基础电平由 7.3 的物理链路计算，不再默认压低 6–12 dB。`lateGainDb` 仍属接收器/声学设置，最终以试听为准。
@@ -676,7 +681,7 @@ UI 归属：
 | 阶段 | 内容 | 依赖 | 验收 |
 |---|---|---|---|
 | A0 | EFX/EAXReverb 能力 spike：aux send、wet return、设备布局、CPU/延迟、reset | 无；已实现 `/cinema_efx_spike` | 游戏内通过：realEFX/sharedCaps EFX=OK，max sends=2，5.1 wet 5 声道，HRTF enabled，CPU≈0.8%，reset=OK；听感/物理切换留 A3/A4 |
-| A1 | 声学数据模型、材质映射、房间检测、扬声器/听者快照 | 已实现 `/cinema_acoustics`（A1b 外部数据表待补） | 游戏内 dump 出正确的房间尺寸/RT60/六面材质/扬声器；A1 不改变音频。直达声距离/空气吸收/指向性归 A2 |
+| A1 | 声学数据模型、材质映射、房间检测、扬声器/听者快照、36 档扬声器 yaw | 已实现 `/cinema_acoustics` + Speaker Alignment Tool（A1b 外部数据表待补） | 游戏内 dump 出正确的房间尺寸/RT60/六面材质/扬声器；墙角/门洞不应误判；A1 不改变音频。直达声距离/空气吸收/指向性归 A2 |
 | A1d | ASR/Spinorama 数据管线：21 个型号、只读 H/V 原始文件、保留原始频率网格、补 -180°、按全频段能量平均计算 -10 dB 频率范围并取整到 1 Hz、生成**本地** profile（不打包） | 无（已实现转换器） | 21 个 profile 可加载；来源/许可证/修改说明完整；无 `quality` 字段 |
 | A1e | 数据许可决策：CC BY-NC-SA 4.0 非商业/相同方式共享；profile 只作为用户本地导入数据，不随模组分发 | A1d | 发布包与仓库的许可证/attribution 明确，不违反 NC/SA |
 | A2 | 一阶镜像源早期反射 + 独立反射 OpenAL source（镜像源位置）+ 平滑；反射增益按距离/空气吸收/材质/指向性计算 | M4 已完成 | 每个 tap 的镜像源位置/延迟/方向正确；反射/直达比与物理计算一致；24–36 source 无爆音/掉帧 |
@@ -688,7 +693,7 @@ UI 归属：
 
 ## 10. 测试清单
 
-- 几何/单元：镜像源位置/延迟/增益、房间体积/表面积、Sabine/Eyring、空气吸收曲线、指向性插值、FDN 稳定性。
+- 几何/单元：镜像源位置/延迟/增益、房间体积/表面积、Eyring RT60、空气吸收曲线、指向性插值、FDN 稳定性。
 - 直达声：空气吸收随距离/频率变化、指向性随扬声器旋转/听者角度变化；与反射使用同一套系数，确认没有双重衰减。
 - 指向性数据：Spinorama 表归一化/角度方向/插值正确；频带精度待定，3 频带/1/3 octave/FIR 做 A/B；profile 来源/许可证记录完整。
 - 游戏内：10×6×4 m 与 20×10×6 m 矩形房间；吸声/反射材质切换；扬声器旋转；听者移动（含走出影院）；反射 source 的镜像位置/方向/距离 L 正确；Seat 仅验证可乘坐，不参与声学。

@@ -30,6 +30,7 @@ import com.example.cinema.client.render.ScreenBlockEntityRenderer;
 import com.example.cinema.client.render.ScreenGeometry;
 import com.example.cinema.client.render.ScreenLimits;
 import com.example.cinema.client.render.SeatEntityRenderer;
+import com.example.cinema.client.render.SpeakerBlockEntityRenderer;
 import com.example.cinema.client.render.SpeakerLocator;
 import com.example.cinema.network.RemotePairingListPayload;
 import com.example.cinema.network.RemoteScanListPayload;
@@ -181,6 +182,8 @@ public class CinemaClient implements ClientModInitializer {
 		});
 
 		BlockEntityRendererRegistry.register(Cinema.screenBlockEntity, ScreenBlockEntityRenderer::new);
+		BlockEntityRendererRegistry.register(Cinema.speakerBlockEntity,
+			SpeakerBlockEntityRenderer::new);
 		EntityRendererRegistry.register(Cinema.seatEntityType, SeatEntityRenderer::new);
 		WorldRenderEvents.START.register(context -> ScreenGeometry.beginFrame());
 		WorldRenderEvents.AFTER_ENTITIES.register(context -> {
