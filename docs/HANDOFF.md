@@ -49,7 +49,7 @@
 ### 3.2 AV Receiver 与媒体
 
 - M1：媒体/播放状态/音画时钟迁入接收器；`AvReceiverControlPayload`（C2S）+ 服务端校验；客户端 `AvReceiverPlaybackManager` 每 10 tick 同步状态，视频经 `ProjectorOptics` 路由到屏幕。
-- M2：接收器 GUI（Media/Speakers/Signal/Settings）、默认库 + 外部媒体库、`lib/<id>/...` key、添加/移除/切换库、记住上次库/文件夹、缺文件提示、长文本截断/tooltip/滑块 pending/ESC 暂停同步。选择 >64 MiB 媒体时使用快速采样指纹（`q1:` 头尾各 4 MiB + size），避免播放前全量 SHA-256 阻塞。
+- M2：接收器 GUI（Media/Speakers/Signal/Settings）、默认库 + 外部媒体库、`lib/<id>/...` key、添加/移除/切换库、记住上次库/文件夹/搜索词、缺文件提示、长文本截断/tooltip/滑块 pending/ESC 暂停同步。选择 >64 MiB 媒体时使用快速采样指纹（`q1:` 头尾各 4 MiB + size），避免播放前全量 SHA-256 阻塞。
 - 媒体库扫描/探测结果按“库 + 文件夹”在当前游戏会话内缓存；Refresh 强制刷新，添加/移除库会使对应缓存失效。
 - M3：每个接收器持有独立 `CinemaPlayer`、视频纹理和 `CinemaAudioEngine`/OpenAL context；两个接收器可同时播放，播放/暂停/seek/音量/静音互不影响。seek 当前是完整播放器/解码器重启，但复用视频纹理与 OpenAL device/context/source 池，只 flush 音频队列和时钟，不重建音频后端；首帧与音频调度时刻对齐。
 - M4：配对扬声器按 FL/FR/FC/LFE/BL/BR 角色映射到六个 source；听者始终使用玩家实际耳朵位置/朝向，不使用皇帝位或声场校正；未配对声道回退虚拟 5.1。

@@ -65,6 +65,7 @@ public final class AvReceiverConfigScreen extends Screen {
 
 	private static String rememberedLibraryId = LibraryRegistry.DEFAULT_ID;
 	private static String rememberedFolder = "";
+	private static String rememberedSearch = "";
 	/**
 	 * Session cache of scanned folders. The first open probes up to
 	 * {@link #PROBE_LIMIT} files; later opens reuse the result until Refresh.
@@ -239,6 +240,13 @@ public final class AvReceiverConfigScreen extends Screen {
 			if (!folderLoaded && !scanning) {
 				loadFolder(libraryId, folder, false);
 			}
+			// loadFolder() clears the filter for a fresh scan. Restore the
+			// previous search after it so closing and reopening the screen
+			// keeps the last query.
+			if (!rememberedSearch.isEmpty()) {
+				search = rememberedSearch;
+				searchBox.setValue(rememberedSearch);
+			}
 		} else if (tab == Tab.SPEAKERS) {
 			refreshSpeakers();
 			addSpeakerLevelWidgets();
@@ -400,6 +408,10 @@ public final class AvReceiverConfigScreen extends Screen {
 	public void onClose() {
 		flushPendingControls();
 		flushReceiverName();
+		if (searchBox != null) {
+			search = searchBox.getValue();
+		}
+		rememberedSearch = search;
 		scanGeneration++;
 		Cinema.LOGGER.info("cinema receiver gui: closed {}", receiver.getBlockPos().toShortString());
 		super.onClose();
