@@ -43,9 +43,10 @@ public final class RoomDetector {
 	private static final double SPEAKER_RADIUS = 48.0;
 	private static final double ACOUSTIC_FRONT_OFFSET = 0.45;
 	private static final double PLANE_STABILIZE_MARGIN = 1.5;
-	private static final double FALLBACK_HALF_XZ = 6.0;
-	private static final double FALLBACK_DOWN = 3.0;
-	private static final double FALLBACK_UP = 4.0;
+	/** When no usable planes are found, estimate a 16 x 16 x 16 m room. */
+	private static final double FALLBACK_HALF_XZ = 8.0;
+	private static final double FALLBACK_DOWN = 8.0;
+	private static final double FALLBACK_UP = 8.0;
 
 	private RoomDetector() {
 	}
