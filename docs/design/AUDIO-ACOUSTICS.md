@@ -308,19 +308,19 @@ RoomAcousticSnapshot
 RT60  ≈ 0.161 · V / (-S · ln(1 - α_avg)) // Eyring
 ```
 
-A1 只使用 Eyring。Sabine 仅适用于极低吸收/扩散场的粗略估计；用户决定不采用。
+A1 只使用 Eyring。Sabine 仅适用于极低吸收/扩散场的粗略估计；用户决定不采用。Fitzroy 作为非扩散/不规则房间的备选公式，列入 TODO，暂不替换 Eyring。
 
-- RT60 clamp 到 0.15–5.0 s；过长的尾音在游戏内会掩盖对白，但硬表面房间需要保留真实长尾音。
+- RT60 只设上限 5.0 s，不设最低 clamp；Eyring 在低吸收时自然给出长尾音，高吸收时自然给出短尾音。
 - 材质吸收是近似值，必须提供调试/覆盖入口。
 
 **A1 初始实现（2026-11-06）**
 
 - 数据模型：`AcousticMaterial`、`AcousticSurface`、`AcousticRoom`、`AcousticSpeaker`、`AcousticListener`、`RoomAcousticSnapshot`。
-- 房间检测：从玩家眼睛沿 ±X/±Y/±Z 各发 **9 条射线扇形**（3×3，约 ±6.8°），共 54 条；取同轴向、同命中面的中位平面，避免墙角/门洞单条射线失败。跳过扬声器、座椅、投影仪、接收器，屏幕作为墙面；不再因“墙面太近”直接失败，仅保留任一维 <1.5 m 的失败条件。
+- 房间检测：从玩家眼睛沿 ±X/±Y/±Z 各发 **25 条射线扇形**（5×5，约 ±9°），共 150 条；每条射线最多反射 **2 次**，取同轴向、同命中面的中位平面，避免墙角/门洞单条射线失败。跳过扬声器、座椅、投影仪、接收器，屏幕作为墙面；不再因“墙面太近”直接失败，仅保留任一维 <1.5 m 的失败条件。
 - 墙面材质：命中点周围 **9×9（半径 4）** 方块采样，跳过空气/设备，按样本数平均；屏幕单独映射。
 - 凸盒验证：监听者必须在六面内；盒内 1/3、2/3 的 2×2×2 点采样，仅在 **8/8 全为固体** 时判为不可信（避免墙角/家具误判）。
-- 失败 fallback：以听者为中心取 12×7×12 m 盒（x/z ±6、y -3/+4），`valid=false`，仍保留体积/表面积/默认材质/RT60 供 late reverb 使用。
-- RT60：只用 **Eyring** `0.161 V / (-S ln(1-α))`，clamp 到 **0.15–5.0 s**。Sabine 不采用。
+- 失败 fallback：优先使用已命中的平面；缺失的对面按听者镜像估计，完全没有命中时才用 x/z ±6、y -3/+4 的默认跨度。`valid=false`，仍保留体积/表面积/材质/RT60 供 late reverb 使用。
+- RT60：只用 **Eyring** `0.161 V / (-S ln(1-α))`，只设上限 **5.0 s**，不设最低 clamp。Sabine 不采用；Fitzroy 作为待办备选。
 - 材质表（`AcousticMaterials`，low/mid/high 分别取 125/250、500/1k、2k/4k 的平均）：
   - screen `0.05/0.10/0.15`，scattering `0.10`（声学透声幕布估计）
   - fabric（羊毛/窗帘，14 oz 褶皱帘）`0.19/0.62/0.65`，`0.35`
@@ -663,7 +663,7 @@ airTemperatureC        20                // Mod Menu
 airHumidityPercent     50                // Mod Menu
 maxReflectionTaps      24
 geometryUpdateHz       2–5
-rt60Clamp              0.15–5.0 s
+rt60Max                5.0 s              // no minimum clamp
 ```
 
 `earlyGainDb` 放 Mod Menu，仅调试用；早期反射的基础电平由 7.3 的物理链路计算，不再默认压低 6–12 dB。`lateGainDb` 仍属接收器/声学设置，最终以试听为准。

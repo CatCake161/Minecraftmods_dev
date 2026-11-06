@@ -13,7 +13,6 @@ public record AcousticRoom(boolean valid, String fallbackReason,
 						   double alphaLow, double alphaMid, double alphaHigh,
 						   double rt60Low, double rt60Mid, double rt60High,
 						   List<AcousticSurface> surfaces) {
-	private static final double MIN_RT60 = 0.15;
 	private static final double MAX_RT60 = 5.0;
 	private static final double EYRING = 0.161;
 
@@ -85,6 +84,6 @@ public record AcousticRoom(boolean valid, String fallbackReason,
 			return MAX_RT60;
 		}
 		double value = EYRING * volume / (-area * Math.log(1.0 - alpha));
-		return Math.max(MIN_RT60, Math.min(MAX_RT60, value));
+		return Math.min(MAX_RT60, value);
 	}
 }

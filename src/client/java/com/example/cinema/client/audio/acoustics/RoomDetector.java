@@ -36,8 +36,9 @@ public final class RoomDetector {
 	private static final double MIN_ROOM_DIMENSION = 1.5;
 	private static final double WALL_MARGIN = 0.05;
 	private static final double SKIP_OBSTACLE_EPSILON = 0.05;
-	private static final double FAN_OFFSET = 0.12;
+	private static final double[] FAN_OFFSETS = {-0.16, -0.08, 0.0, 0.08, 0.16};
 	private static final int MAX_SKIP_ITERATIONS = 16;
+	private static final int MAX_BOUNCES = 2;
 	private static final int MATERIAL_SAMPLE_RADIUS = 4;
 	private static final double SPEAKER_RADIUS = 48.0;
 	private static final double ACOUSTIC_FRONT_OFFSET = 0.45;
@@ -61,7 +62,8 @@ public final class RoomDetector {
 		SurfaceHit north = castPlane(level, player, eye, Direction.NORTH);
 		if (east == null || west == null || up == null || down == null
 			|| south == null || north == null) {
-			return fallback(level, player, listener, version, "missing room plane");
+			return fallback(level, player, listener, version, "missing room plane",
+				east, west, up, down, south, north);
 		}
 
 		double westX = west.planeCoordinate;
@@ -80,13 +82,13 @@ public final class RoomDetector {
 		if (maxX - minX < MIN_ROOM_DIMENSION
 			|| maxY - minY < MIN_ROOM_DIMENSION
 			|| maxZ - minZ < MIN_ROOM_DIMENSION) {
-			return fallback(level, player, listener, version, "room too small");
+			return fallback(level, player, listener, version, "room too small", east, west, up, down, south, north);
 		}
 		if (!contains(eye, minX, maxX, minY, maxY, minZ, maxZ)) {
-			return fallback(level, player, listener, version, "listener outside box");
+			return fallback(level, player, listener, version, "listener outside box", east, west, up, down, south, north);
 		}
 		if (!hasOpenInterior(level, minX, maxX, minY, maxY, minZ, maxZ)) {
-			return fallback(level, player, listener, version, "interior fully solid");
+			return fallback(level, player, listener, version, "interior fully solid", east, west, up, down, south, north);
 		}
 
 		List<AcousticSurface> surfaces = new ArrayList<>(6);
@@ -112,22 +114,94 @@ public final class RoomDetector {
 
 	private static RoomAcousticSnapshot fallback(Level level, Player player,
 												 AcousticListener listener, long version,
-												 String reason) {
+												 String reason, SurfaceHit east, SurfaceHit west,
+												 SurfaceHit up, SurfaceHit down,
+												 SurfaceHit south, SurfaceHit north) {
 		Vec3 eye = listener.eye();
-		double minX = eye.x - FALLBACK_HALF_XZ;
-		double maxX = eye.x + FALLBACK_HALF_XZ;
-		double minZ = eye.z - FALLBACK_HALF_XZ;
-		double maxZ = eye.z + FALLBACK_HALF_XZ;
-		double minY = Math.max(level.getMinBuildHeight(), eye.y - FALLBACK_DOWN);
-		double maxY = Math.min(level.getMaxBuildHeight(), eye.y + FALLBACK_UP);
-		if (maxY <= minY) {
-			maxY = minY + 1.0;
+		double westX = west != null ? west.planeCoordinate : eye.x - FALLBACK_HALF_XZ;
+		double eastX = east != null ? east.planeCoordinate : eye.x + FALLBACK_HALF_XZ;
+		if (west == null && east != null) {
+			westX = 2.0 * eye.x - eastX;
 		}
+		if (east == null && west != null) {
+			eastX = 2.0 * eye.x - westX;
+		}
+		double downY = down != null ? down.planeCoordinate
+			: Math.max(level.getMinBuildHeight(), eye.y - FALLBACK_DOWN);
+		double upY = up != null ? up.planeCoordinate
+			: Math.min(level.getMaxBuildHeight(), eye.y + FALLBACK_UP);
+		if (down == null && up != null) {
+			downY = 2.0 * eye.y - upY;
+		}
+		if (up == null && down != null) {
+			upY = 2.0 * eye.y - downY;
+		}
+		downY = Math.max(level.getMinBuildHeight(), downY);
+		upY = Math.min(level.getMaxBuildHeight(), upY);
+		double northZ = north != null ? north.planeCoordinate
+			: eye.z - FALLBACK_HALF_XZ;
+		double southZ = south != null ? south.planeCoordinate
+			: eye.z + FALLBACK_HALF_XZ;
+		if (north == null && south != null) {
+			northZ = 2.0 * eye.z - southZ;
+		}
+		if (south == null && north != null) {
+			southZ = 2.0 * eye.z - northZ;
+		}
+
+		double[] xSpan = ensureSpan(westX, eastX, eye.x);
+		double[] ySpan = ensureSpan(downY, upY, eye.y);
+		double[] zSpan = ensureSpan(northZ, southZ, eye.z);
+		double minX = xSpan[0];
+		double maxX = xSpan[1];
+		double minY = ySpan[0];
+		double maxY = ySpan[1];
+		double minZ = zSpan[0];
+		double maxZ = zSpan[1];
+
+		List<AcousticSurface> surfaces = new ArrayList<>(6);
+		addFallbackSurface(surfaces, level, east, AcousticSurface.Axis.X, maxX, -1.0,
+			minY, maxY, minZ, maxZ);
+		addFallbackSurface(surfaces, level, west, AcousticSurface.Axis.X, minX, 1.0,
+			minY, maxY, minZ, maxZ);
+		addFallbackSurface(surfaces, level, up, AcousticSurface.Axis.Y, maxY, -1.0,
+			minX, maxX, minZ, maxZ);
+		addFallbackSurface(surfaces, level, down, AcousticSurface.Axis.Y, minY, 1.0,
+			minX, maxX, minZ, maxZ);
+		addFallbackSurface(surfaces, level, south, AcousticSurface.Axis.Z, maxZ, -1.0,
+			minX, maxX, minY, maxY);
+		addFallbackSurface(surfaces, level, north, AcousticSurface.Axis.Z, minZ, 1.0,
+			minX, maxX, minY, maxY);
+
 		AcousticRoom room = AcousticRoom.box(
 			new Vec3(minX, minY, minZ), new Vec3(maxX, maxY, maxZ),
-			List.of(), false, reason);
+			surfaces, false, reason);
 		return new RoomAcousticSnapshot(version, level.getGameTime(), room, listener,
 			scanSpeakers(level, eye));
+	}
+
+	private static double[] ensureSpan(double a, double b, double center) {
+		double min = Math.min(a, b);
+		double max = Math.max(a, b);
+		if (max - min < MIN_ROOM_DIMENSION) {
+			min = center - MIN_ROOM_DIMENSION * 0.5;
+			max = center + MIN_ROOM_DIMENSION * 0.5;
+		}
+		return new double[]{min, max};
+	}
+
+	private static void addFallbackSurface(List<AcousticSurface> surfaces, Level level,
+										   SurfaceHit hit, AcousticSurface.Axis axis,
+										   double coordinate, double normal,
+										   double minU, double maxU,
+										   double minV, double maxV) {
+		if (hit != null) {
+			surfaces.add(surface(level, hit, axis, coordinate, normal, minU, maxU,
+				minV, maxV));
+		} else {
+			surfaces.add(new AcousticSurface(axis, coordinate, normal, minU, maxU,
+				minV, maxV, AcousticMaterials.DEFAULT, 0));
+		}
 	}
 
 	private static boolean contains(Vec3 eye, double minX, double maxX,
@@ -231,14 +305,14 @@ public final class RoomDetector {
 			}
 			default -> throw new IllegalStateException();
 		}
-		List<SurfaceHit> hits = new ArrayList<>(9);
-		for (int iu = -1; iu <= 1; iu++) {
-			for (int iv = -1; iv <= 1; iv++) {
+		List<SurfaceHit> hits = new ArrayList<>(FAN_OFFSETS.length * FAN_OFFSETS.length);
+		for (double uOffset : FAN_OFFSETS) {
+			for (double vOffset : FAN_OFFSETS) {
 				Vec3 direction = axisVector
-					.add(u.scale(iu * FAN_OFFSET))
-					.add(v.scale(iv * FAN_OFFSET))
+					.add(u.scale(uOffset))
+					.add(v.scale(vOffset))
 					.normalize();
-				SurfaceHit hit = castRay(level, player, start, axis, direction);
+				SurfaceHit hit = castProbe(level, player, start, axis, direction);
 				if (hit != null) {
 					hits.add(hit);
 				}
@@ -266,6 +340,36 @@ public final class RoomDetector {
 			}
 		}
 		return new SurfaceHit(representative.hit, representative.distance, median);
+	}
+
+	/**
+	 * Casts one probe and, when it hits a non-target wall, reflects it up to
+	 * {@link #MAX_BOUNCES} times looking for the target plane. This lets a
+	 * corner or a partially blocked side find the room plane through a bounce.
+	 */
+	private static SurfaceHit castProbe(Level level, Player player, Vec3 start,
+										Direction axis, Vec3 direction) {
+		Vec3 cursor = start;
+		Vec3 ray = direction;
+		Direction expected = expectedFace(axis);
+		for (int bounce = 0; bounce <= MAX_BOUNCES; bounce++) {
+			SurfaceHit hit = castRay(level, player, cursor, axis, ray);
+			if (hit == null) {
+				return null;
+			}
+			if (hit.hit.getDirection() == expected) {
+				return hit;
+			}
+			Vec3 normal = new Vec3(hit.hit.getDirection().getStepX(),
+				hit.hit.getDirection().getStepY(), hit.hit.getDirection().getStepZ());
+			double dot = ray.dot(normal);
+			ray = ray.subtract(normal.scale(2.0 * dot)).normalize();
+			cursor = hit.hit.getLocation().add(ray.scale(SKIP_OBSTACLE_EPSILON));
+			if (cursor.distanceTo(start) > MAX_RAY_DISTANCE) {
+				return null;
+			}
+		}
+		return null;
 	}
 
 	private static SurfaceHit castRay(Level level, Player player, Vec3 start,
@@ -397,3 +501,4 @@ public final class RoomDetector {
 	private record MaterialSample(AcousticMaterial material, int samples) {
 	}
 }
+

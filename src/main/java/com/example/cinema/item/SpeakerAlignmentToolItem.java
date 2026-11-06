@@ -1,5 +1,6 @@
 package com.example.cinema.item;
 
+import com.example.cinema.block.FloorstandingSpeakerBlock;
 import com.example.cinema.block.entity.SpeakerBlockEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -8,6 +9,8 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 
 import java.util.Locale;
 
@@ -27,6 +30,11 @@ public final class SpeakerAlignmentToolItem extends Item {
 	public InteractionResult useOn(UseOnContext context) {
 		Level level = context.getLevel();
 		BlockPos pos = context.getClickedPos();
+		BlockState clicked = level.getBlockState(pos);
+		if (clicked.getBlock() instanceof FloorstandingSpeakerBlock
+			&& clicked.getValue(FloorstandingSpeakerBlock.HALF) == DoubleBlockHalf.UPPER) {
+			pos = pos.below();
+		}
 		if (!(level.getBlockEntity(pos) instanceof SpeakerBlockEntity speaker)) {
 			return InteractionResult.PASS;
 		}
