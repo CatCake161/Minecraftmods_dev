@@ -21,6 +21,8 @@ import java.util.concurrent.Executors;
 public final class SpeakerDirectivityService {
 	private static final int ANGLE_BUCKET_DEGREES = 5;
 	private static final int MAX_CACHE_ENTRIES = 1024;
+	/** Only warn when a FIR misses its target this badly. */
+	private static final double FIR_WARNING_DB = 2.0;
 	private static final ExecutorService EXECUTOR = Executors.newSingleThreadExecutor(
 		runnable -> {
 			Thread thread = new Thread(runnable, "cinema-directivity-fir");
@@ -82,11 +84,12 @@ public final class SpeakerDirectivityService {
 		CompletableFuture<MinimumPhaseFir> future = CACHE.computeIfAbsent(key,
 			ignored -> CompletableFuture.supplyAsync(() -> {
 				MinimumPhaseFir design = MinimumPhaseFirDesigner.design(profile, h, v);
-				if (design.maxErrorDb() > 1.5) {
+				if (design.maxErrorDb() > FIR_WARNING_DB) {
 					Cinema.LOGGER.warn(
-						"cinema directivity: {} h={} v={} FIR error {} dB exceeds 1.5 dB",
+						"cinema directivity: {} h={} v={} FIR error {} dB exceeds {} dB",
 						profile.id(), h, v,
-						String.format(java.util.Locale.ROOT, "%.2f", design.maxErrorDb()));
+						String.format(java.util.Locale.ROOT, "%.2f", design.maxErrorDb()),
+						String.format(java.util.Locale.ROOT, "%.1f", FIR_WARNING_DB));
 				}
 				return design;
 			}, EXECUTOR));
