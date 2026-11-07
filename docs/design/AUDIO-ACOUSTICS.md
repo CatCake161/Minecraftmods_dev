@@ -641,7 +641,7 @@ for t in data:
 **A2 直达声实现（2026-11-07）**
 
 - `OcclusionScanner` 在客户端线程、随扬声器布局更新（约 20 Hz）运行；音频线程不 raycast、不读世界方块。
-- 用 `BlockGetter.traverseBlocks` 遍历“扬声器声学中心 → 玩家眼睛”线段；对每个候选方块取碰撞形状 AABB，与线段求交并累计实际穿行长度，slab/斜穿按比例计入。
+- 用 `BlockGetter.traverseBlocks` 遍历“扬声器声学中心 → 玩家眼睛”线段；对每个候选方块取碰撞形状 AABB，与线段求交并累计实际穿行长度，slab/斜穿按比例计入。注意 `VoxelShape.toAabbs()` 返回的是方块局部坐标（通常 0..1），求交前必须用方块坐标平移成世界坐标，否则只有世界原点附近能命中。
 - 跳过屏幕和 mod 家具（speaker/seat/projector/receiver）；透明方块、无碰撞形状方块不遮挡。水等没有碰撞形状的方块不产生遮挡；树叶按碰撞形状计入 vegetation 材质。
 - 材质表 `AcousticMaterials.occlusionForState()` 给出每米衰减、低通截止和阶数：stone 18 dB/800 Hz/2、wood 8 dB/2500 Hz/2、glass 5 dB/8000 Hz/1、metal 24 dB/600 Hz/2、vegetation 4 dB/5000 Hz/1、fabric 6 dB/3000 Hz/1、porous 10 dB/1500 Hz/1、snow 12 dB/1200 Hz/1、water 2 dB/12000 Hz/1、default 8 dB/2500 Hz/2。这些是游戏调参值，不是 STC/实测隔声量。
 - 总宽带衰减每声道上限 40 dB；低通截止按路径长度加权调和平均，阶数取路径上最高阶。

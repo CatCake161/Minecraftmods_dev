@@ -37,8 +37,8 @@ public final class OcclusionScanner {
 		Vec3 direction = offset.scale(1.0 / distance);
 		Trace trace = new Trace(level, source, direction, distance);
 		OcclusionResult result = BlockGetter.traverseBlocks(source, listener, trace,
-			(state, pos) -> {
-				state.visit(pos);
+			(context, pos) -> {
+				context.visit(pos);
 				return null;
 			},
 			Trace::result);
@@ -77,7 +77,12 @@ public final class OcclusionScanner {
 				return;
 			}
 			for (AABB box : shape.toAabbs()) {
-				double[] segment = clip(box);
+				// VoxelShape coordinates are block-local (usually 0..1). The ray
+				// is in world space, so the collision box must be moved by the
+				// block position before clipping. Without this offset every
+				// wall outside the block at the world origin is missed.
+				double[] segment = clip(box.move(pos.getX(), pos.getY(),
+					pos.getZ()));
 				if (segment == null) {
 					continue;
 				}
