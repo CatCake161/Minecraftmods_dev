@@ -10,12 +10,13 @@ import com.example.cinema.client.audio.speakerdata.SpeakerDataProfile;
  *
  * <p>The cepstrum method is used: log magnitude -> real cepstrum -> minimum-
  * phase window -> complex spectrum -> inverse FFT -> truncated impulse
- * response. An 8192-tap filter at 48 kHz keeps the tested measured profiles
- * within about 0.4 dB of the combined on-axis + H/V target.
+ * response. A 4096-tap filter at 48 kHz keeps the tested measured profiles
+ * within roughly 1 dB of the combined on-axis + H/V target; the longer 8192-tap
+ * variant was about three times slower per channel and is not used.
  */
 public final class MinimumPhaseFirDesigner {
-	public static final int LENGTH = 8192;
-	private static final int FFT_SIZE = 32768;
+	public static final int LENGTH = 4096;
+	private static final int FFT_SIZE = 16384;
 	private static final double SAMPLE_RATE = 48_000.0;
 	private static final double MIN_HZ = 20.0;
 	private static final double MAX_HZ = 20_000.0;
