@@ -5,11 +5,13 @@ import net.minecraft.core.Direction;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.CollisionContext;
 
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -19,29 +21,44 @@ import java.util.Map;
  * Speaker-centered candidate mirror discovery.
  *
  * <p>A2b deliberately does not gate reflections on {@code room.valid()}.
- * Six axis rays from each speaker find nearby walls, pillars and partial
- * structures even in open space; room surfaces with {@code samples > 0} are
- * optional seeds. Planes are deduplicated by {@code (axis, coordinate,
- * normal)} and cached per speaker/room/direction-set version.
+ * Twenty-six axis/edge/corner rays from each speaker find nearby walls,
+ * pillars and partial structures even in open space; room surfaces with
+ * {@code samples > 0} are optional seeds. Planes are deduplicated by
+ * {@code (axis, coordinate, normal)} and cached per speaker/room/direction-set
+ * version.
  *
- * <p>The direction set is intentionally a constant so it can grow to 26
- * directions or diagonals later without touching the solver.
+ * <p>The direction set is intentionally a constant so it can grow further
+ * without touching the solver.
  */
 public final class MirrorPlaneDiscovery {
-	public static final int DIRECTION_SET_VERSION = 1;
+	public static final int DIRECTION_SET_VERSION = 2;
 	public static final MirrorPlaneDiscovery INSTANCE = new MirrorPlaneDiscovery();
 
 	private static final double MAX_RAY_DISTANCE = 48.0;
 	private static final double SKIP_OBSTACLE_EPSILON = 0.05;
 	private static final int MAX_SKIP_ITERATIONS = 16;
 	private static final int MAX_CACHE_ENTRIES = 64;
-	private static final List<Vec3> PROBE_DIRECTIONS = List.of(
-		new Vec3(1.0, 0.0, 0.0),
-		new Vec3(-1.0, 0.0, 0.0),
-		new Vec3(0.0, 1.0, 0.0),
-		new Vec3(0.0, -1.0, 0.0),
-		new Vec3(0.0, 0.0, 1.0),
-		new Vec3(0.0, 0.0, -1.0));
+	private static final List<Vec3> PROBE_DIRECTIONS = createProbeDirections();
+
+	/** 6 face axes, 12 edge diagonals and 8 corner diagonals. */
+	static List<Vec3> probeDirections() {
+		return PROBE_DIRECTIONS;
+	}
+
+	private static List<Vec3> createProbeDirections() {
+		List<Vec3> directions = new ArrayList<>(26);
+		for (int x = -1; x <= 1; x++) {
+			for (int y = -1; y <= 1; y++) {
+				for (int z = -1; z <= 1; z++) {
+					if (x == 0 && y == 0 && z == 0) {
+						continue;
+					}
+					directions.add(new Vec3(x, y, z).normalize());
+				}
+			}
+		}
+		return List.copyOf(directions);
+	}
 
 	private final Map<CacheKey, List<MirrorPlane>> cache = new LinkedHashMap<>();
 
@@ -120,7 +137,8 @@ public final class MirrorPlaneDiscovery {
 			BlockState state = level.getBlockState(pos);
 			if (AcousticMaterials.isIgnoredObstacle(state)
 				|| state.getCollisionShape(level, pos).isEmpty()) {
-				cursor = hit.getLocation().add(direction.scale(skipDistance(hit, direction)));
+				cursor = hit.getLocation().add(direction.scale(
+					skipDistance(level, pos, state, hit.getLocation(), direction)));
 				if (cursor.distanceTo(origin) > MAX_RAY_DISTANCE) {
 					return null;
 				}
@@ -156,19 +174,34 @@ public final class MirrorPlaneDiscovery {
 			pointOf(hit.getLocation()));
 	}
 
-	private static double skipDistance(BlockHitResult hit, Vec3 direction) {
-		BlockPos pos = hit.getBlockPos();
-		Vec3 location = hit.getLocation();
-		double distance;
-		if (Math.abs(direction.x) >= Math.abs(direction.y)
-			&& Math.abs(direction.x) >= Math.abs(direction.z)) {
-			distance = (direction.x > 0 ? pos.getX() + 1.0 : pos.getX()) - location.x;
-		} else if (Math.abs(direction.y) >= Math.abs(direction.z)) {
-			distance = (direction.y > 0 ? pos.getY() + 1.0 : pos.getY()) - location.y;
-		} else {
-			distance = (direction.z > 0 ? pos.getZ() + 1.0 : pos.getZ()) - location.z;
+	/**
+	 * Distance along the ray to leave an ignored obstacle. Uses the actual
+	 * collision bounds so diagonal rays cannot stop inside the block and
+	 * repeatedly hit the same obstacle.
+	 */
+	private static double skipDistance(BlockGetter level, BlockPos pos, BlockState state,
+									   Vec3 location, Vec3 direction) {
+		AABB box = state.getCollisionShape(level, pos).bounds()
+			.move(pos.getX(), pos.getY(), pos.getZ());
+		double distance = Double.POSITIVE_INFINITY;
+		distance = exitDistance(distance, location.x, direction.x, box.minX, box.maxX);
+		distance = exitDistance(distance, location.y, direction.y, box.minY, box.maxY);
+		distance = exitDistance(distance, location.z, direction.z, box.minZ, box.maxZ);
+		if (!Double.isFinite(distance)) {
+			return SKIP_OBSTACLE_EPSILON;
 		}
-		return Math.max(0.1, Math.abs(distance) + SKIP_OBSTACLE_EPSILON);
+		return Math.max(0.1, distance + SKIP_OBSTACLE_EPSILON);
+	}
+
+	private static double exitDistance(double current, double origin, double direction,
+									   double min, double max) {
+		if (direction > 1.0e-9) {
+			return Math.min(current, (max - origin) / direction);
+		}
+		if (direction < -1.0e-9) {
+			return Math.min(current, (min - origin) / direction);
+		}
+		return current;
 	}
 
 	private static MirrorPlane.Axis axis(AcousticSurface.Axis axis) {
