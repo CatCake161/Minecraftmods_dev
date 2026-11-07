@@ -10,12 +10,14 @@ import org.lwjgl.openal.ALC;
 import org.lwjgl.openal.ALC10;
 import org.lwjgl.openal.ALCCapabilities;
 import org.lwjgl.openal.ALCapabilities;
+import org.lwjgl.openal.EXTFloat32;
 import org.lwjgl.openal.EXTThreadLocalContext;
 import org.lwjgl.openal.SOFTDeviceClock;
 import org.lwjgl.openal.SOFTSourceLatency;
 import org.lwjgl.openal.SOFTSourceStartDelay;
 
 import java.nio.DoubleBuffer;
+import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.nio.ShortBuffer;
 import java.util.ArrayDeque;
@@ -49,6 +51,8 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	/** Small queue blocks keep directivity updates within ~170 ms of playback. */
 	private static final int BLOCK_FRAMES = 2_048;
 	private static final float BASE_GAIN = 0.65f;
+	/** Time constant for smoothing listener-relative source positions. */
+	private static final double POSITION_SMOOTHING_SECONDS = 0.03;
 	private static final String[] LABELS = {"FL", "FR", "FC", "LFE", "BL", "BR"};
 	private static final Set<CinemaAudioEngine> OPEN_ENGINES = ConcurrentHashMap.newKeySet();
 
@@ -83,7 +87,10 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	private final Deque<Integer>[] freeBuffers = new Deque[SPEAKERS];
 	private final int[] sources = new int[SPEAKERS];
 	private final int[][] buffers = new int[SPEAKERS][BUFFER_COUNT];
-	private final ShortBuffer[] monoBuffers = new ShortBuffer[SPEAKERS];
+	private final ShortBuffer[] monoShortBuffers = new ShortBuffer[SPEAKERS];
+	private final FloatBuffer[] monoFloatBuffers = new FloatBuffer[SPEAKERS];
+	private final float[] blockScratch = new float[BLOCK_FRAMES];
+	private boolean float32Buffers;
 	private final DoubleBuffer latencyQuery = BufferUtils.createDoubleBuffer(2);
 
 	private AudioChunk pendingChunk;
@@ -96,6 +103,8 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	private volatile boolean masterMuted;
 	private final AtomicInteger layoutVersion = new AtomicInteger();
 	private volatile float[][] channelPositions = copyDefaultPositions();
+	private final float[][] renderedPositions = copyDefaultPositions();
+	private long lastPositionUpdateNanos;
 	private volatile float[] channelGains = defaultChannelGains();
 	private volatile MinimumPhaseFir[] channelFilters = defaultFilters();
 	private final FirProcessor[] firProcessors = new FirProcessor[SPEAKERS];
@@ -378,6 +387,9 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		AL10.alListener3f(AL10.AL_POSITION, 0f, 0f, 0f);
 		AL10.alListenerfv(AL10.AL_ORIENTATION, new float[]{0f, 0f, -1f, 0f, 1f, 0f});
 		AL10.alDistanceModel(AL10.AL_INVERSE_DISTANCE_CLAMPED);
+		float32Buffers = supportsFloat32();
+		appliedLayoutVersion = -1;
+		lastPositionUpdateNanos = 0L;
 
 		for (int i = 0; i < SPEAKERS; i++) {
 			sources[i] = alGenSources();
@@ -385,28 +397,92 @@ public final class CinemaAudioEngine implements AutoCloseable {
 				buffers[i][j] = alGenBuffers();
 				freeBuffers[i].addLast(buffers[i][j]);
 			}
-			monoBuffers[i] = BufferUtils.createShortBuffer(SAMPLE_RATE / 2);
+			if (float32Buffers) {
+				monoFloatBuffers[i] = BufferUtils.createFloatBuffer(BLOCK_FRAMES);
+			} else {
+				monoShortBuffers[i] = BufferUtils.createShortBuffer(BLOCK_FRAMES);
+			}
 			alSourcei(sources[i], AL_SOURCE_RELATIVE, AL_TRUE);
 			alSourcef(sources[i], AL_ROLLOFF_FACTOR, 1.0f);
 			alSourcef(sources[i], AL_MAX_DISTANCE, 64f);
 			appliedGains[i] = Float.NaN;
 			firProcessors[i].reset();
 		}
+		Cinema.LOGGER.info("cinema audio: source buffers are {}",
+			float32Buffers ? "32-bit float" : "16-bit integer");
 		applyChannelLayout();
 		applyChannelGains();
 		checkError("setupSources");
 	}
 
+	private static boolean supportsFloat32() {
+		try {
+			ALCapabilities caps = AL.getCapabilities();
+			return caps.AL_EXT_FLOAT32;
+		} catch (IllegalStateException ignored) {
+			return false;
+		}
+	}
+
 	private void applyChannelLayout() {
 		int version = layoutVersion.get();
-		float[][] positions = channelPositions;
 		MinimumPhaseFir[] filters = channelFilters;
 		for (int i = 0; i < SPEAKERS; i++) {
-			float[] position = positions[i];
-			alSource3f(sources[i], AL_POSITION, position[0], position[1], position[2]);
 			firProcessors[i].setFilter(filters[i]);
 		}
+		if (appliedLayoutVersion < 0 || lastPositionUpdateNanos == 0L) {
+			snapSourcePositions();
+		}
 		appliedLayoutVersion = version;
+	}
+
+	/**
+	 * Keeps OpenAL source positions between the 20 Hz layout updates. Rotating
+	 * the view changes every listener-relative source position at once; feeding
+	 * those jumps directly to OpenAL is audible as zipper/tearing with HRTF.
+	 */
+	private void updateSourcePositions() {
+		long now = System.nanoTime();
+		if (lastPositionUpdateNanos == 0L) {
+			lastPositionUpdateNanos = now;
+			return;
+		}
+		double dt = (now - lastPositionUpdateNanos) / 1.0e9;
+		lastPositionUpdateNanos = now;
+		if (!(dt > 0.0) || dt > 0.25) {
+			dt = 0.005;
+		}
+		double alpha = 1.0 - Math.exp(-dt / POSITION_SMOOTHING_SECONDS);
+		float[][] target = channelPositions;
+		for (int channel = 0; channel < SPEAKERS; channel++) {
+			float[] current = renderedPositions[channel];
+			float[] destination = target[channel];
+			boolean moved = false;
+			for (int axis = 0; axis < 3; axis++) {
+				float delta = destination[axis] - current[axis];
+				if (Math.abs(delta) > 1.0e-5f) {
+					current[axis] += (float) (delta * alpha);
+					moved = true;
+				} else {
+					current[axis] = destination[axis];
+				}
+			}
+			if (moved) {
+				alSource3f(sources[channel], AL_POSITION,
+					current[0], current[1], current[2]);
+			}
+		}
+	}
+
+	private void snapSourcePositions() {
+		float[][] target = channelPositions;
+		for (int channel = 0; channel < SPEAKERS; channel++) {
+			System.arraycopy(target[channel], 0, renderedPositions[channel], 0, 3);
+			float[] position = renderedPositions[channel];
+			alSource3f(sources[channel], AL_POSITION,
+				position[0], position[1], position[2]);
+		}
+		lastPositionUpdateNanos = System.nanoTime();
 	}
 
 	private void applyChannelGains() {
@@ -433,6 +509,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		if (appliedLayoutVersion != layoutVersion.get()) {
 			applyChannelLayout();
 		}
+		updateSourcePositions();
 		applyChannelGains();
 		reclaimProcessed();
 		if (pendingChunk == null) {
@@ -473,19 +550,34 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	}
 
 	private void queueBlock(AudioChunk chunk, int frameOffset, int frames) {
-		short[] samples = chunk.samples();
+		float[] samples = chunk.samples();
+		if (blockScratch.length < frames) {
+			throw new IllegalStateException("block scratch too small: " + frames);
+		}
 		for (int channel = 0; channel < SPEAKERS; channel++) {
-			ShortBuffer mono = monoBuffers[channel];
-			if (mono.capacity() < frames) {
-				mono = BufferUtils.createShortBuffer(frames);
-				monoBuffers[channel] = mono;
-			}
-			mono.clear();
 			firProcessors[channel].process(samples, CHANNELS, channel, frameOffset,
-				frames, mono);
-			mono.flip();
+				frames, blockScratch);
 			int buffer = freeBuffers[channel].removeFirst();
-			alBufferData(buffer, AL_FORMAT_MONO16, mono, SAMPLE_RATE);
+			if (float32Buffers) {
+				FloatBuffer mono = monoFloatBuffers[channel];
+				mono.clear();
+				mono.put(blockScratch, 0, frames);
+				mono.flip();
+				alBufferData(buffer, EXTFloat32.AL_FORMAT_MONO_FLOAT32, mono, SAMPLE_RATE);
+			} else {
+				ShortBuffer mono = monoShortBuffers[channel];
+				mono.clear();
+				for (int i = 0; i < frames; i++) {
+					float value = blockScratch[i];
+					if (!Float.isFinite(value)) {
+						value = 0.0f;
+					}
+					value = Math.max(-1.0f, Math.min(1.0f, value));
+					mono.put((short) Math.round(value * 32767.0f));
+				}
+				mono.flip();
+				alBufferData(buffer, AL_FORMAT_MONO16, mono, SAMPLE_RATE);
+			}
 			alSourceQueueBuffers(sources[channel], buffer);
 		}
 		double start = chunk.startPtsSeconds() + frameOffset / (double) SAMPLE_RATE;

@@ -7,6 +7,10 @@ package com.example.cinema.client.media;
  * mid signal, LFE is a 120 Hz low-passed mid signal, and the back channels are
  * the side (difference) signal. This avoids changing real 5.1 sources and is
  * intentionally simple enough to tune by ear.
+ *
+ * <p>All samples stay in normalized 32-bit float. Nothing is clamped here:
+ * the FIR directivity stage and the receiver/speaker gains still follow, and
+ * only the final device conversion may quantize.
  */
 final class StereoUpmixer {
 	private static final double SAMPLE_RATE = 48_000.0;
@@ -17,34 +21,27 @@ final class StereoUpmixer {
 
 	private double lfeState;
 
-	short[] upmix(short[] stereo, int frames) {
-		short[] output = new short[frames * CinemaAudioEngine.CHANNELS];
+	float[] upmix(float[] stereo, int frames) {
+		float[] output = new float[frames * CinemaAudioEngine.CHANNELS];
 		for (int frame = 0; frame < frames; frame++) {
-			int left = stereo[frame * 2];
-			int right = stereo[frame * 2 + 1];
-			int center = (left + right) / 2;
-			int backLeft = (left - right) / 2;
-			int backRight = (right - left) / 2;
+			float left = stereo[frame * 2];
+			float right = stereo[frame * 2 + 1];
+			float center = (left + right) * 0.5f;
+			float backLeft = (left - right) * 0.5f;
+			float backRight = (right - left) * 0.5f;
 
-			double mid = (left + right) / 65536.0;
+			double mid = (left + right) * 0.5;
 			lfeState += LFE_ALPHA * (mid - lfeState);
-			int lfe = clampToPcm(lfeState * LFE_GAIN * 32767.0);
+			float lfe = (float) (lfeState * LFE_GAIN);
 
 			int base = frame * CinemaAudioEngine.CHANNELS;
-			output[base] = (short) left;
-			output[base + 1] = (short) right;
-			output[base + 2] = (short) center;
-			output[base + 3] = (short) lfe;
-			output[base + 4] = (short) backLeft;
-			output[base + 5] = (short) backRight;
+			output[base] = left;
+			output[base + 1] = right;
+			output[base + 2] = center;
+			output[base + 3] = lfe;
+			output[base + 4] = backLeft;
+			output[base + 5] = backRight;
 		}
 		return output;
-	}
-
-	private static int clampToPcm(double value) {
-		if (!Double.isFinite(value)) {
-			return 0;
-		}
-		return (int) Math.max(Short.MIN_VALUE, Math.min(Short.MAX_VALUE, Math.round(value)));
 	}
 }

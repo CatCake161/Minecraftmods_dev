@@ -7,7 +7,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.ShortBuffer;
+import java.nio.FloatBuffer;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -38,7 +38,7 @@ public final class StreamingAudioDecoder implements AutoCloseable {
 		int sourceChannels = sourceChannels(file);
 		boolean upmix = sourceChannels == 2;
 		int chunkFrames = SAMPLE_RATE / 2;
-		int chunkBytes = chunkFrames * sourceChannels * 2;
+		int chunkBytes = chunkFrames * sourceChannels * Float.BYTES;
 		byte[] bytes = new byte[chunkBytes];
 		StereoUpmixer upmixer = upmix ? new StereoUpmixer() : null;
 		long totalFrames = 0;
@@ -68,13 +68,13 @@ public final class StreamingAudioDecoder implements AutoCloseable {
 		command.add("-channel_layout");
 		command.add(upmix ? "stereo" : "5.1");
 		command.add("-f");
-		command.add("s16le");
+		command.add("f32le");
 		command.add("-acodec");
-		command.add("pcm_s16le");
+		command.add("pcm_f32le");
 		command.add("pipe:1");
 
 		process = new ProcessBuilder(command).redirectErrorStream(false).start();
-		Cinema.LOGGER.info("cinema audio decoder: ffmpeg {} Hz, {} source channels{}, start={} s",
+		Cinema.LOGGER.info("cinema audio decoder: ffmpeg {} Hz, {} source channels{}, 32-bit float, start={} s",
 			SAMPLE_RATE, sourceChannels, upmix ? " -> 5.1 upmix" : "",
 			String.format("%.2f", startSeconds));
 
@@ -87,17 +87,17 @@ public final class StreamingAudioDecoder implements AutoCloseable {
 				if (read == 0) {
 					continue;
 				}
-				int frames = read / (sourceChannels * 2);
+				int frames = read / (sourceChannels * Float.BYTES);
 				if (frames <= 0) {
 					continue;
 				}
 				double pts = startSeconds + totalFrames / (double) SAMPLE_RATE;
-				ShortBuffer samples = ByteBuffer.wrap(bytes, 0, read)
+				FloatBuffer samples = ByteBuffer.wrap(bytes, 0, read)
 					.order(ByteOrder.LITTLE_ENDIAN)
-					.asShortBuffer();
-				short[] source = new short[samples.remaining()];
+					.asFloatBuffer();
+				float[] source = new float[samples.remaining()];
 				samples.get(source);
-				short[] data = upmixer == null ? source : upmixer.upmix(source, frames);
+				float[] data = upmixer == null ? source : upmixer.upmix(source, frames);
 				sink.accept(new AudioChunk(pts, data));
 				totalFrames += frames;
 			}

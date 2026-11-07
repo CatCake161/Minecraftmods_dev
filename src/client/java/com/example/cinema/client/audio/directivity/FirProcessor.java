@@ -1,6 +1,5 @@
 package com.example.cinema.client.audio.directivity;
 
-import java.nio.ShortBuffer;
 import java.util.Arrays;
 
 /**
@@ -9,8 +8,9 @@ import java.util.Arrays;
  * <p>The filter is applied to a whole decoded chunk with a zero-padded FFT of
  * {@code nextPow2(frames + taps - 1)}. The convolution tail is carried into the
  * next chunk, so there is no block latency and the media clock stays aligned
- * with the direct path. A filter change clears the tail; the resulting
- * transient is short and is crossfaded later if it becomes audible.
+ * with the direct path. Input and output stay in 32-bit float: the FIR shape
+ * is allowed to exceed 0 dBFS before OpenAL applies the per-source gain, so
+ * neither stage may clamp to 16-bit.
  */
 public final class FirProcessor {
 	private MinimumPhaseFir filter = MinimumPhaseFir.FLAT;
@@ -40,15 +40,20 @@ public final class FirProcessor {
 		Arrays.fill(tail, 0.0);
 	}
 
-	public void process(short[] interleaved, int channels, int channel,
-						int sourceFrameOffset, int frames, ShortBuffer out) {
+	/**
+	 * Writes {@code frames} mono samples as unclamped 32-bit floats. The caller
+	 * owns {@code out} and must provide at least {@code frames} elements.
+	 */
+	public void process(float[] interleaved, int channels, int channel,
+						int sourceFrameOffset, int frames, float[] out) {
 		if (frames <= 0) {
 			return;
 		}
 		int length = filter.length();
 		if (length <= 1) {
+			float gain = filter.taps()[0];
 			for (int i = 0; i < frames; i++) {
-				out.put(interleaved[(sourceFrameOffset + i) * channels + channel]);
+				out[i] = gain * interleaved[(sourceFrameOffset + i) * channels + channel];
 			}
 			return;
 		}
@@ -58,7 +63,7 @@ public final class FirProcessor {
 		Arrays.fill(fftRe, 0.0);
 		Arrays.fill(fftIm, 0.0);
 		for (int i = 0; i < frames; i++) {
-			fftRe[i] = interleaved[(sourceFrameOffset + i) * channels + channel] / 32768.0;
+			fftRe[i] = interleaved[(sourceFrameOffset + i) * channels + channel];
 		}
 		Fft.transform(fftRe, fftIm, false);
 		ensureSpectrum(fftSize);
@@ -72,8 +77,7 @@ public final class FirProcessor {
 
 		for (int i = 0; i < frames; i++) {
 			double value = fftRe[i] + (i < tail.length ? tail[i] : 0.0);
-			out.put((short) Math.max(Short.MIN_VALUE,
-				Math.min(Short.MAX_VALUE, Math.round(value * 32768.0))));
+			out[i] = (float) value;
 		}
 		int copy = Math.min(tail.length, fftSize - frames);
 		if (copy > 0) {
