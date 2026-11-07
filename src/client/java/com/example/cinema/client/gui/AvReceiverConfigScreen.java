@@ -903,6 +903,13 @@ public final class AvReceiverConfigScreen extends Screen {
 
 	private void drawHoverTooltip(GuiGraphics graphics, int mouseX, int mouseY) {
 		if (tab == Tab.SPEAKERS) {
+			for (SpeakerLevelSlider slider : speakerLevelSliders.values()) {
+				if (slider.dragging) {
+					// The slider already shows the live value; the row tooltip
+					// would cover it exactly while the player is adjusting it.
+					return;
+				}
+			}
 			if (!inSpeakerList(mouseX, mouseY)) {
 				return;
 			}
