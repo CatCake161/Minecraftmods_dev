@@ -87,7 +87,7 @@
 - **音频声学：A2 直达声已实现，反射/晚期混响仍规划**：见 `docs/design/AUDIO-ACOUSTICS.md`。直达声距离由 Java `1/max(r,1)` 计算（OpenAL `AL_NONE`），ISO 9613-1 空气吸收与遮挡低通合并为 2048-tap 环境 FIR，遮挡宽带衰减 30 ms 平滑；空气开关/温度/湿度、早反调试 gain 在 Mod Menu。A2 已接入 4096-tap 指向性 FIR；待游戏内听感验收距离/空气/遮挡/配置 UI。早期反射仍计划采用独立 OpenAL source（镜像源位置，每 tap 一个，上限 24–36/接收器），A2b 实现时距离同样由 Java 按 `1/max(L,1)` 计算。A0 `/cinema_efx_spike` 已通过游戏内验证：EFX/sharedCaps/真实设备 context=OK，max sends=2，5.1 wet 5 声道，HRTF enabled，reset=OK，CPU≈0.8%；真实设备听感/物理切换/硬件延迟留 A3/A4；材质/遮挡调参、型号映射仍需校准。
 - **音频定位模型**：当前保留 `AL_SOURCE_RELATIVE = AL_TRUE`；距离衰减已由 Java 计算（`AL_NONE`），source 位置只负责声像/HRTF。世界坐标源迁移已完成评审，暂不迁移；A2b 反射需要时再做，见 `AUDIO-ACOUSTICS.md` §4.2.1。
 - Spinorama 数据默认 CC BY-NC-SA 4.0，与项目 CC0 不同；发布前必须做许可/attribution 决策。REST API 需要人工申请 Bearer key，key 只能放本地环境变量/转换工具，不能进仓库、发布包或日志。
-- 一阶声学模型不覆盖衍射、散射、高阶反射和低频房间模态；LFE 低频峰谷/驻波不会正确重现。
+- 一阶声学模型不覆盖衍射、散射、高阶反射和低频房间模态；LFE 低频峰谷/驻波不会正确重现。低频管理与模态（含多低音炮）排在 A4 之后的 A5。
 - 当前物理路由固定 6 声道（5.1）；可变布局/天空声道仍是规划，见 `docs/design/CHANNEL-LAYOUTS.md`。
 - 多屏/多投影仪、LAN 播放状态同步、资源重载、音频设备切换、两小时长片内存/队列仍未完成。
 - 遥控器扫描面板只做 Ping/Access；配对在接收器/投影仪配对菜单中完成。绑定/解绑仍保留但只影响物品 tooltip，HUD 已移除；多人并发与视线遮挡规则未实现。
