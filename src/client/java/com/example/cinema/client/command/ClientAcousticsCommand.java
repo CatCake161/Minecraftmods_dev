@@ -130,7 +130,7 @@ public final class ClientAcousticsCommand {
 				: environment.isFlat() ? "flat" : "ready";
 			double distanceGainDb = -20.0 * Math.log10(Math.max(1.0, distance));
 			double air8kDb = config.airAbsorption()
-				? AirAbsorption.attenuationDb(distance, 8_000.0,
+				? AirAbsorption.directPathAttenuationDb(distance, 8_000.0,
 					config.airTemperatureC(), config.airHumidityPercent(),
 					AirAbsorption.REFERENCE_PRESSURE_KPA)
 				: 0.0;

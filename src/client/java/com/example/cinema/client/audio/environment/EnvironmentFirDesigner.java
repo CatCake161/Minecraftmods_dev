@@ -53,10 +53,12 @@ public final class EnvironmentFirDesigner {
 	/** Target magnitude in dB for one frequency. */
 	static double responseDb(EnvironmentProfile profile, double frequencyHz) {
 		double db = 0.0;
-		if (profile.airAbsorption() && profile.distanceMeters() > 0.0) {
-			db -= AirAbsorption.alphaDbPerMeter(frequencyHz,
-				profile.temperatureC(), profile.humidityPercent(),
-				profile.pressureKpa()) * profile.distanceMeters();
+		if (profile.airAbsorption()) {
+			// 1 m is the zero reference, matching the engine's 1/max(r,1)
+			// distance law. Only the path beyond 1 m absorbs high frequencies.
+			db -= AirAbsorption.directPathAttenuationDb(profile.distanceMeters(),
+				frequencyHz, profile.temperatureC(), profile.humidityPercent(),
+				profile.pressureKpa());
 		}
 		if (profile.occlusionOrder() > 0
 			&& profile.occlusionCutoffHz() < SAMPLE_RATE * 0.5) {

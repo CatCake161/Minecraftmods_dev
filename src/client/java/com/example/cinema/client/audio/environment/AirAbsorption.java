@@ -29,6 +29,15 @@ package com.example.cinema.client.audio.environment;
  * octave-band table in ISO 9613-2.
  */
 public final class AirAbsorption {
+	/**
+	 * Direct-path zero reference distance. Air absorption starts from this
+	 * distance instead of from 0 m, matching the engine's
+	 * {@code 1 / max(r, 1 m)} distance law.
+	 */
+	public static final double REFERENCE_DISTANCE_METERS = 1.0;
+	/** Default reference conditions of the direct-path zero point. */
+	public static final double REFERENCE_TEMPERATURE_C = 20.0;
+	public static final double REFERENCE_HUMIDITY_PERCENT = 50.0;
 	public static final double REFERENCE_PRESSURE_KPA = 101.325;
 	public static final double MIN_TEMPERATURE_C = -20.0;
 	public static final double MAX_TEMPERATURE_C = 50.0;
@@ -79,6 +88,23 @@ public final class AirAbsorption {
 									   double pressureKpa) {
 		return alphaDbPerMeter(frequencyHz, temperatureC, humidityPercent, pressureKpa)
 			* Math.max(0.0, distanceMeters);
+	}
+
+	/**
+	 * Returns the additional direct-path air absorption beyond the 1 m
+	 * reference. At 1 m (and closer) this is exactly 0 dB; beyond 1 m only the
+	 * excess path {@code distance - 1 m} is attenuated. With the default
+	 * 20 C / 50 % RH / 101.325 kPa conditions, 1 m is therefore the zero
+	 * reference point of the direct-path air-absorption curve.
+	 */
+	public static double directPathAttenuationDb(double distanceMeters,
+												 double frequencyHz,
+												 double temperatureC,
+												 double humidityPercent,
+												 double pressureKpa) {
+		return attenuationDb(Math.max(0.0,
+				distanceMeters - REFERENCE_DISTANCE_METERS),
+			frequencyHz, temperatureC, humidityPercent, pressureKpa);
 	}
 
 	private static double clamp(double value, double min, double max) {

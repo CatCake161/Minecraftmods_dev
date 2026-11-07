@@ -25,7 +25,9 @@ public record EnvironmentProfile(double distanceMeters, boolean airAbsorption,
 	}
 
 	public boolean isFlat() {
-		return (!airAbsorption || distanceMeters <= 0.0) && occlusionOrder <= 0;
+		return (!airAbsorption
+			|| distanceMeters <= AirAbsorption.REFERENCE_DISTANCE_METERS)
+			&& occlusionOrder <= 0;
 	}
 
 	private static double clamp(double value, double min, double max, double fallback) {

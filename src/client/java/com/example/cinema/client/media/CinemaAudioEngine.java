@@ -3,6 +3,7 @@ package com.example.cinema.client.media;
 import com.example.cinema.Cinema;
 import com.example.cinema.client.audio.directivity.FirProcessor;
 import com.example.cinema.client.audio.directivity.MinimumPhaseFir;
+import com.example.cinema.client.audio.environment.AirAbsorption;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.openal.AL;
 import org.lwjgl.openal.AL10;
@@ -678,7 +679,8 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			float[] position = renderedPositions[i];
 			double radius = Math.sqrt(position[0] * position[0]
 				+ position[1] * position[1] + position[2] * position[2]);
-			double distanceGain = 1.0 / Math.max(1.0, radius);
+			double distanceGain = 1.0
+				/ Math.max(AirAbsorption.REFERENCE_DISTANCE_METERS, radius);
 			float target = (float) (master * gains[i] * distanceGain
 				* renderedOcclusionGains[i]);
 			if (!Float.isFinite(target)) {
