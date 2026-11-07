@@ -40,7 +40,7 @@
 - [ ] 每扬声器距离/延迟校准（接收器 GUI）。
 - [ ] 世界坐标音频源迁移（A2b 反射需要稳定世界坐标时）：`AL_SOURCE_RELATIVE=false` + listener 世界姿态 + 不可变快照；先做坐标等价测试与游戏内 A/B。评审见 `AUDIO-ACOUSTICS.md` §4.2.1，当前仍不迁移。
 
-## P1：音频计算 / 房间声学（A2 直达声已通过游戏内验收，下一步 A2b）
+## P1：音频计算 / 房间声学（A2 直达声已通过游戏内验收，A2b 几何/可见性已实现、播放待续）
 
 > 方案、可行性/声学判断见 [AUDIO-ACOUSTICS.md](design/AUDIO-ACOUSTICS.md)。
 > M4 扬声器路由已完成；A0 EFX spike、A1d 数据管线已通过；A2 直达声已通过游戏内听感验收（距离/空气/遮挡/配置 UI）。
@@ -56,7 +56,8 @@
 - [x] A1d ASR/Spinorama 数据管线：只读 `SPL Horizontal.txt`/`SPL Vertical.txt`；保留原始 194/200 点频率网格、不降采样；补 `-180°`；按全频段能量平均计算 -10 dB 频率范围并取整到 1 Hz；删除 `quality`；21 个型号生成到本地 `run/cinema/speaker_data/profiles/`，**不打包**。转换器：`docs/examples/speaker_data/convert_spinorama.py`。待游戏内加载验证
 - [ ] A1e Spinorama 许可决策：已确认 CC BY-NC-SA 4.0；profile 仅作为用户本地导入数据，不随模组分发；仍需在发布文档/THIRD-PARTY 写 attribution
 - [x] A2 直达声：Java 距离衰减 `1/max(r,1)`（OpenAL `AL_NONE`，避免双重衰减）、ISO 9613-1 空气吸收（1 m/20 °C/50 % RH/101.325 kPa 为 0 dB 参考点，仅计算超过 1 m 的路径）、遮挡路径扫描 + 宽带衰减/低通、2048-tap 环境 FIR（串在 4096-tap 指向性 FIR 后）、Mod Menu 空气开关/温度/湿度；`/cinema_acoustics` 输出 distanceGain/air8k/occlusion/cutoff/order/env/taps；数值 harness 已验证 ISO α 与环境 FIR 幅度，游戏内听感验收通过（距离/空气/遮挡/配置持久化）
-- [ ] A2b 一阶早期反射：镜像源法（6 平面 × 6 扬声器）、可见性、延迟/增益/频带、每个 tap 一个独立 OpenAL source（镜像源位置）、播放未处理 `sourceChannel` 的延迟副本、最多 24–36 taps、平滑；反射 source 由 OpenAL 负责方向/声像，距离由 Java 按 `1/max(L,1)` 计算，不按 5.1 声道混入直达；增益按距离/空气吸收/材质/指向性一次计算，不设固定 -6..-12 dB 默认
+- [x] A2b 几何/可见性：`MirrorPlane`/`MirrorPlaneDiscovery`/`ImageSourceSolver`/`ReflectionProbe`；扬声器 6 轴射线（方向集合可扩展）+ 房间 `samples>0` 种子；R 处真实墙面/法线验证、`S→R`/`R→L` 两段可见性；纯几何 JUnit 11 项通过；`/cinema_acoustics` 输出 planes/taps
+- [ ] A2b 播放：每个 tap 一个独立 OpenAL source（镜像源位置）、播放未处理 `sourceChannel` 的延迟副本、最多 24–36 taps、平滑；反射 source 由 OpenAL 负责方向/声像，距离由 Java 按 `1/max(L,1)` 计算，不按 5.1 声道混入直达；增益按距离/空气吸收/材质/指向性一次计算，不设固定 -6..-12 dB 默认
 - [x] A2c 扬声器指向性（直达）：目标幅度 = on-axis EQ + Spinorama H/V 相对指向性；4096-tap 最小相位 FIR @48k（cepstrum），FIR 在 1 kHz 归一为 0 dB，总 1 kHz 偏移进 source gain；5° 角度缓存、异步设计、overlap-add 卷积；实测样本最大误差约 1.1 dB（JBL A180 0.69、Genelec 8351B 1.09、Adam T5V 0.50）；声学中心/朝向/低音炮 omni 已接入
 - [ ] A2c-R 反射指向性：A2b 的反射角复用同一 FIR/查表；反射路径空气吸收/材质系数待接
 - [x] A2d 直达声 A/B/CPU：4096-tap 指向性 FIR + 2048-tap 环境 FIR 的听感、移动/转头更新、约 ±1 dB 实测确认；32-bit float source buffer（`AL_EXT_FLOAT32`）、30 ms 半径 + 球面方向（slerp）声像平滑、30 ms 遮挡增益平滑已接入；游戏内复测通过：快速转头/移动无爆音或削波，遮挡切换正常，距离/空气/遮挡/指向性各只应用一次

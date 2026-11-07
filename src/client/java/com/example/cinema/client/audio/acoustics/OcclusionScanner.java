@@ -45,6 +45,28 @@ public final class OcclusionScanner {
 		return result == null ? OcclusionResult.NONE : result;
 	}
 
+	/**
+	 * Short-circuit visibility test for reflection path legs. Uses the same
+	 * transparency rules as {@link #scan}: screens and mod furniture are
+	 * transparent; any non-transparent collision shape blocks the segment.
+	 */
+	public static boolean isClear(BlockGetter level, Vec3 from, Vec3 to) {
+		if (level == null || from == null || to == null) {
+			return false;
+		}
+		Vec3 offset = to.subtract(from);
+		double distance = offset.length();
+		if (distance < 1.0e-3) {
+			return true;
+		}
+		Vec3 direction = offset.scale(1.0 / distance);
+		ClearTrace trace = new ClearTrace(level, from, direction, distance);
+		Boolean clear = BlockGetter.traverseBlocks(from, to, trace,
+			(context, pos) -> context.visit(pos) ? Boolean.FALSE : null,
+			context -> Boolean.TRUE);
+		return Boolean.TRUE.equals(clear);
+	}
+
 	private static final class Trace {
 		private final BlockGetter level;
 		private final Vec3 origin;
@@ -102,55 +124,7 @@ public final class OcclusionScanner {
 		 * collision box, or {@code null} when the segment misses it.
 		 */
 		private double[] clip(AABB box) {
-			double min = 0.0;
-			double max = distance;
-			double[] span = clipAxis(origin.x, direction.x, box.minX, box.maxX,
-				min, max);
-			if (span == null) {
-				return null;
-			}
-			min = span[0];
-			max = span[1];
-			span = clipAxis(origin.y, direction.y, box.minY, box.maxY, min, max);
-			if (span == null) {
-				return null;
-			}
-			min = span[0];
-			max = span[1];
-			span = clipAxis(origin.z, direction.z, box.minZ, box.maxZ, min, max);
-			if (span == null) {
-				return null;
-			}
-			min = span[0];
-			max = span[1];
-			if (max - min <= EPSILON) {
-				return null;
-			}
-			return new double[]{min, max};
-		}
-
-		private static double[] clipAxis(double origin, double direction,
-										 double minBound, double maxBound,
-										 double min, double max) {
-			if (Math.abs(direction) < EPSILON) {
-				if (origin < minBound || origin > maxBound) {
-					return null;
-				}
-				return new double[]{min, max};
-			}
-			double t1 = (minBound - origin) / direction;
-			double t2 = (maxBound - origin) / direction;
-			if (t1 > t2) {
-				double swap = t1;
-				t1 = t2;
-				t2 = swap;
-			}
-			double entry = Math.max(min, t1);
-			double exit = Math.min(max, t2);
-			if (entry > exit) {
-				return null;
-			}
-			return new double[]{entry, exit};
+			return clipBox(box, origin, direction, distance);
 		}
 
 		private OcclusionResult result() {
@@ -160,5 +134,97 @@ public final class OcclusionScanner {
 			double cutoff = pathLength / cutoffWeight;
 			return new OcclusionResult(attenuationDb, cutoff, order);
 		}
+	}
+
+	/** Short-circuit variant used by reflection path legs. */
+	private static final class ClearTrace {
+		private final BlockGetter level;
+		private final Vec3 origin;
+		private final Vec3 direction;
+		private final double distance;
+
+		private ClearTrace(BlockGetter level, Vec3 origin, Vec3 direction,
+						   double distance) {
+			this.level = level;
+			this.origin = origin;
+			this.direction = direction;
+			this.distance = distance;
+		}
+
+		private boolean visit(BlockPos pos) {
+			BlockState state = level.getBlockState(pos);
+			if (state.isAir()) {
+				return false;
+			}
+			OcclusionProfile profile = AcousticMaterials.occlusionForState(state);
+			if (profile.isTransparent()) {
+				return false;
+			}
+			VoxelShape shape = state.getCollisionShape(level, pos);
+			if (shape.isEmpty()) {
+				return false;
+			}
+			for (AABB box : shape.toAabbs()) {
+				double[] segment = clipBox(box.move(pos.getX(), pos.getY(),
+					pos.getZ()), origin, direction, distance);
+				if (segment != null && segment[1] - segment[0] > EPSILON) {
+					return true;
+				}
+			}
+			return false;
+		}
+	}
+
+	private static double[] clipBox(AABB box, Vec3 origin, Vec3 direction,
+									double distance) {
+		double min = 0.0;
+		double max = distance;
+		double[] span = clipAxis(origin.x, direction.x, box.minX, box.maxX,
+			min, max);
+		if (span == null) {
+			return null;
+		}
+		min = span[0];
+		max = span[1];
+		span = clipAxis(origin.y, direction.y, box.minY, box.maxY, min, max);
+		if (span == null) {
+			return null;
+		}
+		min = span[0];
+		max = span[1];
+		span = clipAxis(origin.z, direction.z, box.minZ, box.maxZ, min, max);
+		if (span == null) {
+			return null;
+		}
+		min = span[0];
+		max = span[1];
+		if (max - min <= EPSILON) {
+			return null;
+		}
+		return new double[]{min, max};
+	}
+
+	private static double[] clipAxis(double origin, double direction,
+									 double minBound, double maxBound,
+									 double min, double max) {
+		if (Math.abs(direction) < EPSILON) {
+			if (origin < minBound || origin > maxBound) {
+				return null;
+			}
+			return new double[]{min, max};
+		}
+		double t1 = (minBound - origin) / direction;
+		double t2 = (maxBound - origin) / direction;
+		if (t1 > t2) {
+			double swap = t1;
+			t1 = t2;
+			t2 = swap;
+		}
+		double entry = Math.max(min, t1);
+		double exit = Math.min(max, t2);
+		if (entry > exit) {
+			return null;
+		}
+		return new double[]{entry, exit};
 	}
 }

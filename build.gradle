@@ -44,6 +44,17 @@ dependencies {
 
 	// Cinema uses an external FFmpeg full build (ffmpeg.exe/ffprobe.exe) placed
 	// under <game>/mods/. It is not bundled with the mod.
+
+	// Pure geometry/visibility tests. The reflection core uses Point3 instead
+	// of Minecraft Vec3 so these tests do not need a game bootstrap.
+	testImplementation platform('org.junit:junit-bom:5.11.4')
+	testImplementation 'org.junit.jupiter:junit-jupiter'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+	testImplementation sourceSets.client.output
+}
+
+test {
+	useJUnitPlatform()
 }
 
 processResources {

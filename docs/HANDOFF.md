@@ -66,7 +66,7 @@
 - 扬声器 GUI 可编辑名称、选择角色、查看/导入 speaker data；角色选择通过 `SpeakerRolePayload` 提交服务端。
 - Speaker Data：`cinema/speaker_data/profiles/` 本地 JSON、拖放导入、分页选择器（21 个 ASR 型号全部可选）、H/V 原始 194/200 点 + `-180°` 行、`-10 dB` 频率范围（整数 Hz）、on-axis 全频段能量平均归一化；measured profile 的 low/high 固定，仅 `SPL gain dB` 可编辑；profile 只生成到本地 `run/` 目录（不打包、不提交）；A2 起按 H/V 合成 4096-tap 最小相位 FIR 应用到直达声。
 - A1 房间声学数据：客户端 `/cinema_acoustics` 输出六面房间盒、体积/表面积、材质吸收、RT60、听者与附近扬声器；6 轴×25 射线扇形（每条最多反射 2 次）、9×9 材质采样（裁剪到平面边界）、Eyring RT60（不设上下限，A3 再 clamp EAX）、1.5 m 平面迟滞、fallback 保留真实面并按缺失轴延伸 16 m/听者 ±8 m；盒内有界 32³/8 ms flood fill 计算有效体积/面积、开口面和材质加权 α（incomplete 时回退盒值，10 s 重扫）；扬声器 36 档 10° 声学 yaw + Speaker Alignment Tool，模型由 BER 同步旋转；5 Hz 快照缓存/fallback；尚未接入音频，游戏内 dump 验证无明显问题。
-- A2 直达声指向性：`SpeakerDirectivityService` 按听者/扬声器 H/V 角设计 4096-tap 最小相位 FIR（cepstrum，48 kHz），目标 = on-axis EQ + H/V 相对指向性，FIR 在 1 kHz 归一为 0 dB，总 1 kHz 偏移乘入 source gain；5° 缓存 + daemon worker 异步设计；`CinemaAudioEngine` 用 overlap-add FFT 卷积，2048-frame 小块/4 缓冲（≈171 ms 前瞻），FIR tail 跨块，滤波器切换时旧/新路径做 1024-frame（≈21 ms）交叉淡化；声学中心改用 `acousticFrontPosition()`；`/cinema_acoustics` 打印 `directivity ... maxErr`。实测 JBL/Genelec/Adam 样本最大误差约 1.1 dB（Genelec 最高）；空气吸收/遮挡/Java 距离衰减已在 A2 接入，反射待 A2b。
+- A2 直达声指向性：`SpeakerDirectivityService` 按听者/扬声器 H/V 角设计 4096-tap 最小相位 FIR（cepstrum，48 kHz），目标 = on-axis EQ + H/V 相对指向性，FIR 在 1 kHz 归一为 0 dB，总 1 kHz 偏移乘入 source gain；5° 缓存 + daemon worker 异步设计；`CinemaAudioEngine` 用 overlap-add FFT 卷积，2048-frame 小块/4 缓冲（≈171 ms 前瞻），FIR tail 跨块，滤波器切换时旧/新路径做 1024-frame（≈21 ms）交叉淡化；声学中心改用 `acousticFrontPosition()`；`/cinema_acoustics` 打印 `directivity ... maxErr`。实测 JBL/Genelec/Adam 样本最大误差约 1.1 dB（Genelec 最高）；空气吸收/遮挡/Java 距离衰减已在 A2 接入，A2b 几何/可见性已实现，反射 source 池/延迟播放待续。
 - A2 音频修复（2026-11-07）：整条链路改为 32-bit float —— FFmpeg 输出 `f32le`，`AudioChunk`/`StereoUpmixer`/`FirProcessor` 全程 float，source buffer 使用 `AL_EXT_FLOAT32`，不再在 DSP 阶段硬钳到 16-bit；只有设备最终转换才量化。快速转头撕裂通过在音频线程把 20 Hz listener-relative 位置更新按 30 ms 时间常数、约 200 Hz 做半径 + 球面方向（slerp）插值；视角 yaw 直接取 `getViewYRot()`，俯仰时不回退固定北方。`AL_EXT_FLOAT32` 不可用时回退 `AL_FORMAT_MONO16`。扬声器通道 trim 范围改为 -60.0..+6.0 dB。
 - A2 直达声环境（2026-11-07）：OpenAL 距离模型改为 `AL_NONE`，`CinemaAudioEngine` 在音频线程按平滑后的渲染半径计算 `1/max(r,1)`，source 位置只负责声像/HRTF。ISO 9613-1 空气吸收（Mod Menu 开关/温度/湿度，默认 20 °C、50 % RH、101.325 kPa；1 m 为 0 dB 参考点，仅对超过 1 m 的路径计算）与遮挡 Butterworth 低通合并为 2048-tap 最小相位环境 FIR（8192 点 cepstrum，50 Hz 归一），串在 4096-tap 指向性 FIR 之后；滤波器切换复用 1024-frame 交叉淡化。遮挡用 `BlockGetter.traverseBlocks` 累计碰撞形状 AABB 的实际穿行长度（AABB 必须从方块局部坐标平移到世界坐标后再与射线求交），按材质表产生每声道上限 40 dB 的宽带衰减 + 低通；屏幕/mod 家具透明，遮挡增益 30 ms 平滑；未配对 fallback 只做距离/空气吸收，不做遮挡扫描。`/cinema_acoustics` 新增空气配置与每扬声器 distanceGain/air8k/occlusion/cutoff/order/env/taps 输出。
 - 接收器 Speakers 页：滚动列表、每只扬声器 `Level`、`Ping` 定位音 + 约 8 秒粒子光柱、自定义名称/角色/坐标/距离 tooltip。
@@ -84,7 +84,7 @@
 
 - **原地 seek 仍未启用**：当前 seek 复用音视频资源但会重新打开 FFmpeg 解码器，4K AV1/HEVC 仍可能需要数秒才出首帧；原地 seek 状态机未重新设计前不要直接恢复。
 - **BSL 下 ambient wash 某些值画面异常**：待确认是白色 overlay 的 bloom/exposure 还是 alpha 曲线；无音轨墙钟长播也未测试。两项按用户决定暂不处理，不阻塞当前验收。
-- **音频声学：A2 直达声已实现，反射/晚期混响仍规划**：见 `docs/design/AUDIO-ACOUSTICS.md`。直达声距离由 Java `1/max(r,1)` 计算（OpenAL `AL_NONE`），ISO 9613-1 空气吸收与遮挡低通合并为 2048-tap 环境 FIR，遮挡宽带衰减 30 ms 平滑；空气开关/温度/湿度、早反调试 gain 在 Mod Menu。A2 已接入 4096-tap 指向性 FIR；已通过游戏内听感验收（距离/空气/遮挡/配置 UI、快速转头/移动无爆音或削波），遮挡扫描已修正为世界坐标碰撞盒并通过石墙/木板/玻璃/屏幕复测。早期反射仍计划采用独立 OpenAL source（镜像源位置，每 tap 一个，上限 24–36/接收器），A2b 实现时距离同样由 Java 按 `1/max(L,1)` 计算。A0 `/cinema_efx_spike` 已通过游戏内验证：EFX/sharedCaps/真实设备 context=OK，max sends=2，5.1 wet 5 声道，HRTF enabled，reset=OK，CPU≈0.8%；真实设备听感/物理切换/硬件延迟留 A3/A4；材质/遮挡调参、型号映射仍需校准。
+- **音频声学：A2 直达声已验收，A2b 几何/可见性已实现，反射播放/晚期混响仍规划**：见 `docs/design/AUDIO-ACOUSTICS.md`。直达声距离由 Java `1/max(r,1)` 计算（OpenAL `AL_NONE`），ISO 9613-1 空气吸收与遮挡低通合并为 2048-tap 环境 FIR，遮挡宽带衰减 30 ms 平滑；空气开关/温度/湿度、早反调试 gain 在 Mod Menu。A2 已接入 4096-tap 指向性 FIR；已通过游戏内听感验收（距离/空气/遮挡/配置 UI、快速转头/移动无爆音或削波），遮挡扫描已修正为世界坐标碰撞盒并通过石墙/木板/玻璃/屏幕复测。A2b 几何/可见性已实现：`MirrorPlane`/`MirrorPlaneDiscovery`/`ImageSourceSolver`/`ReflectionProbe`，扬声器 6 轴射线 + 房间 `samples>0` 种子，R 处真实墙面验证与 `S→R`/`R→L` 两段可见性，纯几何 JUnit 11 项通过，`/cinema_acoustics` 输出 planes/taps；反射播放仍计划采用独立 OpenAL source（镜像源位置，每 tap 一个，上限 24–36/接收器），距离由 Java 按 `1/max(L,1)` 计算。A0 `/cinema_efx_spike` 已通过游戏内验证：EFX/sharedCaps/真实设备 context=OK，max sends=2，5.1 wet 5 声道，HRTF enabled，reset=OK，CPU≈0.8%；真实设备听感/物理切换/硬件延迟留 A3/A4；材质/遮挡调参、型号映射仍需校准。
 - **音频定位模型**：当前保留 `AL_SOURCE_RELATIVE = AL_TRUE`；距离衰减已由 Java 计算（`AL_NONE`），source 位置只负责声像/HRTF。世界坐标源迁移已完成评审，暂不迁移；A2b 反射需要时再做，见 `AUDIO-ACOUSTICS.md` §4.2.1。
 - Spinorama 数据默认 CC BY-NC-SA 4.0，与项目 CC0 不同；发布前必须做许可/attribution 决策。REST API 需要人工申请 Bearer key，key 只能放本地环境变量/转换工具，不能进仓库、发布包或日志。
 - 一阶声学模型不覆盖衍射、散射、高阶反射和低频房间模态；LFE 低频峰谷/驻波不会正确重现。低频管理与模态（含多低音炮）排在 A4 之后的 A5。
@@ -104,7 +104,7 @@
    - 按 `CHANNEL-LAYOUTS.md` 分阶段泛化 `CinemaAudioEngine`/`AudioChunk`/`SpeakerRole`，先保持 5.1 零回归。
 4. **房间声学**
    - 所有声学模拟原型/实验代码在 `acoustic-simulation` 分支开发，只有通过游戏内听感验收的部分才分段合并回 `main`。
-   - A0 EFX/EAXReverb 技术验证已通过（EAXReverb late tail 可用，FDN 仅回退）；A1d 数据管线已完成（profile 本地生成）；A1 房间快照已实现，游戏内 `/cinema_acoustics` dump 验证无明显问题；A2 直达声距离/空气吸收/遮挡/指向性已接入（4096-tap 指向性 FIR + 2048-tap 环境 FIR）并通过游戏内听感验收；A2b 早期反射待续；A1e attribution 仍待补。不要为了声学阻塞主线。
+   - A0 EFX/EAXReverb 技术验证已通过（EAXReverb late tail 可用，FDN 仅回退）；A1d 数据管线已完成（profile 本地生成）；A1 房间快照已实现，游戏内 `/cinema_acoustics` dump 验证无明显问题；A2 直达声距离/空气吸收/遮挡/指向性已接入（4096-tap 指向性 FIR + 2048-tap 环境 FIR）并通过游戏内听感验收；A2b 几何/可见性已实现，反射播放待续；A1e attribution 仍待补。不要为了声学阻塞主线。
 
 ## 6. 构建与运行
 

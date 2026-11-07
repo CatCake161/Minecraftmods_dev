@@ -1,12 +1,19 @@
 package com.example.cinema.client.command;
 
+import com.example.cinema.block.entity.SpeakerRole;
 import com.example.cinema.client.audio.acoustics.AcousticMaterial;
 import com.example.cinema.client.audio.acoustics.AcousticRoom;
 import com.example.cinema.client.audio.acoustics.AcousticScene;
 import com.example.cinema.client.audio.acoustics.AcousticSpeaker;
 import com.example.cinema.client.audio.acoustics.AcousticSurface;
+import com.example.cinema.client.audio.acoustics.ImageSourceSolver;
+import com.example.cinema.client.audio.acoustics.MirrorPlane;
+import com.example.cinema.client.audio.acoustics.MirrorPlaneDiscovery;
 import com.example.cinema.client.audio.acoustics.OcclusionResult;
 import com.example.cinema.client.audio.acoustics.OcclusionScanner;
+import com.example.cinema.client.audio.acoustics.Point3;
+import com.example.cinema.client.audio.acoustics.ReflectionProbe;
+import com.example.cinema.client.audio.acoustics.ReflectionTap;
 import com.example.cinema.client.audio.acoustics.RoomAcousticSnapshot;
 import com.example.cinema.client.audio.acoustics.RoomFill;
 import com.example.cinema.client.audio.directivity.MinimumPhaseFir;
@@ -25,6 +32,8 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.phys.Vec3;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 
 /** A1 debug command: dump the client-side room/material/speaker snapshot. */
@@ -142,7 +151,47 @@ public final class ClientAcousticsCommand {
 				environmentState,
 				environment == null ? "-" : Integer.toString(environment.length()))));
 		}
+		ClientLevel level = Minecraft.getInstance().level;
+		if (level != null) {
+			ReflectionProbe probe = new ReflectionProbe(level);
+			List<ReflectionTap> allTaps = new ArrayList<>();
+			for (AcousticSpeaker speaker : snapshot.speakers()) {
+				if (speaker.role() == SpeakerRole.NONE
+					|| speaker.role() == SpeakerRole.LFE) {
+					continue;
+				}
+				List<MirrorPlane> planes = MirrorPlaneDiscovery.INSTANCE.discover(level,
+					speaker.position(), snapshot.version(), room.surfaces());
+				int channel = speaker.role().ordinal() - 1;
+				List<ReflectionTap> taps = ImageSourceSolver.solve(planes, channel,
+					pointOf(speaker.position()), pointOf(snapshot.listener().eye()),
+					false, probe);
+				allTaps.addAll(taps);
+				source.sendFeedback(Component.literal(String.format(Locale.ROOT,
+					"acoustics: reflection %s planes=%d taps=%d",
+					speaker.role().label(), planes.size(), taps.size())));
+				for (ReflectionTap tap : taps) {
+					source.sendFeedback(Component.literal(String.format(Locale.ROOT,
+						"acoustics: tap %s %s R=(%.2f, %.2f, %.2f) L=%.2f m "
+							+ "delay=%.1f ms material=%s gain=%.4f",
+						speaker.role().label(), tap.planeKey(),
+						tap.reflectionPoint().x(), tap.reflectionPoint().y(),
+						tap.reflectionPoint().z(), tap.pathLength(),
+						tap.delayMilliseconds(), tap.material().name(), tap.gain())));
+				}
+			}
+			List<ReflectionTap> limited = ImageSourceSolver.strongest(allTaps,
+				ImageSourceSolver.MAX_TAPS_PER_RECEIVER);
+			source.sendFeedback(Component.literal(String.format(Locale.ROOT,
+				"acoustics: reflection total=%d cap=%d strongest=%d",
+				allTaps.size(), ImageSourceSolver.MAX_TAPS_PER_RECEIVER,
+				limited.size())));
+		}
 		return 1;
+	}
+
+	private static Point3 pointOf(Vec3 point) {
+		return new Point3(point.x, point.y, point.z);
 	}
 
 	private static OcclusionResult scanOcclusion(AcousticSpeaker speaker, Vec3 listener) {

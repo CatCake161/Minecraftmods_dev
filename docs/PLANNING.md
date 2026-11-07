@@ -39,13 +39,13 @@ AV Receiver（权威媒体单元）
 
 解码、播放状态、媒体选择和音画时钟已迁入 AV Receiver：客户端 `AvReceiverPlaybackManager` 按接收器状态驱动独立 `CinemaPlayer` 实例，视频经投影仪路由到屏幕。每个接收器持有独立 `CinemaAudioEngine`（独立 OpenAL context），两个接收器可同时播放；M4 已把配对扬声器按 FL/FR/FC/LFE/BL/BR 路由到物理位置。
 
-客户端声学层（A2 直达声已实现，反射/混响规划中；详见 [AUDIO-ACOUSTICS.md](design/AUDIO-ACOUSTICS.md)）：
+客户端声学层（A2 直达声已验收，A2b 几何/可见性已实现、播放待续，混响规划中；详见 [AUDIO-ACOUSTICS.md](design/AUDIO-ACOUSTICS.md)）：
 
 > 声学模拟（EFX/早期反射/晚期混响/Spinorama 指向性原型）统一在 `acoustic-simulation` 分支开发，`main` 保持可玩的稳定基线；只有通过游戏内听感验收的部分才分段合并回 `main`。
 
 ```text
 5.1 PCM → 直达声（Java 距离/ISO 空气吸收/遮挡/指向性）
-        → 一阶早期反射（镜像源 + Java 距离/空气吸收/材质/指向性）  // A2b 待实现
+        → 一阶早期反射（镜像源 + Java 距离/空气吸收/材质/指向性）  // A2b 几何/可见性已实现，播放待续
         → 晚期混响（EAXReverb 仅 late tail / FDN 回退）              // A3 待实现
         → 6 个直达 OpenAL source + 最多 24–36 个反射 OpenAL source
 ```
