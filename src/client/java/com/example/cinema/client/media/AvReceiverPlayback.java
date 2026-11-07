@@ -4,8 +4,17 @@ import com.example.cinema.Cinema;
 import com.example.cinema.block.entity.AvReceiverBlockEntity;
 import com.example.cinema.block.entity.SpeakerBlockEntity;
 import com.example.cinema.block.entity.SpeakerRole;
+import com.example.cinema.client.audio.acoustics.AcousticScene;
+import com.example.cinema.client.audio.acoustics.AcousticSurface;
+import com.example.cinema.client.audio.acoustics.ImageSourceSolver;
+import com.example.cinema.client.audio.acoustics.MirrorPlane;
+import com.example.cinema.client.audio.acoustics.MirrorPlaneDiscovery;
 import com.example.cinema.client.audio.acoustics.OcclusionResult;
 import com.example.cinema.client.audio.acoustics.OcclusionScanner;
+import com.example.cinema.client.audio.acoustics.Point3;
+import com.example.cinema.client.audio.acoustics.ReflectionProbe;
+import com.example.cinema.client.audio.acoustics.ReflectionTap;
+import com.example.cinema.client.audio.acoustics.RoomAcousticSnapshot;
 import com.example.cinema.client.audio.directivity.MinimumPhaseFir;
 import com.example.cinema.client.audio.directivity.SpeakerDirectivityService;
 import com.example.cinema.client.audio.environment.AirAbsorption;
@@ -25,7 +34,13 @@ import net.minecraft.world.phys.Vec3;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Client-side playback proxy for one AV receiver.
@@ -41,6 +56,14 @@ public final class AvReceiverPlayback {
 	private static final double MAX_DRIFT_SECONDS = 0.75;
 	private static final long FAILURE_RETRY_MILLIS = 5_000L;
 	private static final long MISSING_LOG_INTERVAL_MILLIS = 5_000L;
+	/** Reflection discovery/validation is much heavier than the direct layout. */
+	private static final long REFLECTION_UPDATE_MILLIS = 200L;
+	/**
+	 * Keep the active tap count below the engine pool so appearing taps always
+	 * have a spare source to fade in.
+	 */
+	private static final int MAX_ACTIVE_REFLECTIONS = 24;
+	private static final double REFLECTION_MOVE_THRESHOLD_SQR = 0.5 * 0.5;
 
 	private final BlockPos receiverPos;
 	private final ResourceLocation textureId;
@@ -67,6 +90,12 @@ public final class AvReceiverPlayback {
 		new MinimumPhaseFir[CinemaAudioEngine.CHANNELS];
 	private final MinimumPhaseFir[] channelEnvironmentFilters =
 		new MinimumPhaseFir[CinemaAudioEngine.CHANNELS];
+	private long lastReflectionUpdateMillis;
+	private long lastReflectionRoomVersion = Long.MIN_VALUE;
+	private Vec3 lastReflectionListener;
+	private final Map<String, MinimumPhaseFir> reflectionFilters = new HashMap<>();
+	private int lastReflectionLogCount = -1;
+	private long lastReflectionLogMillis;
 
 	AvReceiverPlayback(BlockPos receiverPos) {
 		this.receiverPos = receiverPos;
@@ -240,6 +269,12 @@ public final class AvReceiverPlayback {
 		pendingSeekSeconds = Double.NaN;
 		lastExpectedSeconds = Double.NaN;
 		physicalChannels = 0;
+		lastReflectionUpdateMillis = 0L;
+		lastReflectionRoomVersion = Long.MIN_VALUE;
+		lastReflectionListener = null;
+		reflectionFilters.clear();
+		lastReflectionLogCount = -1;
+		lastReflectionLogMillis = 0L;
 	}
 
 	private void closePlayer() {
@@ -382,6 +417,8 @@ public final class AvReceiverPlayback {
 		MinimumPhaseFir[] environmentFilters =
 			new MinimumPhaseFir[CinemaAudioEngine.CHANNELS];
 		float[] occlusionGains = new float[CinemaAudioEngine.CHANNELS];
+		SpeakerBlockEntity[] routedSpeakers =
+			new SpeakerBlockEntity[CinemaAudioEngine.CHANNELS];
 		Arrays.fill(gains, 1.0f);
 		Arrays.fill(filters, MinimumPhaseFir.FLAT);
 		Arrays.fill(environmentFilters, MinimumPhaseFir.FLAT);
@@ -413,6 +450,7 @@ public final class AvReceiverPlayback {
 				continue;
 			}
 			bestDistance[channel] = distanceSqr;
+			routedSpeakers[channel] = speaker;
 			positions[channel] = toListenerSpace(relative, forward);
 			SpeakerDirectivityService.Angles angles = SpeakerDirectivityService.angles(
 				center, speaker.acousticForward(), listener);
@@ -451,6 +489,97 @@ public final class AvReceiverPlayback {
 		System.arraycopy(filters, 0, channelFilters, 0, filters.length);
 		engine.setChannelLayout(positions, gains, filters, environmentFilters,
 			occlusionGains);
+		updateReflections(level, listener, forward, routedSpeakers, gains, config);
+	}
+
+	/**
+	 * Recomputes first-order reflection taps at ~5 Hz from the receiver-linked
+	 * physical speakers. Room surfaces are optional seeds; speaker-centered
+	 * rays work without a valid room box. The engine receives listener-relative
+	 * image-source positions (not reflection points) and per-tap air filters.
+	 *
+	 * <p>The tap gain already carries {@code sqrt(1-alpha_mid)/max(L,1)}; the
+	 * direct-path speaker trim and on-axis EQ are reused here, while the
+	 * reflection-angle directivity is deferred to A2c-R.
+	 */
+	private void updateReflections(ClientLevel level, Vec3 listener, Vec3 forward,
+								   SpeakerBlockEntity[] speakers, float[] gains,
+								   CinemaClientConfig config) {
+		CinemaAudioEngine engine = audio;
+		if (engine == null) {
+			return;
+		}
+		long now = System.currentTimeMillis();
+		RoomAcousticSnapshot snapshot = AcousticScene.snapshot();
+		long roomVersion = snapshot == null ? 0L : snapshot.version();
+		boolean moved = lastReflectionListener == null
+			|| listener.distanceToSqr(lastReflectionListener)
+				> REFLECTION_MOVE_THRESHOLD_SQR;
+		if (now - lastReflectionUpdateMillis < REFLECTION_UPDATE_MILLIS
+			&& roomVersion == lastReflectionRoomVersion && !moved) {
+			return;
+		}
+		lastReflectionUpdateMillis = now;
+		lastReflectionRoomVersion = roomVersion;
+		lastReflectionListener = listener;
+
+		List<AcousticSurface> seeds = snapshot == null
+			? List.of() : snapshot.room().surfaces();
+		ReflectionProbe probe = ReflectionProbe.of(level);
+		double earlyGain = Math.pow(10.0, config.earlyGainDb() / 20.0);
+		List<ReflectionTap> taps = new ArrayList<>();
+		for (int channel = 0; channel < CinemaAudioEngine.CHANNELS; channel++) {
+			SpeakerBlockEntity speaker = speakers[channel];
+			if (speaker == null || channel == SpeakerRole.LFE.ordinal() - 1) {
+				continue;
+			}
+			Vec3 center = speaker.acousticFrontPosition();
+			List<MirrorPlane> planes = MirrorPlaneDiscovery.INSTANCE.discover(
+				level, center, roomVersion, seeds);
+			taps.addAll(ImageSourceSolver.solve(planes, channel, pointOf(center),
+				pointOf(listener), false, probe));
+		}
+		List<ReflectionTap> limited = ImageSourceSolver.strongest(taps,
+			MAX_ACTIVE_REFLECTIONS);
+		Set<String> currentKeys = new HashSet<>();
+		List<ReflectionSource> sources = new ArrayList<>(limited.size());
+		for (ReflectionTap tap : limited) {
+			int channel = tap.channel();
+			String key = channel + ":" + tap.planeKey();
+			currentKeys.add(key);
+			Vec3 imageRelative = new Vec3(
+				tap.imageSource().x() - listener.x,
+				tap.imageSource().y() - listener.y,
+				tap.imageSource().z() - listener.z);
+			float[] position = toListenerSpace(imageRelative, forward);
+			MinimumPhaseFir filter = reflectionFilters.get(key);
+			MinimumPhaseFir design = EnvironmentFirService.get(
+				new EnvironmentProfile(tap.pathLength(), config.airAbsorption(),
+					config.airTemperatureC(), config.airHumidityPercent(),
+					AirAbsorption.REFERENCE_PRESSURE_KPA, 20_000.0, 0));
+			if (design != null) {
+				filter = design;
+				reflectionFilters.put(key, design);
+			}
+			if (filter == null) {
+				filter = MinimumPhaseFir.FLAT;
+			}
+			double gain = tap.gain() * gains[channel] * earlyGain;
+			sources.add(new ReflectionSource(key, channel, position[0],
+				position[1], position[2], (float) gain, tap.delaySeconds(),
+				filter));
+		}
+		reflectionFilters.keySet().retainAll(currentKeys);
+		engine.setReflections(sources);
+		if (sources.size() != lastReflectionLogCount
+			&& now - lastReflectionLogMillis >= 5_000L) {
+			lastReflectionLogCount = sources.size();
+			lastReflectionLogMillis = now;
+			Cinema.LOGGER.info(
+				"cinema receiver {}: {} early reflection taps (candidates={}, room={})",
+				receiverPos.toShortString(), sources.size(), taps.size(),
+				snapshot == null ? "none" : snapshot.version());
+		}
 	}
 
 	private MinimumPhaseFir environmentFilter(int channel, EnvironmentProfile profile) {
@@ -508,6 +637,10 @@ public final class AvReceiverPlayback {
 			(float) relative.y,
 			(float) -relative.dot(forward),
 		};
+	}
+
+	private static Point3 pointOf(Vec3 point) {
+		return new Point3(point.x, point.y, point.z);
 	}
 
 	private static double expectedPosition(ClientLevel level, AvReceiverBlockEntity receiver) {

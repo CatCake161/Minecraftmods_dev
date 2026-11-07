@@ -22,7 +22,10 @@ import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.nio.ShortBuffer;
 import java.util.ArrayDeque;
+import java.util.Arrays;
 import java.util.Deque;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
@@ -56,6 +59,18 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	private static final double POSITION_SMOOTHING_SECONDS = 0.03;
 	/** Time constant for smoothing occlusion-driven source gain changes. */
 	private static final double GAIN_SMOOTHING_SECONDS = 0.03;
+	/**
+	 * Fixed reflection-source pool. The planner caps active taps below this so
+	 * appearing/disappearing taps have spare slots to fade through.
+	 */
+	public static final int MAX_REFLECTION_SOURCES = 32;
+	/** 80 ms maximum geometric delay plus one processing block. */
+	private static final int RAW_HISTORY_FRAMES = 8192;
+	private static final int RAW_HISTORY_MASK = RAW_HISTORY_FRAMES - 1;
+	/** 30 ms fade-in/out for reflection tap appearance and disappearance. */
+	private static final int REFLECTION_FADE_FRAMES = 1_440;
+	/** Delay changes glide instead of jumping when the listener moves. */
+	private static final double REFLECTION_DELAY_SMOOTHING_SECONDS = 0.15;
 	private static final String[] LABELS = {"FL", "FR", "FC", "LFE", "BL", "BR"};
 	private static final Set<CinemaAudioEngine> OPEN_ENGINES = ConcurrentHashMap.newKeySet();
 
@@ -120,6 +135,20 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	private final float[] environmentScratch = new float[BLOCK_FRAMES];
 	private int appliedLayoutVersion = -1;
 	private long lastGainUpdateNanos;
+	private final ReflectionSlot[] reflectionSlots =
+		new ReflectionSlot[MAX_REFLECTION_SOURCES];
+	private final float[][] rawHistory = new float[SPEAKERS][RAW_HISTORY_FRAMES];
+	private final float[] reflectionInputScratch = new float[BLOCK_FRAMES];
+	private final float[] reflectionOutputScratch = new float[BLOCK_FRAMES];
+	private final float[] silenceScratch = new float[BLOCK_FRAMES];
+	private final IntBuffer reflectionReclaimScratch =
+		BufferUtils.createIntBuffer(BUFFER_COUNT);
+	private FloatBuffer reflectionFloatScratch;
+	private ShortBuffer reflectionShortScratch;
+	private long rawHistoryWriteFrame = Long.MIN_VALUE;
+	private volatile ReflectionSource[] reflectionTargets = new ReflectionSource[0];
+	private final AtomicInteger reflectionVersion = new AtomicInteger();
+	private int appliedReflectionVersion = -1;
 	private volatile double audiblePts;
 	private volatile double latencySeconds;
 	private volatile long scheduledStartSystemNanos;
@@ -342,6 +371,146 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			&& Float.isFinite(position[2]);
 	}
 
+	/**
+	 * Replaces the early-reflection tap set. The audio thread keeps a fixed
+	 * source pool; taps are matched by stable key so listener movement only
+	 * updates delay/gain/position, while appearing/disappearing taps fade.
+	 */
+	public void setReflections(List<ReflectionSource> sources) {
+		ReflectionSource[] next = sources == null ? new ReflectionSource[0]
+			: sources.toArray(new ReflectionSource[0]);
+		if (sameReflections(next, reflectionTargets)) {
+			return;
+		}
+		reflectionTargets = next;
+		reflectionVersion.incrementAndGet();
+	}
+
+	private static boolean sameReflections(ReflectionSource[] first,
+										   ReflectionSource[] second) {
+		if (first.length != second.length) {
+			return false;
+		}
+		for (int i = 0; i < first.length; i++) {
+			ReflectionSource a = first[i];
+			ReflectionSource b = second[i];
+			if (a == null || b == null) {
+				if (a != b) {
+					return false;
+				}
+				continue;
+			}
+			if (!a.key().equals(b.key()) || a.channel() != b.channel()
+				|| a.filter() != b.filter()
+				|| Math.abs(a.gain() - b.gain()) > 1.0e-4f
+				|| Math.abs(a.delaySeconds() - b.delaySeconds()) > 1.0e-6
+				|| Math.abs(a.x() - b.x()) > 1.0e-4f
+				|| Math.abs(a.y() - b.y()) > 1.0e-4f
+				|| Math.abs(a.z() - b.z()) > 1.0e-4f) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/**
+	 * Matches the latest tap set to the fixed source pool. Existing keys keep
+	 * their source and only update targets; new keys fade in; removed keys fade
+	 * out. The audio thread never allocates or deletes OpenAL objects here.
+	 */
+	private void applyReflectionTargets() {
+		int version = reflectionVersion.get();
+		if (version == appliedReflectionVersion) {
+			return;
+		}
+		ReflectionSource[] targets = reflectionTargets;
+		for (ReflectionSlot slot : reflectionSlots) {
+			slot.assigned = false;
+		}
+		Set<String> seen = new HashSet<>();
+		boolean retry = false;
+		for (ReflectionSource target : targets) {
+			if (target == null || target.key().isEmpty()
+				|| !seen.add(target.key())) {
+				continue;
+			}
+			ReflectionSlot slot = findReflectionSlot(target.key());
+			if (slot == null) {
+				slot = idleReflectionSlot();
+			}
+			if (slot == null) {
+				// A fading slot may still have full-volume blocks queued. Do
+				// not cut it short; retry this tap after the fade retires.
+				retry = true;
+				continue;
+			}
+			if (!target.key().equals(slot.key)) {
+				// Fresh key: snap position/delay and fade the samples in. The
+				// delay snap is hidden by the fade and avoids a long glide
+				// from an unrelated tap's delay.
+				slot.processor.reset();
+				slot.key = target.key();
+				slot.envelope = 0.0f;
+				slot.envelopeStep = 1.0f / REFLECTION_FADE_FRAMES;
+				slot.gain = target.gain();
+				slot.appliedGain = Float.NaN;
+				slot.delayFrames = reflectionDelayFrames(target.delaySeconds());
+				slot.position[0] = target.x();
+				slot.position[1] = target.y();
+				slot.position[2] = target.z();
+				alSource3f(slot.source, AL_POSITION, target.x(), target.y(),
+					target.z());
+			} else if (slot.fadingOut) {
+				// The same tap reappeared while fading out; reverse the fade.
+				slot.envelopeStep = 1.0f / REFLECTION_FADE_FRAMES;
+			}
+			slot.assigned = true;
+			slot.fadingOut = false;
+			slot.channel = target.channel();
+			slot.targetPosition[0] = target.x();
+			slot.targetPosition[1] = target.y();
+			slot.targetPosition[2] = target.z();
+			slot.targetGain = target.gain();
+			slot.targetDelayFrames = reflectionDelayFrames(
+				target.delaySeconds());
+			if (slot.filter != target.filter()) {
+				slot.filter = target.filter();
+				slot.processor.setFilter(target.filter());
+			}
+		}
+		for (ReflectionSlot slot : reflectionSlots) {
+			if (!slot.key.isEmpty() && !slot.assigned && !slot.fadingOut) {
+				slot.fadingOut = true;
+				slot.envelopeStep = -1.0f / REFLECTION_FADE_FRAMES;
+			}
+		}
+		if (!retry) {
+			appliedReflectionVersion = version;
+		}
+	}
+
+	private ReflectionSlot findReflectionSlot(String key) {
+		for (ReflectionSlot slot : reflectionSlots) {
+			if (slot != null && key.equals(slot.key)) {
+				return slot;
+			}
+		}
+		return null;
+	}
+
+	private ReflectionSlot idleReflectionSlot() {
+		for (ReflectionSlot slot : reflectionSlots) {
+			if (slot != null && slot.key.isEmpty()) {
+				return slot;
+			}
+		}
+		return null;
+	}
+
+	private static double reflectionDelayFrames(double seconds) {
+		return Math.max(0.0, Math.min(0.080, seconds)) * SAMPLE_RATE;
+	}
+
 	private static float[][] copyDefaultPositions() {
 		float[][] copy = new float[SPEAKERS][];
 		for (int i = 0; i < SPEAKERS; i++) {
@@ -475,9 +644,66 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		}
 		Cinema.LOGGER.info("cinema audio: source buffers are {}; distance model AL_NONE",
 			float32Buffers ? "32-bit float" : "16-bit integer");
+		setupReflectionSources();
 		applyChannelLayout();
 		applyChannelGains();
 		checkError("setupSources");
+	}
+
+	private void setupReflectionSources() {
+		reflectionFloatScratch = BufferUtils.createFloatBuffer(BLOCK_FRAMES);
+		reflectionShortScratch = BufferUtils.createShortBuffer(BLOCK_FRAMES);
+		for (int index = 0; index < MAX_REFLECTION_SOURCES; index++) {
+			ReflectionSlot slot = new ReflectionSlot();
+			slot.source = alGenSources();
+			for (int i = 0; i < BUFFER_COUNT; i++) {
+				slot.buffers[i] = alGenBuffers();
+				uploadSilence(slot.buffers[i], BLOCK_FRAMES);
+				slot.freeBuffers.addLast(slot.buffers[i]);
+			}
+			alSourcei(slot.source, AL_SOURCE_RELATIVE, AL_TRUE);
+			alSourcef(slot.source, AL_GAIN, 0.0f);
+			reflectionSlots[index] = slot;
+		}
+		appliedReflectionVersion = -1;
+		clearRawHistory();
+		Cinema.LOGGER.info("cinema audio: {} reflection sources allocated",
+			MAX_REFLECTION_SOURCES);
+	}
+
+	private void clearRawHistory() {
+		for (float[] history : rawHistory) {
+			Arrays.fill(history, 0.0f);
+		}
+		rawHistoryWriteFrame = Long.MIN_VALUE;
+	}
+
+	private void uploadSilence(int buffer, int frames) {
+		uploadSamples(buffer, silenceScratch, frames);
+	}
+
+	private void uploadSamples(int buffer, float[] samples, int frames) {
+		if (float32Buffers) {
+			FloatBuffer data = reflectionFloatScratch;
+			data.clear();
+			data.put(samples, 0, frames);
+			data.flip();
+			alBufferData(buffer, EXTFloat32.AL_FORMAT_MONO_FLOAT32, data,
+				SAMPLE_RATE);
+		} else {
+			ShortBuffer data = reflectionShortScratch;
+			data.clear();
+			for (int i = 0; i < frames; i++) {
+				float value = samples[i];
+				if (!Float.isFinite(value)) {
+					value = 0.0f;
+				}
+				value = Math.max(-1.0f, Math.min(1.0f, value));
+				data.put((short) Math.round(value * 32767.0f));
+			}
+			data.flip();
+			alBufferData(buffer, AL_FORMAT_MONO16, data, SAMPLE_RATE);
+		}
 	}
 
 	private static boolean supportsFloat32() {
@@ -534,43 +760,60 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		alpha = Math.min(0.25, alpha);
 		float[][] target = channelPositions;
 		for (int channel = 0; channel < SPEAKERS; channel++) {
-			float[] current = renderedPositions[channel];
-			float[] destination = target[channel];
-			double cx = current[0];
-			double cy = current[1];
-			double cz = current[2];
-			double dx = destination[0];
-			double dy = destination[1];
-			double dz = destination[2];
-			double currentRadius = Math.sqrt(cx * cx + cy * cy + cz * cz);
-			double targetRadius = Math.sqrt(dx * dx + dy * dy + dz * dz);
-			double x;
-			double y;
-			double z;
-			if (currentRadius < 1.0e-6 || targetRadius < 1.0e-6) {
-				x = cx + (dx - cx) * alpha;
-				y = cy + (dy - cy) * alpha;
-				z = cz + (dz - cz) * alpha;
-			} else {
-				slerpDirection(cx / currentRadius, cy / currentRadius, cz / currentRadius,
-					dx / targetRadius, dy / targetRadius, dz / targetRadius, alpha,
-					slerpScratch);
-				double radius = currentRadius + (targetRadius - currentRadius) * alpha;
-				x = slerpScratch[0] * radius;
-				y = slerpScratch[1] * radius;
-				z = slerpScratch[2] * radius;
-			}
-			boolean moved = Math.abs(x - cx) > 1.0e-5
-				|| Math.abs(y - cy) > 1.0e-5
-				|| Math.abs(z - cz) > 1.0e-5;
-			current[0] = (float) x;
-			current[1] = (float) y;
-			current[2] = (float) z;
-			if (moved) {
+			if (smoothPosition(renderedPositions[channel], target[channel], alpha)) {
+				float[] position = renderedPositions[channel];
 				alSource3f(sources[channel], AL_POSITION,
-					current[0], current[1], current[2]);
+					position[0], position[1], position[2]);
 			}
 		}
+		for (ReflectionSlot slot : reflectionSlots) {
+			if (slot == null || slot.key.isEmpty()) {
+				continue;
+			}
+			if (smoothPosition(slot.position, slot.targetPosition, alpha)) {
+				alSource3f(slot.source, AL_POSITION, slot.position[0],
+					slot.position[1], slot.position[2]);
+			}
+		}
+	}
+
+	/**
+	 * Smooths one listener-relative source on its arc/radius. Returns true when
+	 * the rendered position moved enough to be worth sending to OpenAL.
+	 */
+	private boolean smoothPosition(float[] current, float[] destination,
+								   double alpha) {
+		double cx = current[0];
+		double cy = current[1];
+		double cz = current[2];
+		double dx = destination[0];
+		double dy = destination[1];
+		double dz = destination[2];
+		double currentRadius = Math.sqrt(cx * cx + cy * cy + cz * cz);
+		double targetRadius = Math.sqrt(dx * dx + dy * dy + dz * dz);
+		double x;
+		double y;
+		double z;
+		if (currentRadius < 1.0e-6 || targetRadius < 1.0e-6) {
+			x = cx + (dx - cx) * alpha;
+			y = cy + (dy - cy) * alpha;
+			z = cz + (dz - cz) * alpha;
+		} else {
+			slerpDirection(cx / currentRadius, cy / currentRadius, cz / currentRadius,
+				dx / targetRadius, dy / targetRadius, dz / targetRadius, alpha,
+				slerpScratch);
+			double radius = currentRadius + (targetRadius - currentRadius) * alpha;
+			x = slerpScratch[0] * radius;
+			y = slerpScratch[1] * radius;
+			z = slerpScratch[2] * radius;
+		}
+		boolean moved = Math.abs(x - cx) > 1.0e-5
+			|| Math.abs(y - cy) > 1.0e-5
+			|| Math.abs(z - cz) > 1.0e-5;
+		current[0] = (float) x;
+		current[1] = (float) y;
+		current[2] = (float) z;
+		return moved;
 	}
 
 	/**
@@ -692,6 +935,33 @@ public final class CinemaAudioEngine implements AutoCloseable {
 				alSourcef(sources[i], AL_GAIN, target);
 			}
 		}
+		// Reflection taps already carry their own 1/max(L,1), material,
+		// speaker trim and on-axis EQ in targetGain. Only the receiver master
+		// gain is added here; applying the direct-path distance gain again
+		// would double-attenuate every tap.
+		for (ReflectionSlot slot : reflectionSlots) {
+			if (slot == null) {
+				continue;
+			}
+			if (slot.key.isEmpty()) {
+				if (slot.appliedGain != 0.0f) {
+					slot.appliedGain = 0.0f;
+					slot.gain = 0.0f;
+					alSourcef(slot.source, AL_GAIN, 0.0f);
+				}
+				continue;
+			}
+			slot.gain += (slot.targetGain - slot.gain) * (float) alpha;
+			float target = master * slot.gain;
+			if (!Float.isFinite(target)) {
+				target = 0.0f;
+			}
+			if (Float.isNaN(slot.appliedGain)
+				|| Math.abs(target - slot.appliedGain) >= 0.0005f) {
+				slot.appliedGain = target;
+				alSourcef(slot.source, AL_GAIN, target);
+			}
+		}
 	}
 
 	private void pump() {
@@ -706,6 +976,9 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		if (appliedLayoutVersion != layoutVersion.get()) {
 			applyChannelLayout();
 		}
+		if (appliedReflectionVersion != reflectionVersion.get()) {
+			applyReflectionTargets();
+		}
 		updateSourcePositions();
 		applyChannelGains();
 		reclaimProcessed();
@@ -713,7 +986,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			pendingChunk = input.poll();
 			pendingFrameOffset = 0;
 		}
-		while (pendingChunk != null && allSpeakersFree()) {
+		while (pendingChunk != null && allSpeakersFree() && allReflectionsFree()) {
 			int totalFrames = pendingChunk.samples().length / CHANNELS;
 			int frames = Math.min(BLOCK_FRAMES, totalFrames - pendingFrameOffset);
 			if (frames <= 0) {
@@ -746,11 +1019,24 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		return true;
 	}
 
+	private boolean allReflectionsFree() {
+		for (ReflectionSlot slot : reflectionSlots) {
+			if (slot == null || slot.freeBuffers.isEmpty()) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	private void queueBlock(AudioChunk chunk, int frameOffset, int frames) {
 		float[] samples = chunk.samples();
 		if (blockScratch.length < frames) {
 			throw new IllegalStateException("block scratch too small: " + frames);
 		}
+		// Reflection taps read the raw source channel before direct-path
+		// directivity, air absorption and occlusion are applied. Copy it into
+		// the delay ring before any direct processing mutates the scratch.
+		writeRawHistory(samples, frameOffset, frames);
 		for (int channel = 0; channel < SPEAKERS; channel++) {
 			firProcessors[channel].process(samples, CHANNELS, channel, frameOffset,
 				frames, blockScratch);
@@ -782,11 +1068,137 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			}
 			alSourceQueueBuffers(sources[channel], buffer);
 		}
+		for (ReflectionSlot slot : reflectionSlots) {
+			queueReflectionBlock(slot, frames);
+		}
 		double start = chunk.startPtsSeconds() + frameOffset / (double) SAMPLE_RATE;
 		double duration = frames / (double) SAMPLE_RATE;
 		masterQueue.addLast(new ChunkMeta(start, duration));
 		lastEndPts = start + duration;
 		checkError("queueBlock");
+	}
+
+	/** Appends one deinterleaved block to the raw-channel delay ring. */
+	private void writeRawHistory(float[] samples, int frameOffset, int frames) {
+		if (rawHistoryWriteFrame == Long.MIN_VALUE) {
+			rawHistoryWriteFrame = 0L;
+		}
+		int writeIndex = (int) (rawHistoryWriteFrame & RAW_HISTORY_MASK);
+		for (int channel = 0; channel < SPEAKERS; channel++) {
+			float[] history = rawHistory[channel];
+			int index = writeIndex;
+			for (int i = 0; i < frames; i++) {
+				history[index] = samples[(frameOffset + i) * CHANNELS + channel];
+				index = (index + 1) & RAW_HISTORY_MASK;
+			}
+		}
+		rawHistoryWriteFrame += frames;
+	}
+
+	/**
+	 * Linear-interpolated read from the raw ring. Frames before the media
+	 * start or older than the ring are silence; a read at the write head is
+	 * clamped to the newest sample.
+	 */
+	private float rawSample(int channel, double position) {
+		if (rawHistoryWriteFrame == Long.MIN_VALUE || !Double.isFinite(position)) {
+			return 0.0f;
+		}
+		long floor = (long) Math.floor(position);
+		if (floor < 0 || floor < rawHistoryWriteFrame - RAW_HISTORY_FRAMES) {
+			return 0.0f;
+		}
+		float[] history = rawHistory[channel];
+		if (floor >= rawHistoryWriteFrame) {
+			return history[(int) ((rawHistoryWriteFrame - 1) & RAW_HISTORY_MASK)];
+		}
+		float first = history[(int) (floor & RAW_HISTORY_MASK)];
+		double fraction = position - floor;
+		if (fraction <= 0.0) {
+			return first;
+		}
+		long next = floor + 1;
+		float second = next < rawHistoryWriteFrame
+			? history[(int) (next & RAW_HISTORY_MASK)] : first;
+		return (float) (first + (second - first) * fraction);
+	}
+
+	/**
+	 * Feeds one block to one reflection slot. Every slot receives exactly one
+	 * buffer per direct block, including idle slots (silence), so all sources
+	 * keep the same queue depth and media-time alignment. The tap delay is
+	 * read from the raw ring; the per-tap FIR carries only air absorption.
+	 */
+	private void queueReflectionBlock(ReflectionSlot slot, int frames) {
+		int buffer = slot.freeBuffers.removeFirst();
+		if (slot.key.isEmpty()) {
+			uploadSilence(buffer, frames);
+			alSourceQueueBuffers(slot.source, buffer);
+			return;
+		}
+		double startDelay = slot.delayFrames;
+		double endDelay = startDelay
+			+ (slot.targetDelayFrames - startDelay) * delaySmoothing(frames);
+		slot.delayFrames = endDelay;
+		long startFrame = rawHistoryWriteFrame - frames;
+		float[] input = reflectionInputScratch;
+		for (int i = 0; i < frames; i++) {
+			// Glide the delay within the block so the read pointer stays
+			// continuous at block boundaries (no per-block delay jump).
+			double delay = startDelay
+				+ (endDelay - startDelay) * ((i + 1.0) / frames);
+			input[i] = rawSample(slot.channel, startFrame + i - delay);
+		}
+		slot.processor.process(input, 1, 0, 0, frames,
+			reflectionOutputScratch);
+		applyReflectionEnvelope(slot, reflectionOutputScratch, frames);
+		uploadSamples(buffer, reflectionOutputScratch, frames);
+		alSourceQueueBuffers(slot.source, buffer);
+		if (slot.fadingOut && slot.envelope <= 0.0f) {
+			retireReflectionSlot(slot);
+		}
+	}
+
+	private static double delaySmoothing(int frames) {
+		return 1.0 - Math.exp(-frames
+			/ (REFLECTION_DELAY_SMOOTHING_SECONDS * SAMPLE_RATE));
+	}
+
+	/** 30 ms sample-domain fade for tap appearance/disappearance. */
+	private static void applyReflectionEnvelope(ReflectionSlot slot,
+												float[] samples, int frames) {
+		float envelope = slot.envelope;
+		float step = slot.envelopeStep;
+		for (int i = 0; i < frames; i++) {
+			if (envelope > 1.0f) {
+				envelope = 1.0f;
+				if (step > 0.0f) {
+					step = 0.0f;
+				}
+			} else if (envelope < 0.0f) {
+				envelope = 0.0f;
+				if (step < 0.0f) {
+					step = 0.0f;
+				}
+			}
+			samples[i] *= envelope;
+			envelope += step;
+		}
+		slot.envelope = Math.max(0.0f, Math.min(1.0f, envelope));
+		slot.envelopeStep = step;
+	}
+
+	private void retireReflectionSlot(ReflectionSlot slot) {
+		slot.key = "";
+		slot.assigned = false;
+		slot.fadingOut = false;
+		slot.envelope = 0.0f;
+		slot.envelopeStep = 0.0f;
+		slot.gain = 0.0f;
+		slot.targetGain = 0.0f;
+		slot.appliedGain = 0.0f;
+		slot.processor.reset();
+		alSourcef(slot.source, AL_GAIN, 0.0f);
 	}
 
 	private void startAll() {
@@ -795,6 +1207,9 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		scheduledStartSystemNanos = System.nanoTime() + 150_000_000L;
 		for (int source : sources) {
 			SOFTSourceStartDelay.alSourcePlayAtTimeSOFT(source, scheduled);
+		}
+		for (ReflectionSlot slot : reflectionSlots) {
+			SOFTSourceStartDelay.alSourcePlayAtTimeSOFT(slot.source, scheduled);
 		}
 		started = true;
 		Cinema.LOGGER.info("cinema audio: six sources scheduled in {} ms (src0 state={}, gain={}, queued={}, muted={})",
@@ -824,6 +1239,13 @@ public final class CinemaAudioEngine implements AutoCloseable {
 				alSourcePause(source);
 			} else {
 				alSourcePlay(source);
+			}
+		}
+		for (ReflectionSlot slot : reflectionSlots) {
+			if (paused) {
+				alSourcePause(slot.source);
+			} else {
+				alSourcePlay(slot.source);
 			}
 		}
 	}
@@ -868,6 +1290,23 @@ public final class CinemaAudioEngine implements AutoCloseable {
 				}
 			}
 		}
+		for (ReflectionSlot slot : reflectionSlots) {
+			if (slot == null) {
+				continue;
+			}
+			int processed = alGetSourcei(slot.source, AL_BUFFERS_PROCESSED);
+			if (processed <= 0) {
+				continue;
+			}
+			reflectionReclaimScratch.clear();
+			int count = Math.min(processed, reflectionReclaimScratch.capacity());
+			reflectionReclaimScratch.limit(count);
+			alSourceUnqueueBuffers(slot.source, reflectionReclaimScratch);
+			for (int i = 0; i < count; i++) {
+				slot.freeBuffers.addLast(reflectionReclaimScratch.get(i));
+			}
+			reflectionReclaimScratch.limit(reflectionReclaimScratch.capacity());
+		}
 	}
 
 	private void cleanup() {
@@ -883,6 +1322,23 @@ public final class CinemaAudioEngine implements AutoCloseable {
 					alDeleteBuffers(buffer);
 				}
 			}
+		}
+		for (ReflectionSlot slot : reflectionSlots) {
+			if (slot == null) {
+				continue;
+			}
+			if (slot.source != 0) {
+				alSourceStop(slot.source);
+				alDeleteSources(slot.source);
+				slot.source = 0;
+			}
+			for (int buffer : slot.buffers) {
+				if (buffer != 0) {
+					alDeleteBuffers(buffer);
+				}
+			}
+			Arrays.fill(slot.buffers, 0);
+			slot.freeBuffers.clear();
 		}
 	}
 
@@ -937,6 +1393,36 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		for (FirProcessor processor : environmentProcessors) {
 			processor.reset();
 		}
+		for (ReflectionSlot slot : reflectionSlots) {
+			alSourceStop(slot.source);
+			int queued = alGetSourcei(slot.source, AL_BUFFERS_QUEUED);
+			if (queued > 0) {
+				IntBuffer released = BufferUtils.createIntBuffer(queued);
+				alSourceUnqueueBuffers(slot.source, released);
+				for (int j = 0; j < queued; j++) {
+					int buffer = released.get(j);
+					if (buffer == 0) {
+						valid = false;
+					} else {
+						slot.freeBuffers.addLast(buffer);
+					}
+				}
+			}
+			alSourcei(slot.source, AL_BUFFER, 0);
+			alSourceRewind(slot.source);
+			slot.processor.reset();
+			slot.key = "";
+			slot.assigned = false;
+			slot.fadingOut = false;
+			slot.envelope = 0.0f;
+			slot.envelopeStep = 0.0f;
+			slot.gain = 0.0f;
+			slot.targetGain = 0.0f;
+			slot.appliedGain = 0.0f;
+			alSourcef(slot.source, AL_GAIN, 0.0f);
+		}
+		clearRawHistory();
+		appliedReflectionVersion = -1;
 		int error = alGetError();
 		if (error != AL_NO_ERROR) {
 			Cinema.LOGGER.warn("cinema audio: flush failed with OpenAL error 0x{}; rebuilding sources",
@@ -971,6 +1457,11 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	private boolean allBuffersFree() {
 		for (Deque<Integer> free : freeBuffers) {
 			if (free.size() != BUFFER_COUNT) {
+				return false;
+			}
+		}
+		for (ReflectionSlot slot : reflectionSlots) {
+			if (slot == null || slot.freeBuffers.size() != BUFFER_COUNT) {
 				return false;
 			}
 		}
@@ -1022,5 +1513,27 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	}
 
 	private record ChunkMeta(double startPtsSeconds, double durationSeconds) {
+	}
+
+	/** One fixed reflection source plus its delay/fade/filter state. */
+	private static final class ReflectionSlot {
+		private int source;
+		private final int[] buffers = new int[BUFFER_COUNT];
+		private final Deque<Integer> freeBuffers = new ArrayDeque<>(BUFFER_COUNT);
+		private final FirProcessor processor = new FirProcessor();
+		private final float[] position = new float[3];
+		private final float[] targetPosition = new float[3];
+		private String key = "";
+		private int channel;
+		private float gain;
+		private float targetGain;
+		private float appliedGain;
+		private float envelope;
+		private float envelopeStep;
+		private boolean assigned;
+		private boolean fadingOut;
+		private double delayFrames;
+		private double targetDelayFrames;
+		private MinimumPhaseFir filter = MinimumPhaseFir.FLAT;
 	}
 }

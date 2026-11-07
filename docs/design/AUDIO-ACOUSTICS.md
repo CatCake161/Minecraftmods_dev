@@ -11,14 +11,16 @@
 > - A2 直达声距离衰减由 Java 计算：自由场振幅 `1 / max(r, 1 m)`；OpenAL 距离模型设为 `AL_NONE`，避免双重衰减。
 > - 空气吸收使用 ISO 9613-1，频率相关，作用于直达声；开关/温度/湿度放 Mod Menu（客户端）。
 > - 遮挡对直达声做路径扫描，产生宽带衰减 + 低通；低通与空气吸收合并为一个环境 FIR。
-> - 早期反射采用独立 OpenAL source（方案 C）：每个 tap 一个 source，位置为镜像源；不按 5.1 声道混入直达声道。A2b 几何/可见性已实现，反射 source 播放待续；届时距离同样由 Java 按 `1/max(L,1)` 计算（context 已使用 `AL_NONE`），OpenAL 只负责声像。
+> - 早期反射采用独立 OpenAL source（方案 C）：每个 tap 一个 source，位置为镜像源；不按 5.1 声道混入直达声道。
+>   A2b 几何/可见性/反射 source 播放已实现，游戏内听感验收待做；距离同样由 Java 按 `1/max(L,1)` 计算
+>   （context 已使用 `AL_NONE`），OpenAL 只负责声像。
 > - 早反 gain 放 Mod Menu，仅调试用，默认 0 dB。
 > - 指向性计算方法已定：4096-tap 最小相位 FIR（见 7.4）。
 >
 > 状态（2026-11-07）：**A2 直达声已通过游戏内听感验收**——Java 距离衰减、ISO 9613-1 空气吸收、遮挡低通/衰减、
 > 4096-tap 指向性 FIR、2048-tap 环境 FIR、Mod Menu 配置和 `/cinema_acoustics` 诊断已接入；距离/空气/遮挡/配置 UI 均已确认。
 > A2b 的镜面发现、镜像源几何、R 处墙面验证与两段可见性已实现并通过纯几何测试；
-> 反射 source 池/延迟播放与听感验收仍未实现，晚期混响仍未实现。本文同时保留这些后续阶段的方案设计。
+> 反射 source 池/延迟播放已实现（32 source 池、24 活动 taps、8192-frame 原始历史环、分数延迟、30 ms 淡入/淡出、每 tap 空气 FIR），游戏内听感/CPU/多接收器验收待做；晚期混响仍未实现。本文同时保留这些后续阶段的方案设计。
 > 相关文档：[项目规划](../PLANNING.md)、[待办](../TODO.md)、[AV Receiver](AV-RECEIVER.md)、[指令](../COMMANDS.md)。
 
 ## 1. 目标与边界
@@ -135,8 +137,8 @@
 - 六个 source 仍是 `AL_SOURCE_RELATIVE = AL_TRUE`；M4 每个 sync 把物理扬声器世界坐标转换为听者相对坐标并通过 `setChannelLayout()` 快照更新，音频线程在 30 ms 时间常数内对半径和球面方向（slerp）插值到目标位置，不读世界/玩家状态。A2 起该渲染半径同时用于 Java 距离衰减。世界坐标源迁移评审见 §4.2.1，当前暂不迁移。
 - `StreamingAudioDecoder` 的 FFmpeg stderr 没有单独消费（`redirectErrorStream(false)`，靠 `-loglevel error` 降低输出）；极端情况下仍可能因 stderr 管道填满而阻塞，后续可加 drain 线程。
 - `CinemaPlayer` 的 A/V 时钟使用音频设备时钟/PTS；声学处理不得改变 chunk 的 `startPtsSeconds` 或引入不可控 lookahead。
-- **声学增益归属（A2 直达声已实现，方案 C）**：直达声仍由 6 个物理扬声器 source 播放；OpenAL 距离模型为 `AL_NONE`，距离衰减由 Java 按平滑后的渲染半径 `1/max(r,1)` 计算；空气吸收与遮挡低通合并进第二个最小相位环境 FIR；遮挡宽带衰减和指向性 1 kHz 偏移进入 source gain。每个早期反射 tap 计划使用独立 OpenAL source，位置为镜像源；A2b 实现时其距离也由 Java 按 `1/max(L,1)` 计算（与直达声同一规则），Java 负责该 source 的空气吸收、材质反射、指向性和散射增益。反射 tap 不混入 5.1 直达声道。
-- **反射 source 池（待实现）**：反射 source 上限建议 24–36/接收器，需要独立的 source/buffer 池和房间快照生命周期；不能复用 6 个直达 source，也不参与 `setChannelLayout()` 的物理扬声器布局。
+- **声学增益归属（A2 直达声已实现，方案 C）**：直达声仍由 6 个物理扬声器 source 播放；OpenAL 距离模型为 `AL_NONE`，距离衰减由 Java 按平滑后的渲染半径 `1/max(r,1)` 计算；空气吸收与遮挡低通合并进第二个最小相位环境 FIR；遮挡宽带衰减和指向性 1 kHz 偏移进入 source gain。每个早期反射 tap 使用独立 OpenAL source，位置为镜像源；A2b 的距离也由 Java 按 `1/max(L,1)` 计算（与直达声同一规则），Java 负责该 source 的空气吸收、材质反射、指向性和散射增益。反射 tap 不混入 5.1 直达声道。
+- **反射 source 池（A2b 已实现）**：每接收器固定 32 个反射 source/buffer（活动 tap 上限 24，留 8 个淡入/淡出余量），独立于 6 个直达 source，也不参与 `setChannelLayout()` 的物理扬声器布局。所有反射 source 与直达 source 同时启动、每块各喂一个 buffer（空闲槽喂静音），保持媒体时钟对齐；8192-frame 原始声道历史环提供 0–80 ms 分数延迟，延迟变化 150 ms 平滑，tap 出现/消失 30 ms 采样淡变，每 tap 一个 2048-tap 空气吸收 FIR。
 
 ### 4.2.1 定位模型评审：相对源 vs 世界坐标源（暂不迁移）
 
@@ -210,7 +212,7 @@ FFmpeg 5.1 PCM（48 kHz, FL/FR/FC/LFE/BL/BR）
         │
         ▼
 六个 mono OpenAL source（M4 实体扬声器位置；未配对声道回退虚拟 5.1）
-+ 最多 24–36 个反射 source（镜像源位置，独立 source 池）
++ 最多 24 个活动反射 source（镜像源位置，固定 32 source 池，独立于直达声）
         │
         ▼
 OpenAL device / Minecraft 音频输出
@@ -432,7 +434,7 @@ R_p(f) = sqrt(1 - α_p(f))
 8. 为每个反射 tap 分配一个独立 OpenAL source，位置设为镜像源 `s'`（相对听者坐标）；
    该 source 播放 `sourceChannel` 的延迟/滤波副本。Java 用 `s'` 到听者的距离 `L` 做 `1/max(L,1)` 衰减，
    source 位置只提供反射到达方向。**不再按 5.1 布局做 VBAP/最近声道路由，也不把 tap 混入直达声道。**
-9. 每个扬声器最多保留若干最强 taps；全局上限建议 24–36/接收器；每个 tap 一个 source，
+9. 每个扬声器最多保留若干最强 taps；A2b 全局上限为 24 个活动 tap/接收器（固定 32 source 池，留 8 个淡变余量）；每个 tap 一个 source，
    需要独立的 source/buffer 池，受 OpenAL source 数量、延迟线和 CPU 限制。
    tap 的稳定 key 用 `(speakerChannel, planeKey)`；新增淡入、消失淡出。
 
@@ -491,7 +493,7 @@ R_p(f) = sqrt(1 - α_p(f))
 - **音频路径**：每个扬声器通道在 `CinemaAudioEngine` 中用 overlap-add FFT 卷积应用 FIR；引擎按 **2048 frame**（≈42.7 ms）小块排队，4 个缓冲 ≈171 ms 前瞻，使指向性更新不必等 0.5 s 解码块。卷积核 4096 taps 的 tail 跨块保留；FIR 改变时旧/新滤波器并行运行 **1024 frame（≈21 ms）**线性交叉淡化，旧路径淡出后丢弃，避免块边界换系数产生 click；seek/flush 时清空。FIR 输出保持 **32-bit float**（`AL_FORMAT_MONO_FLOAT32`），允许目标形状在 source gain 之前超过 0 dBFS；只有 `AL_EXT_FLOAT32` 不可用时才回退 16-bit 并在最终转换处钳位。旧实现直接把 FIR 输出写成 short，导致 JBL A180 正轴 +2.48 dB、垂直 20° +9.87 dB 的峰被硬削，是实测过载失真的原因。
 - **声学中心**：source 位置改用 `SpeakerBlockEntity.acousticFrontPosition()`（类型高度 + 0.45 m 前面板偏移）；直达角、Java 距离衰减和遮挡扫描都用该位置。
 - **声像更新**：20 Hz 的 listener-relative 位置跳变在音频线程内用 **30 ms** 时间常数、约 200 Hz 分别插值半径和球面方向（slerp）；不动 OpenAL listener，不增加解码/视频延迟。视角 yaw 直接取 `getViewYRot()`，俯仰到 ±90° 时不会退回固定北方。
-- **反射**：A2b 复用同一个 FIR 设计，角度改为“扬声器 → 反射点”；反射路径再乘材质 `sqrt(1-α)`、空气吸收 `A(L)` 和散射修正。当前还未接入反射 source。
+- **反射**：A2b 复用同一个 FIR 设计，角度改为“扬声器 → 反射点”；反射路径再乘材质 `sqrt(1-α)`、空气吸收 `A(L)` 和散射修正。当前 A2b 播放已接入空气吸收 FIR 与材质中频增益；反射角指向性（A2c-R）与材质频带精度待做。
 - **限制**：FIR 是 separable H/V 的最小相位近似，不是完整 3D balloon；最小相位会改变相位但不改变目标幅度。极端角度若个别频点超过 1 dB，worker 会记录 warning，命令可查看 `maxErr`。
 
 **数据管线**
@@ -528,7 +530,7 @@ R_p(f) = sqrt(1 - α_p(f))
 - **轴上 EQ 归一化**：`onAxisEqGainDb(f)` 保留原始 on-axis 形状，减去全频段能量平均电平，使不同型号的整体响度可比；A2 已与指向性一起并入直达声 FIR。
 - **入口**：空手右键扬声器方块打开该扬声器的 speaker data GUI；角色选择在 GUI 内。`/cinema_speaker_data` 是类型默认的调试入口；`reload` 重扫文件夹，`info` 打印每类当前 profile，`test <type> <h> <v> <hz>` 打印指定角度/频率的指向性增益和轴上 EQ 增益。
 - **示例/转换器**：`docs/examples/speaker_data/`（含 synthetic 测试表、cardioid 简单 profile 和 `convert_spinorama.py`）。
-- **边界**：A2d 已把 profile 应用到直达声的 4096-tap 最小相位 FIR（反射待 A2b 播放）；`SPL gain dB` 已进入 `speakerGain`；on-axis EQ 已并入同一 FIR。早期 spike 的 3 频带/15-PEQ 方案未采用。
+- **边界**：A2d 已把 profile 应用到直达声的 4096-tap 最小相位 FIR；A2b 反射暂复用直达声的扬声器 trim/轴上 EQ，反射角指向性待 A2c-R；`SPL gain dB` 已进入 `speakerGain`；on-axis EQ 已并入同一 FIR。早期 spike 的 3 频带/15-PEQ 方案未采用。
 - **暂停**：GUI 是否暂停由 Mod Menu 的 `Pause game in device GUIs` 控制，默认 false；单机打开面板不会暂停集成服务器/播放。
 - **许可**：内置 profile 和 synthetic 示例是项目自带/CC0；真实 ASR/Spinorama 数据为 CC BY-NC-SA 4.0，profile 只作为本地用户数据存在，GUI 会显示 source/license。
 
@@ -708,7 +710,7 @@ for t in data:
 - 每个 chunk 处理；delay line 预分配；避免在音频循环中创建 `Vec3`/集合。
 - CPU 预算：Java DSP 目标 < 1 ms / 10 ms 音频（约 10% 单核）；EFX 混响 < 1%。
 - 指向性/空气吸收/遮挡：直达声每声道串联两个 FIR（4096-tap 指向性 + 2048-tap 环境），使用 overlap-add；滤波器切换做 1024-frame（≈21 ms）交叉淡化。环境 FIR 在 daemon worker 异步设计并缓存（距离 0.5 m、温度 0.5 °C、湿度 2 %、压力 0.1 kPa、截止 100 Hz 分桶，上限 512 条），音频线程只换引用；设计耗时实测约 1–3 ms（首次 JIT 前约 11 ms）。
-- 反射 source：每接收器最多 24–36 个额外 source + buffer；source/buffer 预分配并随房间快照复用；多接收器、HRTF、设备切换下要实测 OpenAL source 上限和 CPU。
+- 反射 source：每接收器固定 32 个额外 source + buffer（24 活动 taps）；source/buffer 预分配并随房间快照复用；多接收器、HRTF、设备切换下要实测 OpenAL source 上限和 CPU。
 - 1/3 octave 多频带或 32–64 tap FIR 会明显增加成本；频带精度待用户确定，3 频带只是候选。
 - 参数平滑：增益/滤波系数一阶平滑；延迟变化交叉淡化。
 - EFX 生命周期：context/reset/device switch 时重建 effect/slot/filter；失败则禁用混响，不影响干声。
@@ -720,8 +722,8 @@ for t in data:
 
 ```text
 roomAcousticsEnabled   true              // 后续
-earlyReflections       true              // A2b 几何/可见性已实现，播放待续
-earlyGainDb            0                 // Mod Menu, debug only; 反射实现前不影响音频
+earlyReflections       true              // A2b 已实现，游戏内验收待做
+earlyGainDb            0                 // Mod Menu, debug only; 作用于反射 source 电平
 lateReverb             true              // 后续
 lateGainDb             -12
 directivity            true              // A2 已实现
@@ -735,7 +737,7 @@ geometryUpdateHz       2–5               // A1 房间快照；扬声器布局�
 rt60Clamp              none              // Eyring; clamp only when mapping to EAX
 ```
 
-`earlyGainDb` 放 Mod Menu，仅调试用，当前已保存但尚未影响音频；早期反射的基础电平由 7.3 的物理链路计算，不再默认压低 6–12 dB。`lateGainDb` 仍属接收器/声学设置，最终以试听为准。
+`earlyGainDb` 放 Mod Menu，仅调试用，现已乘入反射 source 增益（不改变直达声）；早期反射的基础电平由 7.3 的物理链路计算，不再默认压低 6–12 dB。`lateGainDb` 仍属接收器/声学设置，最终以试听为准。
 
 UI 归属：
 
@@ -754,7 +756,7 @@ UI 归属：
 | A1d | ASR/Spinorama 数据管线：21 个型号、只读 H/V 原始文件、保留原始频率网格、补 -180°、按全频段能量平均计算 -10 dB 频率范围并取整到 1 Hz、生成**本地** profile（不打包） | 无（已实现转换器） | 21 个 profile 可加载；来源/许可证/修改说明完整；无 `quality` 字段 |
 | A1e | 数据许可决策：CC BY-NC-SA 4.0 非商业/相同方式共享；profile 只作为用户本地导入数据，不随模组分发 | A1d | 发布包与仓库的许可证/attribution 明确，不违反 NC/SA |
 | A2 | 直达声：Java `1/max(r,1)` 距离、ISO 9613-1 空气吸收、遮挡路径扫描 + 宽带衰减/低通、2048-tap 环境 FIR、Mod Menu 配置 | M4 已完成 | 游戏内验收通过：距离/空气/遮挡/配置 UI；数值 harness 已核对 ISO α 与 FIR 幅度 |
-| A2b | 一阶早期反射：以扬声器为中心发射 6 轴射线发现候选镜面（方向集合可扩展）+ 房间 `samples>0` 种子；镜像源、R 处真实墙面验证、`S→R`/`R→L` 两段可见性；独立反射 OpenAL source（镜像源位置）+ 平滑；反射增益按 Java 距离/空气吸收/材质/指向性计算 | A2/M4 | 每个 tap 的镜像源位置/延迟/方向正确；反射/直达比与物理计算一致；24–36 source 无爆音/掉帧 |
+| A2b | 一阶早期反射：以扬声器为中心发射 6 轴射线发现候选镜面（方向集合可扩展）+ 房间 `samples>0` 种子；镜像源、R 处真实墙面验证、`S→R`/`R→L` 两段可见性；独立反射 OpenAL source（镜像源位置）+ 平滑；反射增益按 Java 距离/空气吸收/材质/指向性计算 | A2/M4 | 几何/可见性已实现并通过 11 项纯几何测试；反射播放已实现（32 source 池、24 活动 taps、延迟/淡入淡出/空气 FIR），**游戏内镜像源位置/延迟/方向/反射直达比/CPU 验收待做** |
 | A2c | 直达声指向性：4096-tap 最小相位 FIR（on-axis EQ + Spinorama H/V） | A1d | 已实现；实测样本最大误差约 1.1 dB |
 | A2c-R | 反射指向性：复用同一 FIR 设计，角度改为扬声器→反射点 | A2b/A2c | 反射路径指向性趋势与实测一致 |
 | A2d | 直达声 A/B/CPU：32-bit float、30 ms 声像平滑、快速转头/移动/削波 | A2/A2c | 游戏内复测通过，无爆音/掉帧 |
@@ -769,14 +771,15 @@ UI 归属：
 
 - 几何/单元：镜像源位置/延迟/增益、房间体积/表面积、Eyring RT60、空气吸收曲线、指向性插值、FDN 稳定性。
 - A2b 纯几何：镜像源/R/Lpath/延迟、切向边界、同侧、门洞/遮挡/玻璃、LFE；`ImageSourceSolverTest` 11 项通过；游戏内用 `/cinema_acoustics` 检查 planes/taps。
+- A2b 播放：每个 tap 的镜像源位置/延迟/方向正确；反射/直达比与物理计算一致（`sqrt(1-α_mid)/max(L,1)` × 扬声器 trim/EQ × `earlyGainDb`，空气吸收只由每 tap FIR 施加）；32 source 池/24 活动 taps 无爆音、无掉帧、无双重处理；空闲槽静音保持媒体时钟对齐。
 - A2 数值：ISO 9613-1 α 与参考值误差 `<1e-6 dB/m`；1 m / 20 °C / 50 % RH / 101.325 kPa 为 0 dB 参考点，1 m 以内的空气吸收必须为 0；环境 FIR 在 20 Hz–20 kHz 对目标幅度误差 `<0.001 dB`；单次环境 FIR 设计约 1–3 ms（首次 JIT 前约 11 ms）。
 - 直达声：空气吸收随距离/频率变化、遮挡随材质/路径长度变化、指向性随扬声器旋转/听者角度变化；确认距离/空气/遮挡/指向性各只应用一次。
 - 指向性数据：Spinorama 表归一化/角度方向/插值正确；4096-tap FIR 实测误差约 1.1 dB；profile 来源/许可证记录完整。
-- 游戏内：10×6×4 m 与 20×10×6 m 矩形房间；吸声/反射材质切换；扬声器旋转；听者移动（含走出影院）；遮挡（石墙/木墙/玻璃/屏幕）；反射 source 的镜像位置/方向/距离 L 正确（A2b）；Seat 仅验证可乘坐，不参与声学。
+- 游戏内：10×6×4 m 与 20×10×6 m 矩形房间；吸声/反射材质切换；扬声器旋转；听者移动（含走出影院）；遮挡（石墙/木墙/玻璃/屏幕）；部分墙/柱子/开放空间/门洞下的反射 tap；反射 source 的镜像位置/方向/距离 L 正确（A2b）；Seat 仅验证可乘坐，不参与声学。
 - A/B：关闭声学层（M4 基线）、仅距离、仅空气吸收、仅遮挡、仅指向性、组合；确认没有双早期反射/梳状滤波，也没有直达声双重距离/空气吸收/指向性。
 - A/V：播放/暂停/seek 后无漂移；音频时钟/PTS 不变；视频帧选择不受影响。
 - 性能：4K HEVC/AV1 + BSL + 声学；无 audio dropout；CPU/内存记录。
-- 兼容：EFX 不可用、设备切换、资源重载、世界卸载、M3 多接收器、24–36 个反射 source 的上限。
+- 兼容：EFX 不可用、设备切换、资源重载、世界卸载、M3 多接收器、每接收器 32 个反射 source（24 活动 taps）的上限。
 - 边界：室外/非矩形/无天花板、无扬声器、LFE-only、单声道/立体声源、玩家远离影院/背对屏幕。
 - 最终由用户游戏内验收，不以截图/日志代替听感。
 
@@ -785,9 +788,9 @@ UI 归属：
 - **EAXReverb 可用性/语义**：自定义 context、OpenAL Soft 1.23.1、设备切换、aux send 发送量、wet return 声道布局都需要 spike 验证。
 - **EAXReverb 早期反射**：固定 5 m 模型不适合不同房间；计划关闭，仅作无几何 fallback。
 - **一阶近似的局限**：忽略衍射、散射、高阶反射、房间模态；对低频/LFE 不准确（低频模态由 A5 单独处理）。
-- **直达声/反射 source 的双重处理**：直达声已使用 `AL_NONE`，距离/空气吸收/遮挡/指向性仅在 Java 计算一次。反射 source 实现时也必须使用同一 Java 距离规则，不能再让 OpenAL 叠加距离衰减；source 位置必须是镜像源 `s'`，不能放在反射点 `r`，否则方向/距离线索错误。
-- **反射 source 数量/性能**：每接收器最多 24–36 个额外 source + buffer；多接收器、HRTF、设备切换、OpenAL source 上限和 CPU 都需实测。
-- **距离模型（A2 已解决）**：direct path 使用 Java `1/max(r,1)` 与 `AL_NONE`，不再依赖 OpenAL 的 `inverse distance clamped`；A2b 反射沿用同一规则。需游戏内确认 HRTF/设备切换下 `AL_NONE` 与相对 source 位置仍只影响声像。
+- **直达声/反射 source 的双重处理**：直达声已使用 `AL_NONE`，距离/空气吸收/遮挡/指向性仅在 Java 计算一次。A2b 反射 source 已使用同一 Java 距离规则，OpenAL 不叠加距离衰减；source 位置是镜像源 `s'`，不是反射点 `r`。反射信号取直达处理前的原始 `sourceChannel`，空气吸收/材质增益只在反射链路施加一次。
+- **反射 source 数量/性能**：每接收器固定 32 个额外 source/buffer（24 活动 taps + 8 淡变余量）；多接收器、HRTF、设备切换、OpenAL source 上限和 CPU 都需实测。
+- **距离模型（A2/A2b 已解决）**：direct path 使用 Java `1/max(r,1)` 与 `AL_NONE`，不再依赖 OpenAL 的 `inverse distance clamped`；A2b 反射沿用同一规则。需游戏内确认 HRTF/设备切换下 `AL_NONE` 与相对 source 位置仍只影响声像。
 - **空气吸收/指向性校准**：ISO 9613-1 与 Spinorama 数据都是近似；温湿度、扬声器型号映射和 H/V 两切面都会造成偏差，必须提供开关和 A/B。
 - **材质数据**：Minecraft 方块没有实测吸声系数；房间吸声和遮挡衰减/截止都是游戏调参近似，需要试听校准。当前遮挡表以 1 m 石墙为最强常见参照，玻璃/木墙/树叶的听感平衡仍需验证。
 - **Spinorama 型号映射**：方块是风格化模型，映射到某个真实型号必然有偏差；需要 tooltip/文档标明 profile 来源，并允许替换。
@@ -810,8 +813,8 @@ UI 归属：
 
 ## 13. 建议的下一步
 
-1. **A2 直达声已通过游戏内验收**：Java 距离、ISO 9613-1 空气吸收、遮挡环境 FIR、4096-tap 指向性 FIR、Mod Menu 配置和 `/cinema_acoustics` 诊断均已接入；走动/转头时的距离与声像、空气开关/温湿度、石墙/木墙/玻璃/屏幕遮挡、配置持久化均已确认。A2b 几何/可见性已实现，下一步做 A2b 播放。
-2. 做 **A2b 反射播放**：独立反射 source 池、延迟副本、延迟/增益/频带、平滑；距离/空气/材质/指向性各只计算一次。
+1. **A2 直达声已通过游戏内验收**：Java 距离、ISO 9613-1 空气吸收、遮挡环境 FIR、4096-tap 指向性 FIR、Mod Menu 配置和 `/cinema_acoustics` 诊断均已接入；走动/转头时的距离与声像、空气开关/温湿度、石墙/木墙/玻璃/屏幕遮挡、配置持久化均已确认。A2b 几何/可见性与反射播放已实现，下一步做游戏内验收。
+2. **A2b 游戏内验收**：部分墙/柱子/开放空间/玻璃/屏幕/门洞、听者移动；检查镜像源方向/延迟/反射直达比、无爆音/双重处理、32 source 池/多接收器 CPU。通过后再做 A2c-R 反射指向性（复用同一 FIR/查表，角度改为扬声器→反射点）与材质频带精度。
 3. 做 **A3 晚期混响**：EAXReverb 仅 late tail、RT60 映射、HF/LF ratio、density/diffusion、modulation；A0 spike 已通过。
 4. 做 **A4–A6**：接收器 GUI 声学开关/校准/预设、低频管理与模态（A5）、A/B 调试与 4K/BSL/设备切换/多接收器验收（A6）。
 5. 如果 EFX 在目标设备不可用，改用小型 FDN 或暂时只做直达声 + 早期反射；不要为了混响阻塞主线。A1e 的 CC BY-NC-SA attribution 仍须在发布前补齐。

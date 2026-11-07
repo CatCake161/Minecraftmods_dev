@@ -39,22 +39,22 @@ AV Receiver（权威媒体单元）
 
 解码、播放状态、媒体选择和音画时钟已迁入 AV Receiver：客户端 `AvReceiverPlaybackManager` 按接收器状态驱动独立 `CinemaPlayer` 实例，视频经投影仪路由到屏幕。每个接收器持有独立 `CinemaAudioEngine`（独立 OpenAL context），两个接收器可同时播放；M4 已把配对扬声器按 FL/FR/FC/LFE/BL/BR 路由到物理位置。
 
-客户端声学层（A2 直达声已验收，A2b 几何/可见性已实现、播放待续，混响规划中；详见 [AUDIO-ACOUSTICS.md](design/AUDIO-ACOUSTICS.md)）：
+客户端声学层（A2 直达声已验收，A2b 几何/可见性/反射播放已实现、游戏内验收待做，混响规划中；详见 [AUDIO-ACOUSTICS.md](design/AUDIO-ACOUSTICS.md)）：
 
 > 声学模拟（EFX/早期反射/晚期混响/Spinorama 指向性原型）统一在 `acoustic-simulation` 分支开发，`main` 保持可玩的稳定基线；只有通过游戏内听感验收的部分才分段合并回 `main`。
 
 ```text
 5.1 PCM → 直达声（Java 距离/ISO 空气吸收/遮挡/指向性）
-        → 一阶早期反射（镜像源 + Java 距离/空气吸收/材质/指向性）  // A2b 几何/可见性已实现，播放待续
+        → 一阶早期反射（镜像源 + Java 距离/空气吸收/材质/指向性）  // A2b 几何/可见性/反射播放已实现，验收待做
         → 晚期混响（EAXReverb 仅 late tail / FDN 回退）              // A3 待实现
-        → 6 个直达 OpenAL source + 最多 24–36 个反射 OpenAL source
+        → 6 个直达 OpenAL source + 固定 32 个反射 OpenAL source（24 活动 taps）
 ```
 
 - 直达声应用 Java `1/max(r,1)` 距离衰减、ISO 9613-1 空气吸收（1 m 为 0 dB 参考点）、遮挡和扬声器指向性；OpenAL 距离模型为 `AL_NONE`，source 位置只负责声像/HRTF。早期反射按房间几何、材质、距离、空气吸收和扬声器指向性计算。
 - 早期反射每个 tap 使用独立 OpenAL source，位置为镜像源；OpenAL 负责方向/声像，距离由 Java 按 `1/max(L,1)` 计算，不混入 5.1 直达声道。
-- 扬声器指向性使用 **Spinorama 实测水平/垂直指向性 + 轴上响应**，不手写猜测曲线；直达声和反射共用同一份数据，按各自辐射角查表；具体计算方法待用户确认。
+- 扬声器指向性使用 **Spinorama 实测水平/垂直指向性 + 轴上响应**，不手写猜测曲线；直达声已按 4096-tap FIR 实现，反射按各自辐射角查表待 A2c-R。
 - 反射增益按物理链路计算，不设置“反射默认比直达声低 6–12 dB”的固定值。
-- 空气吸收开关/温湿度、早反调试 gain 放 Mod Menu（客户端）；空气吸收与环境 FIR 已接入直达声，反射频带精度待 A2b 确定。
+- 空气吸收开关/温湿度、早反调试 gain 放 Mod Menu（客户端）；空气吸收与环境 FIR 已接入直达声，反射路径使用独立 2048-tap 空气 FIR；材质频带精度待 A2c-R 确定。
 - 只做扬声器箱体指向性，不做原始声源指向性；5.1 bus 已混合，无法从混音恢复每个原始声源方向。
 - 晚期尾音优先交给 OpenAL EFX；EAXReverb 自带的固定 5 m 早期反射不适用于不同尺寸影院，计划关闭，只取晚期混响。
 - 声学计算是客户端本地行为，不改变接收器的媒体/播放权威，也不影响 A/V 时钟。
