@@ -352,8 +352,11 @@ public final class AvReceiverPlayback {
 		Vec3 forward;
 		if (client.player != null) {
 			listener = client.player.getEyePosition();
-			Vec3 look = client.player.getLookAngle();
-			forward = new Vec3(look.x, 0.0, look.z);
+			// Use the view yaw directly. The horizontal part of getLookAngle()
+			// collapses near straight up/down, which used to snap the whole
+			// listener frame to north while the player was pitching the view.
+			float yaw = (float) Math.toRadians(client.player.getViewYRot(1.0f));
+			forward = new Vec3(-Math.sin(yaw), 0.0, Math.cos(yaw));
 		} else {
 			listener = Vec3.atCenterOf(receiver.getBlockPos()).add(0.0, 1.5, 0.0);
 			forward = new Vec3(0.0, 0.0, -1.0);

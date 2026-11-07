@@ -104,6 +104,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	private final AtomicInteger layoutVersion = new AtomicInteger();
 	private volatile float[][] channelPositions = copyDefaultPositions();
 	private final float[][] renderedPositions = copyDefaultPositions();
+	private final double[] slerpScratch = new double[3];
 	private long lastPositionUpdateNanos;
 	private volatile float[] channelGains = defaultChannelGains();
 	private volatile MinimumPhaseFir[] channelFilters = defaultFilters();
@@ -440,6 +441,12 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	 * Keeps OpenAL source positions between the 20 Hz layout updates. Rotating
 	 * the view changes every listener-relative source position at once; feeding
 	 * those jumps directly to OpenAL is audible as zipper/tearing with HRTF.
+	 *
+	 * <p>Interpolating the three Cartesian axes independently is wrong for a
+	 * fast turn: a 180-degree flick makes the straight line pass through the
+	 * listener, so the source collapses to the centre and the inverse-distance
+	 * gain spikes. Smooth the direction on the unit sphere and the radius
+	 * separately instead, which keeps each source on its arc.
 	 */
 	private void updateSourcePositions() {
 		long now = System.nanoTime();
@@ -453,25 +460,115 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			dt = 0.005;
 		}
 		double alpha = 1.0 - Math.exp(-dt / POSITION_SMOOTHING_SECONDS);
+		// A stalled audio thread can leave a large dt; never let one update
+		// jump more than a quarter of the remaining arc/radius.
+		alpha = Math.min(0.25, alpha);
 		float[][] target = channelPositions;
 		for (int channel = 0; channel < SPEAKERS; channel++) {
 			float[] current = renderedPositions[channel];
 			float[] destination = target[channel];
-			boolean moved = false;
-			for (int axis = 0; axis < 3; axis++) {
-				float delta = destination[axis] - current[axis];
-				if (Math.abs(delta) > 1.0e-5f) {
-					current[axis] += (float) (delta * alpha);
-					moved = true;
-				} else {
-					current[axis] = destination[axis];
-				}
+			double cx = current[0];
+			double cy = current[1];
+			double cz = current[2];
+			double dx = destination[0];
+			double dy = destination[1];
+			double dz = destination[2];
+			double currentRadius = Math.sqrt(cx * cx + cy * cy + cz * cz);
+			double targetRadius = Math.sqrt(dx * dx + dy * dy + dz * dz);
+			double x;
+			double y;
+			double z;
+			if (currentRadius < 1.0e-6 || targetRadius < 1.0e-6) {
+				x = cx + (dx - cx) * alpha;
+				y = cy + (dy - cy) * alpha;
+				z = cz + (dz - cz) * alpha;
+			} else {
+				slerpDirection(cx / currentRadius, cy / currentRadius, cz / currentRadius,
+					dx / targetRadius, dy / targetRadius, dz / targetRadius, alpha,
+					slerpScratch);
+				double radius = currentRadius + (targetRadius - currentRadius) * alpha;
+				x = slerpScratch[0] * radius;
+				y = slerpScratch[1] * radius;
+				z = slerpScratch[2] * radius;
 			}
+			boolean moved = Math.abs(x - cx) > 1.0e-5
+				|| Math.abs(y - cy) > 1.0e-5
+				|| Math.abs(z - cz) > 1.0e-5;
+			current[0] = (float) x;
+			current[1] = (float) y;
+			current[2] = (float) z;
 			if (moved) {
 				alSource3f(sources[channel], AL_POSITION,
 					current[0], current[1], current[2]);
 			}
 		}
+	}
+
+	/**
+	 * Spherical linear interpolation between two unit vectors. The antipodal
+	 * case has no unique great circle; pick the one around the world-up axis
+	 * so a 180-degree view flip sweeps horizontally instead of through the
+	 * listener.
+	 */
+	private static void slerpDirection(double ux, double uy, double uz,
+									   double vx, double vy, double vz,
+									   double t, double[] out) {
+		double dot = ux * vx + uy * vy + uz * vz;
+		dot = Math.max(-1.0, Math.min(1.0, dot));
+		if (dot > 0.999999) {
+			double x = ux + (vx - ux) * t;
+			double y = uy + (vy - uy) * t;
+			double z = uz + (vz - uz) * t;
+			double length = Math.sqrt(x * x + y * y + z * z);
+			if (length < 1.0e-9) {
+				out[0] = ux;
+				out[1] = uy;
+				out[2] = uz;
+			} else {
+				out[0] = x / length;
+				out[1] = y / length;
+				out[2] = z / length;
+			}
+			return;
+		}
+		if (dot < -0.999999) {
+			// axis = normalize(world up - u * (u . world up))
+			double ax = -ux * uy;
+			double ay = 1.0 - uy * uy;
+			double az = -uz * uy;
+			double length = Math.sqrt(ax * ax + ay * ay + az * az);
+			if (length < 1.0e-6) {
+				// u is vertical; use world X as the fallback reference.
+				ax = 1.0 - ux * ux;
+				ay = -uy * ux;
+				az = -uz * ux;
+				length = Math.sqrt(ax * ax + ay * ay + az * az);
+				if (length < 1.0e-6) {
+					out[0] = ux;
+					out[1] = uy;
+					out[2] = uz;
+					return;
+				}
+			}
+			ax /= length;
+			ay /= length;
+			az /= length;
+			double angle = t * Math.PI;
+			double cos = Math.cos(angle);
+			double sin = Math.sin(angle);
+			// Rodrigues rotation around an axis perpendicular to u.
+			out[0] = ux * cos + (ay * uz - az * uy) * sin;
+			out[1] = uy * cos + (az * ux - ax * uz) * sin;
+			out[2] = uz * cos + (ax * uy - ay * ux) * sin;
+			return;
+		}
+		double theta = Math.acos(dot);
+		double sinTheta = Math.sin(theta);
+		double a = Math.sin((1.0 - t) * theta) / sinTheta;
+		double b = Math.sin(t * theta) / sinTheta;
+		out[0] = ux * a + vx * b;
+		out[1] = uy * a + vy * b;
+		out[2] = uz * a + vz * b;
 	}
 
 	private void snapSourcePositions() {

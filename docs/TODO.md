@@ -59,7 +59,7 @@
 - [ ] A2b 一阶早期反射：镜像源法（6 平面 × 6 扬声器）、可见性、延迟/增益/频带、每个 tap 一个独立 OpenAL source（镜像源位置）、播放未处理 `sourceChannel` 的延迟副本、最多 24–36 taps、平滑；反射 source 由 OpenAL 负责方向/距离，不按 5.1 声道混入直达；增益按距离/空气吸收/材质/指向性计算，不设固定 -6..-12 dB 默认
 - [x] A2c 扬声器指向性（直达）：目标幅度 = on-axis EQ + Spinorama H/V 相对指向性；4096-tap 最小相位 FIR @48k（cepstrum），FIR 在 1 kHz 归一为 0 dB，总 1 kHz 偏移进 source gain；5° 角度缓存、异步设计、overlap-add 卷积；实测样本最大误差约 1.1 dB（JBL A180 0.69、Genelec 8351B 1.09、Adam T5V 0.50）；声学中心/朝向/低音炮 omni 已接入
 - [ ] A2c-R 反射指向性：A2b 的反射角复用同一 FIR/查表；反射路径空气吸收/材质系数待接
-- [ ] A2d 直达声 A/B/CPU：4096-tap FIR 的听感、移动/转头更新、约 ±1 dB 实测确认；32-bit float source buffer（`AL_EXT_FLOAT32`）与 30 ms 声像平滑已接入，待游戏内复测快速转头/削波；空气吸收按路径长度和频率计算；遮挡低通/衰减
+- [ ] A2d 直达声 A/B/CPU：4096-tap FIR 的听感、移动/转头更新、约 ±1 dB 实测确认；32-bit float source buffer（`AL_EXT_FLOAT32`）与 30 ms 半径 + 球面方向（slerp）声像平滑已接入，待游戏内复测快速转头/削波；空气吸收按路径长度和频率计算；遮挡低通/衰减
 - [ ] A2e Mod Menu 声学设置：空气吸收开关/温度/湿度、`earlyGainDb` 调试滑杆（仅调试，默认 0 dB）
 - [ ] A3 晚期混响：EAXReverb 仅 late tail（`REFLECTIONS_GAIN=0`、`ECHO_DEPTH=0`）、RT60 Eyring、HF/LF ratio、density/diffusion、modulation、air absorption
 - [ ] A3b 自定义 FDN 回退（可选）：8 线 FDN、吸收滤波、6 声道 wet、稳定性限制

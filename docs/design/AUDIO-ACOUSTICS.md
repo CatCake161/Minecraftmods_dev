@@ -112,7 +112,7 @@
 - `CinemaAudioEngine` 在当前线程创建自己的 OpenAL context，6 个 source 默认使用虚拟相对位置；M4 已通过 `setChannelLayout()` 换成已配对扬声器相对听者的位置与增益。`SOFTDeviceClock` + `SOFTSourceStartDelay` 对齐启动，`SOFTSourceLatency` 发布 `audiblePts`。
 - 4 buffer/source × 2048 frame ≈ 171 ms 前瞻；一阶反射的 80 ms 延迟仍放得下，但不能在这条链路上再加额外 lookahead。
 - **32-bit float 管线**：FFmpeg 直接输出 `f32le`；`AudioChunk`、`StereoUpmixer`、FIR/指向性全程保持 float32，OpenAL source buffer 使用 `AL_FORMAT_MONO_FLOAT32`（`AL_EXT_FLOAT32`），只在最终设备转换时量化。仅当扩展不可用时回退 `AL_FORMAT_MONO16` 并在最终转换处钳位。这个顺序很重要：FIR 相对 1 kHz 的峰值可达 +2.5…+9.9 dB，旧实现会在 source gain 之前把峰值硬钳到 0 dBFS，正是实测削波失真的来源。整条链路都不做中间 16-bit 量化。
-- **声像平滑**：`AvReceiverPlayback` 仍以 20 Hz 更新 listener-relative source 位置；`CinemaAudioEngine` 以 30 ms 时间常数、约 200 Hz 在音频线程内插值，避免快速转头时 HRTF 位置跳变产生撕裂/zipper。
+- **声像平滑**：`AvReceiverPlayback` 仍以 20 Hz 更新 listener-relative source 位置；`CinemaAudioEngine` 以 30 ms 时间常数、约 200 Hz 在音频线程内分别插值半径和单位球方向（slerp）。快速转头时源点沿圆弧移动，180° 甩视角也不会穿过听者，避免 HRTF 位置跳变产生撕裂/zipper。
 - `AvReceiverPlayback` 根据接收器状态开/停本地解码器，按 `MAX_DRIFT_SECONDS` 做漂移校正；M3 起每个接收器持有独立 `CinemaAudioEngine`/OpenAL context，多个接收器可同时播放。
 - **M4 已接入物理布局**：`AvReceiverPlayback` 将已配对 `SpeakerBlockEntity` 的角色/位置/电平映射到六个 source；听者始终是玩家实际耳朵位置/朝向，已删除 Seat/皇帝位与声场校正，未配对声道回退虚拟 5.1。声学层仍不能假设房间几何/材质数据。
 - 当前没有 EFX；A2 已接入直达声指向性 FIR，空气吸收/遮挡/反射仍未接入。
@@ -127,7 +127,7 @@
 - `SpeakerBlockEntity`：有 `role`、`levelDb`、`type`；`SpeakerBlock` 有 `FACING`；落地式为两格高，block entity 在下半格。M4 接收器→扬声器路由已接入。
 - `Seat` 方块已实现（`SeatBlock`/`SeatBlockEntity`/不可见 `SeatEntity`），可右键乘坐；**不提供皇帝位/听者参考，不参与声学**。
 - `AvReceiverPlaybackManager`：M3 每个接收器独立持有音频引擎/OpenAL context；停止或移除接收器时释放对应 context。
-- 六个 source 仍是 `AL_SOURCE_RELATIVE = AL_TRUE`；M4 每个 sync 把物理扬声器世界坐标转换为听者相对坐标并通过 `setChannelLayout()` 快照更新，音频线程在 30 ms 时间常数内插值到目标位置，不读世界/玩家状态。世界坐标源迁移评审见 §4.2.1，当前暂不迁移。
+- 六个 source 仍是 `AL_SOURCE_RELATIVE = AL_TRUE`；M4 每个 sync 把物理扬声器世界坐标转换为听者相对坐标并通过 `setChannelLayout()` 快照更新，音频线程在 30 ms 时间常数内对半径和球面方向（slerp）插值到目标位置，不读世界/玩家状态。世界坐标源迁移评审见 §4.2.1，当前暂不迁移。
 - `StreamingAudioDecoder` 的 FFmpeg stderr 没有单独消费（`redirectErrorStream(false)`，靠 `-loglevel error` 降低输出）；极端情况下仍可能因 stderr 管道填满而阻塞，后续可加 drain 线程。
 - `CinemaPlayer` 的 A/V 时钟使用音频设备时钟/PTS；声学处理不得改变 chunk 的 `startPtsSeconds` 或引入不可控 lookahead。
 - **声学增益归属（待实现，方案 C）**：直达声仍由 6 个物理扬声器 source 播放，OpenAL 负责距离衰减；Java 负责直达声的空气吸收、指向性和遮挡。每个早期反射 tap 使用独立 OpenAL source，位置为镜像源，OpenAL 负责方向/声像/距离；Java 负责该 source 的空气吸收、材质反射、指向性和散射增益。反射 tap 不再混入 5.1 直达声道。
@@ -442,7 +442,7 @@ R_p(f) = sqrt(1 - α_p(f))
 - **缓存**：角度量化到 **5°**，按 profile + 角度缓存；4096-tap FIR 在单个 daemon worker 上异步设计，设计期间沿用上一个 FIR，避免卡渲染线程。缓存上限 1024 条。
 - **音频路径**：每个扬声器通道在 `CinemaAudioEngine` 中用 overlap-add FFT 卷积应用 FIR；引擎按 **2048 frame**（≈42.7 ms）小块排队，4 个缓冲 ≈171 ms 前瞻，使指向性更新不必等 0.5 s 解码块。卷积核 4096 taps 的 tail 跨块保留；FIR 改变时保留 tail，避免硬切；seek/flush 时清空。FIR 输出保持 **32-bit float**（`AL_FORMAT_MONO_FLOAT32`），允许目标形状在 source gain 之前超过 0 dBFS；只有 `AL_EXT_FLOAT32` 不可用时才回退 16-bit 并在最终转换处钳位。旧实现直接把 FIR 输出写成 short，导致 JBL A180 正轴 +2.48 dB、垂直 20° +9.87 dB 的峰被硬削，是实测过载失真的原因。
 - **声学中心**：source 位置改用 `SpeakerBlockEntity.acousticFrontPosition()`（类型高度 + 0.45 m 前面板偏移）；直达角与 OpenAL 距离都用该位置。
-- **声像更新**：20 Hz 的 listener-relative 位置跳变在音频线程内用 **30 ms** 时间常数平滑到约 200 Hz；不动 OpenAL listener，不增加解码/视频延迟。
+- **声像更新**：20 Hz 的 listener-relative 位置跳变在音频线程内用 **30 ms** 时间常数、约 200 Hz 分别插值半径和球面方向（slerp）；不动 OpenAL listener，不增加解码/视频延迟。视角 yaw 直接取 `getViewYRot()`，俯仰到 ±90° 时不会退回固定北方。
 - **反射**：A2b 复用同一个 FIR 设计，角度改为“扬声器 → 反射点”；反射路径再乘材质 `sqrt(1-α)`、空气吸收 `A(L)` 和散射修正。当前还未接入反射 source。
 - **限制**：FIR 是 separable H/V 的最小相位近似，不是完整 3D balloon；最小相位会改变相位但不改变目标幅度。极端角度若个别频点超过 1 dB，worker 会记录 warning，命令可查看 `maxErr`。
 
