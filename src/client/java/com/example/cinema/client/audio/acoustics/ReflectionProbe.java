@@ -14,8 +14,9 @@ import net.minecraft.world.phys.shapes.CollisionContext;
  *
  * <p>Wall existence is intentionally separate from direct-path occlusion:
  * glass and screens are valid reflectors, while air, doorways and mod
- * furniture are not. Path visibility uses the same transparency rules as the
- * direct path, so screens/furniture are transparent and glass/wood/stone block.
+ * furniture are not. Path occlusion uses the same scanner/transparency rules
+ * as the direct path, so screens/furniture are transparent and glass/wood/stone
+ * block; blocked taps are attenuated rather than rejected.
  */
 public final class ReflectionProbe implements ImageSourceSolver.World {
 	private static final double WALL_PROBE_INSET =
@@ -64,8 +65,8 @@ public final class ReflectionProbe implements ImageSourceSolver.World {
 	}
 
 	@Override
-	public boolean isClear(Point3 from, Point3 to) {
-		return OcclusionScanner.isClear(level, toVec(from), toVec(to));
+	public OcclusionResult occlusion(Point3 from, Point3 to) {
+		return OcclusionScanner.scan(level, toVec(from), toVec(to));
 	}
 
 	private static boolean matches(MirrorPlane plane, Direction face) {

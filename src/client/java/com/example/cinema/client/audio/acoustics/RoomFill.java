@@ -2,6 +2,8 @@ package com.example.cinema.client.audio.acoustics;
 
 import net.minecraft.world.phys.Vec3;
 
+import java.util.List;
+
 /**
  * Bounded flood-fill result for the connected air volume around the listener.
  *
@@ -10,12 +12,14 @@ import net.minecraft.world.phys.Vec3;
  * {@code openArea} is the part of that boundary that leads back into open air
  * (a doorway, a missing wall, or an open side). Volume and area use one cubic
  * meter per block cell and one square meter per block face, so partial blocks
- * are approximated.
+ * are approximated. {@code reflectionSurfaces} contains the solid boundary
+ * faces greedily merged into larger bounded patches for mirror discovery.
  */
 public record RoomFill(double volume, double surfaceArea, double openArea,
 					   double alphaLow, double alphaMid, double alphaHigh,
 					   int cells, boolean complete, int openFaces,
-					   Vec3 min, Vec3 max, long gameTime) {
+					   Vec3 min, Vec3 max, long gameTime,
+					   List<AcousticSurface> reflectionSurfaces) {
 	private static final int FACE_MASK = 0x3F;
 
 	public enum Face {
@@ -54,6 +58,12 @@ public record RoomFill(double volume, double surfaceArea, double openArea,
 		openFaces &= FACE_MASK;
 		min = min == null ? Vec3.ZERO : min;
 		max = max == null ? min : max;
+		reflectionSurfaces = reflectionSurfaces == null
+			? List.of() : List.copyOf(reflectionSurfaces);
+	}
+
+	public int reflectionSurfaceCount() {
+		return reflectionSurfaces.size();
 	}
 
 	public boolean isOpen(Face face) {

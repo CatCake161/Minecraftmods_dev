@@ -1,7 +1,10 @@
 package com.example.cinema.client.command;
 
 import com.example.cinema.block.entity.SpeakerType;
+import com.example.cinema.client.audio.acoustics.MaterialReflectionEq;
+import com.example.cinema.client.audio.acoustics.OcclusionEq;
 import com.example.cinema.client.audio.directivity.SpeakerDirectivityService;
+import com.example.cinema.client.audio.environment.ReflectionFirService;
 import com.example.cinema.client.audio.speakerdata.SpeakerDataProfile;
 import com.example.cinema.client.audio.speakerdata.SpeakerDataRegistry;
 import com.example.cinema.client.gui.SpeakerDataConfigScreen;
@@ -31,6 +34,9 @@ public final class ClientSpeakerDataCommand {
 					SpeakerDataRegistry.ReloadResult result =
 						SpeakerDataRegistry.reloadProfiles();
 					SpeakerDirectivityService.clearCache();
+					ReflectionFirService.clearCache();
+					MaterialReflectionEq.clearCache();
+					OcclusionEq.clearCache();
 					context.getSource().sendFeedback(Component.literal(
 						"speaker data: " + result.profileCount() + " profile(s) loaded"));
 					for (String error : result.errors()) {

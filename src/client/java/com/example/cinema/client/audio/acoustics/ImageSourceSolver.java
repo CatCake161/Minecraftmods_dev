@@ -11,8 +11,10 @@ import java.util.Optional;
  * <p>The pure {@link #geometry(MirrorPlane, Point3, Point3)} step mirrors the
  * speaker, intersects the image-to-listener line with the candidate plane and
  * returns the reflection point/path/delay. {@link #solve} then validates the
- * tap against a {@link World}: the reflection point must be a real solid face
- * and both physical legs must be clear.
+ * tap against a {@link World}: the reflection point must be a real solid face.
+ * Both physical legs are scanned for occlusion; blocked taps are kept and
+ * attenuated instead of being discarded, so a reflection can still arrive
+ * around a corner or through a thin obstruction.
  */
 public final class ImageSourceSolver {
 	public static final double SPEED_OF_SOUND = 343.0;
@@ -41,8 +43,8 @@ public final class ImageSourceSolver {
 		 */
 		AcousticMaterial wallAt(MirrorPlane plane, Point3 point);
 
-		/** True when the segment is clear under the direct-path transparency rules. */
-		boolean isClear(Point3 from, Point3 to);
+		/** Occlusion scan for one reflection path leg. */
+		OcclusionResult occlusion(Point3 from, Point3 to);
 	}
 
 	public record Geometry(Point3 imageSource, Point3 reflectionPoint,
@@ -114,14 +116,14 @@ public final class ImageSourceSolver {
 			if (material == null) {
 				continue;
 			}
-			if (!clearPath(world, source, geometry.reflectionPoint())
-				|| !clearPath(world, geometry.reflectionPoint(), listener)) {
-				continue;
-			}
+			OcclusionResult occlusion = OcclusionResult.combine(
+				legOcclusion(world, source, geometry.reflectionPoint()),
+				legOcclusion(world, geometry.reflectionPoint(), listener));
 			taps.add(new ReflectionTap(channel, plane.key(), geometry.imageSource(),
 				geometry.reflectionPoint(), geometry.pathLength(),
 				geometry.delaySeconds(), material,
-				reflectionGain(material, geometry.pathLength())));
+				reflectionGain(material, geometry.pathLength())
+					* occlusion.linearGain(), occlusion));
 		}
 		return strongest(taps, MAX_TAPS_PER_SPEAKER);
 	}
@@ -149,14 +151,15 @@ public final class ImageSourceSolver {
 		return reflection / Math.max(1.0, pathLength);
 	}
 
-	private static boolean clearPath(World world, Point3 from, Point3 to) {
+	private static OcclusionResult legOcclusion(World world, Point3 from,
+												Point3 to) {
 		double distance = from.distanceTo(to);
 		if (!Double.isFinite(distance) || distance <= EPSILON) {
-			return false;
+			return OcclusionResult.NONE;
 		}
 		double inset = Math.min(PATH_INSET, distance * 0.25);
 		Point3 direction = to.subtract(from).scale(1.0 / distance);
-		return world.isClear(from.add(direction.scale(inset)),
+		return world.occlusion(from.add(direction.scale(inset)),
 			to.subtract(direction.scale(inset)));
 	}
 }

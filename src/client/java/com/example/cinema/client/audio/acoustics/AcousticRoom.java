@@ -15,6 +15,10 @@ public record AcousticRoom(boolean valid, String fallbackReason,
 						   double rt60Low, double rt60Mid, double rt60High,
 						   List<AcousticSurface> surfaces, RoomFill fill) {
 	private static final double EYRING = 0.161;
+	private static final double SCHROEDER_CONSTANT = 2_000.0;
+	public static final double MIN_SCHROEDER_HZ = 50.0;
+	public static final double MAX_SCHROEDER_HZ = 2_000.0;
+	public static final double DEFAULT_SCHROEDER_HZ = 1_000.0;
 
 	public AcousticRoom {
 		fallbackReason = fallbackReason == null ? "" : fallbackReason;
@@ -119,6 +123,37 @@ public record AcousticRoom(boolean valid, String fallbackReason,
 
 	public double fillCoverage() {
 		return fill == null ? 0.0 : fill.coverage(volume);
+	}
+
+	/**
+	 * Bounded reflection seeds. Flood-fill boundary patches are preferred
+	 * because they follow the actual room shape; the six box planes are the
+	 * fallback when the fill is unavailable or found no solid faces.
+	 */
+	public List<AcousticSurface> reflectionSurfaces() {
+		if (fill != null && !fill.reflectionSurfaces().isEmpty()) {
+			return fill.reflectionSurfaces();
+		}
+		return surfaces;
+	}
+
+	/**
+	 * Schroeder frequency from the mid-band RT60 and connected air volume:
+	 * {@code f_s = 2000 * sqrt(RT60_mid / V_eff)}. Returns the 1000 Hz fallback
+	 * when either value is invalid, and clamps to [50, 2000] Hz.
+	 */
+	public double schroederHz() {
+		double effective = effectiveVolume();
+		double rt60 = rt60Mid;
+		if (!(effective > 0.0) || !Double.isFinite(rt60) || !(rt60 > 0.0)) {
+			return DEFAULT_SCHROEDER_HZ;
+		}
+		double frequency = SCHROEDER_CONSTANT * Math.sqrt(rt60 / effective);
+		if (!Double.isFinite(frequency)) {
+			return DEFAULT_SCHROEDER_HZ;
+		}
+		return Math.max(MIN_SCHROEDER_HZ,
+			Math.min(MAX_SCHROEDER_HZ, frequency));
 	}
 
 	private static double rt60(double volume, double area, double alpha) {

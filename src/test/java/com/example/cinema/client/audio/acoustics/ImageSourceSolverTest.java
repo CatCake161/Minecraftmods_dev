@@ -81,7 +81,7 @@ class ImageSourceSolverTest {
 
 	@Test
 	void doorwayAtReflectionPointRejectsTap() {
-		FakeWorld world = new FakeWorld(null, true);
+		FakeWorld world = new FakeWorld(null, OcclusionResult.NONE);
 
 		List<ReflectionTap> taps = solveSinglePlane(world, false);
 
@@ -89,17 +89,24 @@ class ImageSourceSolverTest {
 	}
 
 	@Test
-	void occludedPathRejectsTap() {
-		FakeWorld world = new FakeWorld(STONE, false);
+	void occludedPathKeepsAttenuatedTap() {
+		OcclusionResult occlusion = new OcclusionResult(6.0, 1_000.0, 2);
+		FakeWorld world = new FakeWorld(STONE, occlusion);
 
 		List<ReflectionTap> taps = solveSinglePlane(world, false);
 
-		assertTrue(taps.isEmpty());
+		assertEquals(1, taps.size());
+		ReflectionTap tap = taps.get(0);
+		assertEquals(12.0, tap.occlusion().attenuationDb(), EPS);
+		assertEquals(1_000.0, tap.occlusion().cutoffHz(), EPS);
+		assertEquals(2, tap.occlusion().order());
+		assertEquals(ImageSourceSolver.reflectionGain(STONE, Math.sqrt(65.0))
+			* occlusion.linearGain() * occlusion.linearGain(), tap.gain(), EPS);
 	}
 
 	@Test
 	void glassAtReflectionPointIsAValidReflector() {
-		FakeWorld world = new FakeWorld(GLASS, true);
+		FakeWorld world = new FakeWorld(GLASS, OcclusionResult.NONE);
 
 		List<ReflectionTap> taps = solveSinglePlane(world, false);
 
@@ -113,20 +120,24 @@ class ImageSourceSolverTest {
 		assertEquals(Math.sqrt(65.0), tap.pathLength(), EPS);
 		assertTrue(tap.gain() > 0.0);
 		assertTrue(tap.delayMilliseconds() > ImageSourceSolver.MIN_DELAY_SECONDS * 1000.0);
+		assertEquals(OcclusionResult.NONE, tap.occlusion());
 	}
 
 	@Test
-	void glassInThePathStillRejectsTheTap() {
-		FakeWorld world = new FakeWorld(GLASS, false);
+	void glassInThePathAttenuatesButKeepsTap() {
+		OcclusionResult occlusion = new OcclusionResult(9.0, 800.0, 1);
+		FakeWorld world = new FakeWorld(GLASS, occlusion);
 
 		List<ReflectionTap> taps = solveSinglePlane(world, false);
 
-		assertTrue(taps.isEmpty());
+		assertEquals(1, taps.size());
+		assertEquals(18.0, taps.get(0).occlusion().attenuationDb(), EPS);
+		assertTrue(taps.get(0).gain() > 0.0);
 	}
 
 	@Test
 	void lfeSourceIsExcluded() {
-		FakeWorld world = new FakeWorld(STONE, true);
+		FakeWorld world = new FakeWorld(STONE, OcclusionResult.NONE);
 
 		List<ReflectionTap> taps = solveSinglePlane(world, true);
 
@@ -136,7 +147,7 @@ class ImageSourceSolverTest {
 	@Test
 	void tooShortDelayIsRejected() {
 		MirrorPlane plane = MirrorPlane.unbounded(MirrorPlane.Axis.X, 0.0, 1.0, null);
-		FakeWorld world = new FakeWorld(STONE, true);
+		FakeWorld world = new FakeWorld(STONE, OcclusionResult.NONE);
 
 		List<ReflectionTap> taps = ImageSourceSolver.solve(List.of(plane), 0,
 			Point3.of(0.1, 1.0, 0.0), Point3.of(0.2, 1.0, 0.0), false, world);
@@ -167,11 +178,11 @@ class ImageSourceSolverTest {
 
 	private static final class FakeWorld implements ImageSourceSolver.World {
 		private final AcousticMaterial wall;
-		private final boolean clear;
+		private final OcclusionResult occlusion;
 
-		private FakeWorld(AcousticMaterial wall, boolean clear) {
+		private FakeWorld(AcousticMaterial wall, OcclusionResult occlusion) {
 			this.wall = wall;
-			this.clear = clear;
+			this.occlusion = occlusion;
 		}
 
 		@Override
@@ -180,8 +191,8 @@ class ImageSourceSolverTest {
 		}
 
 		@Override
-		public boolean isClear(Point3 from, Point3 to) {
-			return clear;
+		public OcclusionResult occlusion(Point3 from, Point3 to) {
+			return occlusion;
 		}
 	}
 }

@@ -4,6 +4,8 @@ import com.example.cinema.Cinema;
 import com.example.cinema.client.audio.directivity.FirProcessor;
 import com.example.cinema.client.audio.directivity.MinimumPhaseFir;
 import com.example.cinema.client.audio.environment.AirAbsorption;
+import com.example.cinema.client.audio.filter.BiquadChain;
+import com.example.cinema.client.audio.filter.BiquadProcessor;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.openal.AL;
 import org.lwjgl.openal.AL10;
@@ -402,6 +404,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			}
 			if (!a.key().equals(b.key()) || a.channel() != b.channel()
 				|| a.filter() != b.filter()
+				|| !a.eq().equals(b.eq())
 				|| Math.abs(a.gain() - b.gain()) > 1.0e-4f
 				|| Math.abs(a.delaySeconds() - b.delaySeconds()) > 1.0e-6
 				|| Math.abs(a.x() - b.x()) > 1.0e-4f
@@ -449,6 +452,8 @@ public final class CinemaAudioEngine implements AutoCloseable {
 				// delay snap is hidden by the fade and avoids a long glide
 				// from an unrelated tap's delay.
 				slot.processor.reset();
+				slot.eqProcessor.reset();
+				slot.eq = BiquadChain.FLAT;
 				slot.key = target.key();
 				slot.envelope = 0.0f;
 				slot.envelopeStep = 1.0f / REFLECTION_FADE_FRAMES;
@@ -476,6 +481,10 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			if (slot.filter != target.filter()) {
 				slot.filter = target.filter();
 				slot.processor.setFilter(target.filter());
+			}
+			if (!slot.eq.equals(target.eq())) {
+				slot.eq = target.eq();
+				slot.eqProcessor.setChain(target.eq());
 			}
 		}
 		for (ReflectionSlot slot : reflectionSlots) {
@@ -1127,7 +1136,9 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	 * Feeds one block to one reflection slot. Every slot receives exactly one
 	 * buffer per direct block, including idle slots (silence), so all sources
 	 * keep the same queue depth and media-time alignment. The tap delay is
-	 * read from the raw ring; the per-tap FIR carries only air absorption.
+	 * read from the raw ring; the per-tap FIR carries the reflection-angle
+	 * directivity and air absorption, then the biquad chain applies material
+	 * band shaping and occlusion low-pass.
 	 */
 	private void queueReflectionBlock(ReflectionSlot slot, int frames) {
 		int buffer = slot.freeBuffers.removeFirst();
@@ -1150,6 +1161,8 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			input[i] = rawSample(slot.channel, startFrame + i - delay);
 		}
 		slot.processor.process(input, 1, 0, 0, frames,
+			reflectionOutputScratch);
+		slot.eqProcessor.process(reflectionOutputScratch, 1, 0, frames,
 			reflectionOutputScratch);
 		applyReflectionEnvelope(slot, reflectionOutputScratch, frames);
 		uploadSamples(buffer, reflectionOutputScratch, frames);
@@ -1198,6 +1211,8 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		slot.targetGain = 0.0f;
 		slot.appliedGain = 0.0f;
 		slot.processor.reset();
+		slot.eqProcessor.reset();
+		slot.eq = BiquadChain.FLAT;
 		alSourcef(slot.source, AL_GAIN, 0.0f);
 	}
 
@@ -1521,6 +1536,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		private final int[] buffers = new int[BUFFER_COUNT];
 		private final Deque<Integer> freeBuffers = new ArrayDeque<>(BUFFER_COUNT);
 		private final FirProcessor processor = new FirProcessor();
+		private final BiquadProcessor eqProcessor = new BiquadProcessor();
 		private final float[] position = new float[3];
 		private final float[] targetPosition = new float[3];
 		private String key = "";
@@ -1535,5 +1551,6 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		private double delayFrames;
 		private double targetDelayFrames;
 		private MinimumPhaseFir filter = MinimumPhaseFir.FLAT;
+		private BiquadChain eq = BiquadChain.FLAT;
 	}
 }

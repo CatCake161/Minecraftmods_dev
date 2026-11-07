@@ -21,6 +21,8 @@ import com.example.cinema.client.audio.directivity.SpeakerDirectivityService;
 import com.example.cinema.client.audio.environment.AirAbsorption;
 import com.example.cinema.client.audio.environment.EnvironmentFirService;
 import com.example.cinema.client.audio.environment.EnvironmentProfile;
+import com.example.cinema.client.audio.environment.ReflectionFirProfile;
+import com.example.cinema.client.audio.environment.ReflectionFirService;
 import com.example.cinema.client.audio.speakerdata.SpeakerDataProfile;
 import com.example.cinema.client.audio.speakerdata.SpeakerDataRegistry;
 import com.example.cinema.client.config.CinemaClientConfig;
@@ -78,14 +80,16 @@ public final class ClientAcousticsCommand {
 			source.sendFeedback(Component.literal("acoustics: fill=none"));
 		} else {
 			source.sendFeedback(Component.literal(String.format(Locale.ROOT,
-				"acoustics: fill volume=%.1f m3 surface=%.1f m2 open=%.1f m2 cells=%d faces=%s coverage=%.2f",
+				"acoustics: fill volume=%.1f m3 surface=%.1f m2 open=%.1f m2 cells=%d faces=%s coverage=%.2f patches=%d",
 				fill.volume(), fill.surfaceArea(), fill.openArea(),
-				fill.cells(), fill.openFacesLabel(), room.fillCoverage())));
+				fill.cells(), fill.openFacesLabel(), room.fillCoverage(),
+				fill.reflectionSurfaceCount())));
 		}
 		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
-			"acoustics: alpha L/M/H=%.3f/%.3f/%.3f RT60 L/M/H=%s/%s/%s s source=%s",
+			"acoustics: alpha L/M/H=%.3f/%.3f/%.3f RT60 L/M/H=%s/%s/%s s fs=%.0f Hz source=%s",
 			room.alphaLow(), room.alphaMid(), room.alphaHigh(),
 			rt60(room.rt60Low()), rt60(room.rt60Mid()), rt60(room.rt60High()),
+			room.schroederHz(),
 			room.fillComplete() ? "fill" : "box")));
 		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
 			"acoustics: listener eye=(%.2f, %.2f, %.2f) look=(%.2f, %.2f, %.2f)",
@@ -99,6 +103,20 @@ public final class ClientAcousticsCommand {
 				surface.label(), surface.coordinate(), surface.area(), material.name(),
 				material.low(), material.mid(), material.high(), surface.samples())));
 		}
+		int patchShown = 0;
+		for (AcousticSurface surface : room.reflectionSurfaces()) {
+			if (patchShown++ >= 8) {
+				break;
+			}
+			AcousticMaterial material = surface.material();
+			source.sendFeedback(Component.literal(String.format(Locale.ROOT,
+				"acoustics: patch %s @ %.2f area=%.1f material=%s samples=%d",
+				surface.label(), surface.coordinate(), surface.area(),
+				material.name(), surface.samples())));
+		}
+		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
+			"acoustics: reflection seeds=%d (showing %d)",
+			room.reflectionSurfaces().size(), Math.min(8, patchShown))));
 		source.sendFeedback(Component.literal(
 			"acoustics: speakers=" + snapshot.speakers().size()));
 		for (AcousticSpeaker speaker : snapshot.speakers()) {
@@ -161,7 +179,7 @@ public final class ClientAcousticsCommand {
 					continue;
 				}
 				List<MirrorPlane> planes = MirrorPlaneDiscovery.INSTANCE.discover(level,
-					speaker.position(), snapshot.version(), room.surfaces());
+					speaker.position(), snapshot.version(), room.reflectionSurfaces());
 				int channel = speaker.role().ordinal() - 1;
 				List<ReflectionTap> taps = ImageSourceSolver.solve(planes, channel,
 					pointOf(speaker.position()), pointOf(snapshot.listener().eye()),
@@ -170,22 +188,52 @@ public final class ClientAcousticsCommand {
 				source.sendFeedback(Component.literal(String.format(Locale.ROOT,
 					"acoustics: reflection %s planes=%d taps=%d",
 					speaker.role().label(), planes.size(), taps.size())));
+				SpeakerDataProfile profile = SpeakerDataRegistry.find(speaker.type(),
+					speaker.profileId());
 				for (ReflectionTap tap : taps) {
 					source.sendFeedback(Component.literal(String.format(Locale.ROOT,
 						"acoustics: tap %s %s R=(%.2f, %.2f, %.2f) L=%.2f m "
-							+ "delay=%.1f ms material=%s gain=%.4f",
+							+ "delay=%.1f ms material=%s gain=%.4f "
+							+ "occ=%.1f dB cutoff=%.0f Hz order=%d",
 						speaker.role().label(), tap.planeKey(),
 						tap.reflectionPoint().x(), tap.reflectionPoint().y(),
 						tap.reflectionPoint().z(), tap.pathLength(),
-						tap.delayMilliseconds(), tap.material().name(), tap.gain())));
+						tap.delayMilliseconds(), tap.material().name(), tap.gain(),
+						tap.occlusion().attenuationDb(), tap.occlusion().cutoffHz(),
+						tap.occlusion().order())));
+					Vec3 reflectionPoint = new Vec3(tap.reflectionPoint().x(),
+						tap.reflectionPoint().y(), tap.reflectionPoint().z());
+					SpeakerDirectivityService.Angles angles =
+						SpeakerDirectivityService.angles(speaker.position(),
+							speaker.forward(), reflectionPoint);
+					ReflectionFirProfile firProfile = new ReflectionFirProfile(profile,
+						angles.horizontal(), angles.vertical(), tap.pathLength(),
+						config.airAbsorption(), config.airTemperatureC(),
+						config.airHumidityPercent(),
+						AirAbsorption.REFERENCE_PRESSURE_KPA, room.schroederHz());
+					MinimumPhaseFir fir = ReflectionFirService.get(firProfile);
+					String firState = fir == null ? "pending"
+						: fir.isFlat() ? "flat" : "ready";
+					source.sendFeedback(Component.literal(String.format(Locale.ROOT,
+						"acoustics: reflection fir %s %s h=%.1f v=%.1f "
+							+ "trim=%+.2f dB eq=%s taps=%s maxErr=%s",
+						speaker.role().label(), tap.planeKey(), angles.horizontal(),
+						angles.vertical(),
+						20.0 * Math.log10(Math.max(1.0e-12,
+							firProfile.trimGain())),
+						firState,
+						fir == null ? "-" : Integer.toString(fir.length()),
+						fir == null ? "-" : String.format(Locale.ROOT, "%.2f dB",
+							fir.maxErrorDb()))));
 				}
 			}
 			List<ReflectionTap> limited = ImageSourceSolver.strongest(allTaps,
 				ImageSourceSolver.MAX_TAPS_PER_RECEIVER);
 			source.sendFeedback(Component.literal(String.format(Locale.ROOT,
-				"acoustics: reflection total=%d cap=%d strongest=%d",
+				"acoustics: reflection total=%d cap=%d strongest=%d seeds=%d fs=%.0f Hz",
 				allTaps.size(), ImageSourceSolver.MAX_TAPS_PER_RECEIVER,
-				limited.size())));
+				limited.size(), room.reflectionSurfaces().size(),
+				room.schroederHz())));
 		}
 		return 1;
 	}

@@ -28,4 +28,21 @@ public record OcclusionResult(double attenuationDb, double cutoffHz, int order) 
 	public double linearGain() {
 		return Math.pow(10.0, -attenuationDb / 20.0);
 	}
+
+	/**
+	 * Combines the two physical legs of a reflection path. Broadband
+	 * attenuation adds, the lower cutoff wins and the higher order wins. The
+	 * constructor clamps the sum, so two deeply buried legs cannot exceed the
+	 * direct path's 40 dB cap.
+	 */
+	public static OcclusionResult combine(OcclusionResult first,
+										  OcclusionResult second) {
+		OcclusionResult a = first == null ? NONE : first;
+		OcclusionResult b = second == null ? NONE : second;
+		if (a == NONE && b == NONE) {
+			return NONE;
+		}
+		return new OcclusionResult(a.attenuationDb() + b.attenuationDb(),
+			Math.min(a.cutoffHz(), b.cutoffHz()), Math.max(a.order(), b.order()));
+	}
 }

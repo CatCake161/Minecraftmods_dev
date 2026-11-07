@@ -67,6 +67,7 @@ final class RoomFloodFill {
 		double mid = 0.0;
 		double high = 0.0;
 		int openFaces = 0;
+		ReflectionSurfaceMerger merger = new ReflectionSurfaceMerger();
 		int fillMinX = start.getX();
 		int fillMinY = start.getY();
 		int fillMinZ = start.getZ();
@@ -118,6 +119,7 @@ final class RoomFloodFill {
 					low += material.low();
 					mid += material.mid();
 					high += material.high();
+					merger.add(direction, neighbor, material);
 				}
 			}
 			if (overflow || cells >= MAX_CELLS) {
@@ -136,7 +138,8 @@ final class RoomFloodFill {
 		return new RoomFill(cells, area, openArea, low / area, mid / area, high / area,
 			cells, complete, openFaces,
 			new Vec3(fillMinX, fillMinY, fillMinZ),
-			new Vec3(fillMaxX + 1.0, fillMaxY + 1.0, fillMaxZ + 1.0), gameTime);
+			new Vec3(fillMaxX + 1.0, fillMaxY + 1.0, fillMaxZ + 1.0), gameTime,
+			merger.merge());
 	}
 
 	private static boolean inside(BlockPos pos, int minX, int maxX, int minY, int maxY,

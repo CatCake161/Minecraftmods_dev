@@ -111,7 +111,7 @@ public final class SpeakerDirectivityService {
 		return CACHE.size();
 	}
 
-	private static int quantizeHorizontal(double value) {
+	public static int quantizeHorizontal(double value) {
 		double wrapped = value % 360.0;
 		if (wrapped > 180.0) {
 			wrapped -= 360.0;
@@ -126,7 +126,7 @@ public final class SpeakerDirectivityService {
 		return quantized;
 	}
 
-	private static int quantizeVertical(double value) {
+	public static int quantizeVertical(double value) {
 		int quantized = (int) Math.round(value / ANGLE_BUCKET_DEGREES)
 			* ANGLE_BUCKET_DEGREES;
 		return Math.max(-90, Math.min(90, quantized));
