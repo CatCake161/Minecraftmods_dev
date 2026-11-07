@@ -39,6 +39,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.phys.Vec3;
+import org.lwjgl.glfw.GLFW;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -67,6 +68,10 @@ public final class AvReceiverConfigScreen extends Screen {
 	private static final int PROBE_LIMIT = 30;
 	private static final long SPEAKER_LEVEL_DEBOUNCE_MS = 150L;
 	private static final long NAME_SAVE_DEBOUNCE_MS = 250L;
+	/** Grid step for every dB level slider on this screen. */
+	private static final double LEVEL_STEP_DB = 0.5;
+	/** Unity detent half-width; kept below one step so 0.5 dB stays reachable. */
+	private static final double ZERO_SNAP_DB = 0.4;
 
 	private static String rememberedLibraryId = LibraryRegistry.DEFAULT_ID;
 	private static String rememberedFolder = "";
@@ -779,10 +784,10 @@ public final class AvReceiverConfigScreen extends Screen {
 			+ "  ·  routing " + (playback == null ? "idle" : "physical " + physical + "/6")
 			+ "  ·  detected " + speakerLines.size(),
 			contentLeft, y + 11, 0x9A9A9A, false);
-		graphics.drawString(font, "Channel trim "
+		graphics.drawString(font, truncate("Channel trim "
 			+ formatDb(SpeakerBlockEntity.MIN_LEVEL_DB) + " .. "
 			+ formatDb(SpeakerBlockEntity.MAX_LEVEL_DB)
-			+ " dB; changes save immediately.",
+			+ " dB · 0.5 dB steps · snaps to 0.0 dB", contentWidth),
 			contentLeft, y + 22, 0x808080, false);
 		if (linkedSpeakers.isEmpty()) {
 			graphics.drawString(font, "No linked speakers. Use the Cinema Cable on this receiver, then a speaker.",
@@ -1586,6 +1591,21 @@ public final class AvReceiverConfigScreen extends Screen {
 			/ (SpeakerBlockEntity.MAX_LEVEL_DB - SpeakerBlockEntity.MIN_LEVEL_DB);
 	}
 
+	/**
+	 * Quantises a level slider to {@link #LEVEL_STEP_DB} and adds a detent at
+	 * unity, so a trim can always be returned to exactly 0.0 dB without
+	 * pixel-hunting. The detent is narrower than one step, which keeps both
+	 * +0.5 and -0.5 dB reachable with the mouse and the keyboard.
+	 */
+	private static double snapLevelDb(double db, double minDb, double maxDb) {
+		if (!Double.isFinite(db)) {
+			return 0.0;
+		}
+		double snapped = Math.abs(db) <= ZERO_SNAP_DB
+			? 0.0 : Math.round(db / LEVEL_STEP_DB) * LEVEL_STEP_DB;
+		return Math.max(minDb, Math.min(maxDb, snapped));
+	}
+
 	private static String formatDb(double db) {
 		return String.format(Locale.ROOT, "%.1f", db);
 	}
@@ -1713,7 +1733,28 @@ public final class AvReceiverConfigScreen extends Screen {
 
 		@Override
 		protected void applyValue() {
+			value = volumeToValue(snapLevelDb(currentDb(),
+				AvReceiverBlockEntity.MIN_VOLUME_DB,
+				AvReceiverBlockEntity.MAX_VOLUME_DB));
 			updateMessage();
+		}
+
+		@Override
+		public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+			if (active && visible
+				&& (keyCode == GLFW.GLFW_KEY_LEFT || keyCode == GLFW.GLFW_KEY_RIGHT)) {
+				double direction = keyCode == GLFW.GLFW_KEY_LEFT ? -1.0 : 1.0;
+				value = volumeToValue(snapLevelDb(
+					currentDb() + direction * LEVEL_STEP_DB,
+					AvReceiverBlockEntity.MIN_VOLUME_DB,
+					AvReceiverBlockEntity.MAX_VOLUME_DB));
+				updateMessage();
+				pendingVolumeDb = currentDb();
+				pendingVolumeUntilMillis = System.currentTimeMillis() + 1_500L;
+				sendVolume(pendingVolumeDb);
+				return true;
+			}
+			return super.keyPressed(keyCode, scanCode, modifiers);
 		}
 
 		@Override
@@ -1780,11 +1821,32 @@ public final class AvReceiverConfigScreen extends Screen {
 
 		@Override
 		protected void applyValue() {
+			value = levelToValue(snapLevelDb(currentDb(),
+				SpeakerBlockEntity.MIN_LEVEL_DB,
+				SpeakerBlockEntity.MAX_LEVEL_DB));
 			updateMessage();
 			if (dragging
 				&& System.currentTimeMillis() - lastSentAtMillis >= SPEAKER_LEVEL_DEBOUNCE_MS) {
 				sendCurrentLevel();
 			}
+		}
+
+		@Override
+		public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+			if (active && visible
+				&& (keyCode == GLFW.GLFW_KEY_LEFT || keyCode == GLFW.GLFW_KEY_RIGHT)) {
+				double direction = keyCode == GLFW.GLFW_KEY_LEFT ? -1.0 : 1.0;
+				value = levelToValue(snapLevelDb(
+					currentDb() + direction * LEVEL_STEP_DB,
+					SpeakerBlockEntity.MIN_LEVEL_DB,
+					SpeakerBlockEntity.MAX_LEVEL_DB));
+				updateMessage();
+				// Send every keypress: unlike dragging there is no release
+				// event to flush a debounced final step.
+				sendCurrentLevel();
+				return true;
+			}
+			return super.keyPressed(keyCode, scanCode, modifiers);
 		}
 
 		@Override
