@@ -12,6 +12,12 @@ import java.util.Locale;
 public record MirrorPlane(Axis axis, double coordinate, double normal,
 						  boolean bounded, double minU, double maxU,
 						  double minV, double maxV, Point3 seedPoint) {
+	/**
+	 * Planes on the same axis/normal whose coordinates differ by at most this
+	 * distance are treated as one physical surface during discovery.
+	 */
+	public static final double COPLANAR_TOLERANCE = 0.10;
+
 	public enum Axis {
 		X,
 		Y,

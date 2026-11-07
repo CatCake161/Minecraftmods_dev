@@ -31,7 +31,7 @@ import java.util.Map;
  * without touching the solver.
  */
 public final class MirrorPlaneDiscovery {
-	public static final int DIRECTION_SET_VERSION = 2;
+	public static final int DIRECTION_SET_VERSION = 3;
 	public static final MirrorPlaneDiscovery INSTANCE = new MirrorPlaneDiscovery();
 
 	private static final double MAX_RAY_DISTANCE = 48.0;
@@ -78,29 +78,29 @@ public final class MirrorPlaneDiscovery {
 			}
 		}
 
-		Map<String, MirrorPlane> planes = new LinkedHashMap<>();
+		List<MirrorPlane> planes = new ArrayList<>();
 		if (seeds != null) {
 			for (AcousticSurface surface : seeds) {
 				if (surface == null || surface.samples() <= 0) {
 					continue;
 				}
-				MirrorPlane plane = new MirrorPlane(axis(surface.axis()),
+				planes.add(new MirrorPlane(axis(surface.axis()),
 					surface.coordinate(), surface.normal(), true,
 					surface.minU(), surface.maxU(), surface.minV(), surface.maxV(),
-					pointOf(surface.center()));
-				planes.putIfAbsent(plane.key(), plane);
+					pointOf(surface.center())));
 			}
 		}
 		if (level != null) {
 			for (Vec3 direction : PROBE_DIRECTIONS) {
 				MirrorPlane plane = castPlane(level, origin, direction);
 				if (plane != null) {
-					planes.putIfAbsent(plane.key(), plane);
+					planes.add(plane);
 				}
 			}
 		}
 
-		List<MirrorPlane> result = List.copyOf(planes.values());
+		List<MirrorPlane> result = mergeCoplanar(planes,
+			MirrorPlane.COPLANAR_TOLERANCE);
 		if (key != null) {
 			cache.put(key, result);
 			evictCache();
@@ -121,6 +121,106 @@ public final class MirrorPlaneDiscovery {
 			iterator.next();
 			iterator.remove();
 		}
+	}
+
+	/**
+	 * Merges coplanar candidates so a wall and a screen/frame a few
+	 * centimetres in front of it cannot create two taps for the same path.
+	 * Bounded room seeds win over unbounded ray planes; two bounded planes
+	 * merge only when their tangential rectangles overlap or touch.
+	 */
+	static List<MirrorPlane> mergeCoplanar(List<MirrorPlane> planes, double tolerance) {
+		if (planes == null || planes.isEmpty()) {
+			return List.of();
+		}
+		double limit = Math.max(0.0, tolerance);
+		List<MirrorPlane> merged = new ArrayList<>(planes.size());
+		for (MirrorPlane candidate : planes) {
+			if (candidate == null) {
+				continue;
+			}
+			int match = -1;
+			for (int i = 0; i < merged.size(); i++) {
+				if (sameSurface(merged.get(i), candidate, limit)) {
+					match = i;
+					break;
+				}
+			}
+			if (match < 0) {
+				merged.add(candidate);
+			} else {
+				merged.set(match, merge(merged.get(match), candidate));
+			}
+		}
+		return List.copyOf(merged);
+	}
+
+	private static boolean sameSurface(MirrorPlane a, MirrorPlane b, double tolerance) {
+		if (a.axis() != b.axis() || a.normal() != b.normal()
+			|| Math.abs(a.coordinate() - b.coordinate()) > tolerance) {
+			return false;
+		}
+		return tangentialOverlap(a, b, tolerance);
+	}
+
+	private static boolean tangentialOverlap(MirrorPlane a, MirrorPlane b,
+											 double tolerance) {
+		if (!a.bounded() && !b.bounded()) {
+			return true;
+		}
+		if (a.bounded() && b.bounded()) {
+			return overlaps(a.minU(), a.maxU(), b.minU(), b.maxU(), tolerance)
+				&& overlaps(a.minV(), a.maxV(), b.minV(), b.maxV(), tolerance);
+		}
+		MirrorPlane bounded = a.bounded() ? a : b;
+		MirrorPlane unbounded = a.bounded() ? b : a;
+		Point3 point = unbounded.seedPoint();
+		if (point == null) {
+			return true;
+		}
+		double u;
+		double v;
+		switch (bounded.axis()) {
+			case X -> {
+				u = point.y();
+				v = point.z();
+			}
+			case Y -> {
+				u = point.x();
+				v = point.z();
+			}
+			case Z -> {
+				u = point.x();
+				v = point.y();
+			}
+			default -> throw new IllegalStateException();
+		}
+		return u >= bounded.minU() - tolerance && u <= bounded.maxU() + tolerance
+			&& v >= bounded.minV() - tolerance && v <= bounded.maxV() + tolerance;
+	}
+
+	private static boolean overlaps(double aMin, double aMax, double bMin,
+									double bMax, double tolerance) {
+		return aMax + tolerance >= bMin && bMax + tolerance >= aMin;
+	}
+
+	private static MirrorPlane merge(MirrorPlane existing, MirrorPlane candidate) {
+		if (existing.bounded()) {
+			if (!candidate.bounded()) {
+				return existing;
+			}
+			return MirrorPlane.bounded(existing.axis(), existing.coordinate(),
+				existing.normal(),
+				Math.min(existing.minU(), candidate.minU()),
+				Math.max(existing.maxU(), candidate.maxU()),
+				Math.min(existing.minV(), candidate.minV()),
+				Math.max(existing.maxV(), candidate.maxV()),
+				existing.seedPoint());
+		}
+		if (candidate.bounded()) {
+			return candidate;
+		}
+		return existing;
 	}
 
 	private static MirrorPlane castPlane(BlockGetter level, Vec3 origin, Vec3 direction) {

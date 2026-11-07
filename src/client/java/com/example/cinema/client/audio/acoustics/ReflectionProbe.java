@@ -18,9 +18,12 @@ import net.minecraft.world.phys.shapes.CollisionContext;
  * direct path, so screens/furniture are transparent and glass/wood/stone block.
  */
 public final class ReflectionProbe implements ImageSourceSolver.World {
-	private static final double WALL_PROBE_INSET = 0.02;
-	private static final double WALL_PROBE_OUTSET = 0.06;
-	private static final double WALL_PROBE_MAX_DISTANCE = 0.10;
+	private static final double WALL_PROBE_INSET =
+		MirrorPlane.COPLANAR_TOLERANCE + 0.02;
+	private static final double WALL_PROBE_OUTSET =
+		MirrorPlane.COPLANAR_TOLERANCE + 0.02;
+	private static final double WALL_PROBE_MAX_DISTANCE =
+		MirrorPlane.COPLANAR_TOLERANCE + 0.03;
 
 	private final BlockGetter level;
 
