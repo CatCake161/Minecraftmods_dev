@@ -66,6 +66,10 @@ final class RoomFloodFill {
 		double low = 0.0;
 		double mid = 0.0;
 		double high = 0.0;
+		double[] axisArea = new double[3];
+		double[] axisLow = new double[3];
+		double[] axisMid = new double[3];
+		double[] axisHigh = new double[3];
 		int openFaces = 0;
 		ReflectionSurfaceMerger merger = new ReflectionSurfaceMerger();
 		int fillMinX = start.getX();
@@ -100,6 +104,8 @@ final class RoomFloodFill {
 						low += 1.0;
 						mid += 1.0;
 						high += 1.0;
+						addBoundaryFace(direction, axisArea, axisLow, axisMid,
+							axisHigh, 1.0, 1.0, 1.0);
 						openFaces |= faceBit(direction);
 						continue;
 					}
@@ -119,6 +125,8 @@ final class RoomFloodFill {
 					low += material.low();
 					mid += material.mid();
 					high += material.high();
+					addBoundaryFace(direction, axisArea, axisLow, axisMid,
+						axisHigh, material.low(), material.mid(), material.high());
 					merger.add(direction, neighbor, material);
 				}
 			}
@@ -136,10 +144,35 @@ final class RoomFloodFill {
 			return null;
 		}
 		return new RoomFill(cells, area, openArea, low / area, mid / area, high / area,
+			axisAbsorption(0, axisArea, axisLow, axisMid, axisHigh),
+			axisAbsorption(1, axisArea, axisLow, axisMid, axisHigh),
+			axisAbsorption(2, axisArea, axisLow, axisMid, axisHigh),
 			cells, complete, openFaces,
 			new Vec3(fillMinX, fillMinY, fillMinZ),
 			new Vec3(fillMaxX + 1.0, fillMaxY + 1.0, fillMaxZ + 1.0), gameTime,
 			merger.merge());
+	}
+
+	private static void addBoundaryFace(Direction direction, double[] area,
+										double[] low, double[] mid, double[] high,
+										double alphaLow, double alphaMid,
+										double alphaHigh) {
+		int axis = direction.getAxis().ordinal();
+		area[axis] += 1.0;
+		low[axis] += alphaLow;
+		mid[axis] += alphaMid;
+		high[axis] += alphaHigh;
+	}
+
+	private static AxisAbsorption axisAbsorption(int axis, double[] area,
+												 double[] low, double[] mid,
+												 double[] high) {
+		double total = area[axis];
+		if (total <= 0.0) {
+			return AxisAbsorption.EMPTY;
+		}
+		return new AxisAbsorption(total, low[axis] / total,
+			mid[axis] / total, high[axis] / total);
 	}
 
 	private static boolean inside(BlockPos pos, int minX, int maxX, int minY, int maxY,

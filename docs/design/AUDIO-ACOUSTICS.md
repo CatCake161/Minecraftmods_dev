@@ -316,16 +316,16 @@ RoomAcousticSnapshot
   - 树叶/雪：中高吸收；
   - 水：低吸收、强反射；
   - 屏幕：低到中等吸收，避免强前墙反射。
-- 面积加权平均吸收：
+- 每个轴对的面积加权平均吸收：
 
 ```text
-α_avg = Σ(S_i · α_i) / ΣS_i
-RT60  ≈ 0.161 · V / (-S · ln(1 - α_avg)) // Eyring
+α_i = Σ(S_ij · α_ij) / S_i          // i = x, y, z
+RT60_Fitzroy = 0.161 · V / S² · Σ_i S_i / (-ln(1 - α_i))
 ```
 
-A1 只使用 Eyring。Sabine 仅适用于极低吸收/扩散场的粗略估计；用户决定不采用。Fitzroy 作为非扩散/不规则房间的备选公式，列入 TODO，暂不替换 Eyring。
+其中 `S_i` 是垂直于 i 轴的两面边界总面积，`S = S_x + S_y + S_z`，`α_i` 是该轴对边界的面积加权平均吸声系数。均匀吸收时退化为 Eyring `0.161 V / (-S ln(1-α))`；某一轴对完全无吸收（`α_i = 0`）时该轴对轴向声场不衰减，RT60 为无穷。Sabine 不采用。
 
-- RT60 不设上下限；Eyring 在低吸收时自然给出长尾音，高吸收时自然给出短尾音。α=0 时理论为无穷，A3 映射到 EAXReverb 时再 clamp。
+- RT60 不设上下限；Fitzroy 在非均匀吸收/非扩散房间中给出比 Eyring 更长的尾音，A3 映射到 EAXReverb 时再 clamp。
 - 材质吸收是近似值，必须提供调试/覆盖入口。
 
 **A1 初始实现（2026-11-06）**
@@ -335,7 +335,7 @@ A1 只使用 Eyring。Sabine 仅适用于极低吸收/扩散场的粗略估计�
 - 墙面材质：命中点周围 **9×9（半径 4）** 方块采样，但严格裁剪到该平面的 u/v 边界；跳过空气/设备，按样本数平均。`samples` 是方块数量，不是 m²；完整方块平面上不会超过面积（边界取整除外）。屏幕单独映射。
 - 凸盒验证：监听者必须在六面内；盒内 1/3、2/3 的 2×2×2 点采样，仅在 **8/8 全为固体** 时判为不可信（避免墙角/家具误判）。
 - 失败 fallback：保留所有已命中的**真实平面**；某轴只有一个面命中时，以该真实面为基准向缺失侧延伸 **16 m**；某轴两面都缺失时，该轴使用听者 ±8 m。缺失面用默认材质，`valid=false`，仍保留真实面的材质/面积与 RT60 供 late reverb 使用。
-- RT60：只用 **Eyring** `0.161 V / (-S ln(1-α))`，**不设上下限**；α=0 时输出无穷，A3 再映射到 EAXReverb 的合法范围。Sabine 不采用；Fitzroy 作为待办备选。
+- RT60：使用 **Fitzroy** `0.161 V / S² · Σ S_i / (-ln(1-α_i))`，按 x/y/z 三个轴对的面积与平均吸收计算；**不设上下限**；α_i=0 时该轴对输出无穷，A3 再映射到 EAXReverb 的合法范围。均匀吸收时与 Eyring 一致；Sabine 不采用。
 - 材质表（`AcousticMaterials`，low/mid/high 分别取 125/250、500/1k、2k/4k 的平均）：
   - screen `0.05/0.10/0.15`，scattering `0.10`（声学透声幕布估计）
   - fabric（羊毛/窗帘，14 oz 褶皱帘）`0.19/0.62/0.65`，`0.35`
@@ -355,8 +355,8 @@ A1 只使用 Eyring。Sabine 仅适用于极低吸收/扩散场的粗略估计�
 - 朝向校准物品：**Speaker Alignment Tool**（`cinema:speaker_alignment_tool`，铁锭+指南针合成）；右键 +10°，潜行右键 -10°，action bar 显示当前角度。
 - 缓存：移动/转头时约 5 Hz 更新，静止时每 20 tick 更新；断线/退出清空。A1 只生成快照，不改变任何音频。
 - 稳定化：新平面坐标与上一有效快照相差 ≤1.5 m 时沿用旧平面，避免不规则天花板/墙角抖动；检测失败时直接使用 fallback（保留真实平面，缺失轴以已知面延伸 16 m；两面都缺失时该轴用听者 ±8 m），不保留旧房间。
-- 连通空气 flood fill：在六面盒内从眼睛做有界 **6 邻接 BFS**，最多 **32³ = 32768** 格、单次 **8 ms** 预算；只穿过无碰撞方块或扬声器/座椅/投影仪/接收器，水/岩浆按边界处理；未加载区块、超出上限或超出时间预算时标记 `fill=incomplete`，RT60 回退到几何盒。完整填充时给出 `effectiveVolume`、`effectiveSurfaceArea`、`openArea` 与开口面（`x±/y±/z±`），Eyring 使用有效体积/面积和按边界材质加权的 α；开口按 α=1 计入（近似为完全吸声）。完整填充最多每 **200 tick** 或听者离开旧填充时重扫；incomplete 填充每 200 tick 重试；`/cinema_acoustics` 强制重扫。填充只用于 RT60/调试，不改变 A1 的盒几何。
-- 开口按 α=1 只是把逃逸能量视为完全吸收的 A1 近似；门洞通向另一房间的耦合混响尚未建模，留给后续 A3/Fitzroy/portal 处理。
+- 连通空气 flood fill：在六面盒内从眼睛做有界 **6 邻接 BFS**，最多 **32³ = 32768** 格、单次 **8 ms** 预算；只穿过无碰撞方块或扬声器/座椅/投影仪/接收器，水/岩浆按边界处理；未加载区块、超出上限或超出时间预算时标记 `fill=incomplete`，RT60 回退到几何盒。完整填充时给出 `effectiveVolume`、`effectiveSurfaceArea`、`openArea`、开口面（`x±/y±/z±`）以及按 x/y/z 轴对统计的边界面积/吸收；Fitzroy 使用有效体积和每个轴对的面积加权 α，开口按 α=1 计入（近似为完全吸声）。完整填充最多每 **200 tick** 或听者离开旧填充时重扫；incomplete 填充每 200 tick 重试；`/cinema_acoustics` 强制重扫。填充只用于 RT60/调试，不改变 A1 的盒几何。
+- 开口按 α=1 只是把逃逸能量视为完全吸收的 A1 近似；门洞通向另一房间的耦合混响尚未建模，留给后续 A3/portal 处理。
 - 调试：`/cinema_acoustics` 强制刷新并输出房间、六个平面、材质、flood fill 体积/面积/开口、RT60、听者和附近扬声器。
 
 ### 7.2 直达声
@@ -496,7 +496,7 @@ R_p(f) = sqrt(1 - α_p(f))
 f_s = 2000 * sqrt(RT60_mid / V_eff)
 ```
 
-- `RT60_mid` 为 Eyring 中频 RT60，`V_eff` 为 flood-fill 有效体积（无 fill 时回退盒体积）。
+- `RT60_mid` 为 Fitzroy 中频 RT60，`V_eff` 为 flood-fill 有效体积（无 fill 时回退盒体积）。
 - 钳位 `[50, 2000] Hz`；RT60/体积无效时回退 1000 Hz。
 - `/cinema_acoustics` 输出 `fs=`，反射 FIR 诊断输出 `trim/eq/taps/maxErr`。
 
@@ -837,7 +837,7 @@ maxReflectionTaps      24                // A2b/A2c-R
 reflectionFirTaps      2048              // A2c-R，固定
 reflectionSchroederHz  50–2000           // 由 RT60_mid / V_eff 计算，无效回退 1000
 geometryUpdateHz       2–5               // A1 房间快照；扬声器布局仍约 20 Hz
-rt60Clamp              none              // Eyring; clamp only when mapping to EAX
+rt60Clamp              none              // Fitzroy; clamp only when mapping to EAX
 ```
 
 `earlyGainDb` 放 Mod Menu，仅调试用，现已乘入反射 source 增益（不改变直达声）；早期反射的基础电平由 7.3 的物理链路计算，不再默认压低 6–12 dB。`lateGainDb` 仍属接收器/声学设置，最终以试听为准。
@@ -872,7 +872,7 @@ UI 归属：
 
 ## 10. 测试清单
 
-- 几何/单元：镜像源位置/延迟/增益、房间体积/表面积、Eyring RT60、空气吸收曲线、指向性插值、FDN 稳定性。
+- 几何/单元：镜像源位置/延迟/增益、房间体积/表面积、Fitzroy RT60（均匀吸收退化为 Eyring、轴对面积/吸收、α_i=0 输出无穷）、空气吸收曲线、指向性插值、FDN 稳定性。
 - A2b 纯几何：镜像源/R/Lpath/延迟、切向边界、同侧、门洞/遮挡/玻璃、LFE；`ImageSourceSolverTest` 通过；`MirrorPlaneDiscoveryTest` 通过（26 方向 + 近共面合并）；游戏内用 `/cinema_acoustics` 检查 planes/taps。
 - A2b 播放：每个 tap 的镜像源位置/延迟/方向正确；反射/直达比与物理计算一致（`sqrt(1-α_mid)/max(L,1)` × 扬声器 trim/EQ × `earlyGainDb`，空气吸收只由每 tap FIR 施加）；32 source 池/24 活动 taps 无爆音、无掉帧、无双重处理；空闲槽静音保持媒体时钟对齐；游戏内听感/CPU/多接收器已验收。
 - A2c-R：反射 FIR 为 2048 taps、在 Schroeder 频率归一为 0 dB，`trimGain()` 与 FIR 不重复；材质三带中心目标误差 `<0.1 dB`（`MaterialReflectionEqTest`）；两段遮挡合并规则/40 dB 上限（`OcclusionResultTest`）；遮挡低通阶数 1–4 幅度与 Butterworth 目标一致；flood-fill 补丁合并/材质加权/上限（`ReflectionSurfaceMergerTest`）；Schroeder 公式/回退（`AcousticRoomTest`）；`ImageSourceSolverTest` 验证被挡 tap 保留且增益按两段遮挡衰减。

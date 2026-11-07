@@ -6,6 +6,7 @@ import com.example.cinema.client.audio.acoustics.AcousticRoom;
 import com.example.cinema.client.audio.acoustics.AcousticScene;
 import com.example.cinema.client.audio.acoustics.AcousticSpeaker;
 import com.example.cinema.client.audio.acoustics.AcousticSurface;
+import com.example.cinema.client.audio.acoustics.AxisAbsorption;
 import com.example.cinema.client.audio.acoustics.ImageSourceSolver;
 import com.example.cinema.client.audio.acoustics.MirrorPlane;
 import com.example.cinema.client.audio.acoustics.MirrorPlaneDiscovery;
@@ -86,11 +87,22 @@ public final class ClientAcousticsCommand {
 				fill.reflectionSurfaceCount())));
 		}
 		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
-			"acoustics: alpha L/M/H=%.3f/%.3f/%.3f RT60 L/M/H=%s/%s/%s s fs=%.0f Hz source=%s",
+			"acoustics: alpha L/M/H=%.3f/%.3f/%.3f RT60 L/M/H=%s/%s/%s s (Fitzroy) fs=%.0f Hz source=%s",
 			room.alphaLow(), room.alphaMid(), room.alphaHigh(),
 			rt60(room.rt60Low()), rt60(room.rt60Mid()), rt60(room.rt60High()),
 			room.schroederHz(),
 			room.fillComplete() ? "fill" : "box")));
+		AxisAbsorption xAxis = room.xAxis();
+		AxisAbsorption yAxis = room.yAxis();
+		AxisAbsorption zAxis = room.zAxis();
+		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
+			"acoustics: fitzroy axisArea X/Y/Z=%.1f/%.1f/%.1f m2",
+			xAxis.area(), yAxis.area(), zAxis.area())));
+		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
+			"acoustics: fitzroy alpha X=%.3f/%.3f/%.3f Y=%.3f/%.3f/%.3f Z=%.3f/%.3f/%.3f",
+			xAxis.alphaLow(), xAxis.alphaMid(), xAxis.alphaHigh(),
+			yAxis.alphaLow(), yAxis.alphaMid(), yAxis.alphaHigh(),
+			zAxis.alphaLow(), zAxis.alphaMid(), zAxis.alphaHigh())));
 		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
 			"acoustics: listener eye=(%.2f, %.2f, %.2f) look=(%.2f, %.2f, %.2f)",
 			snapshot.listener().eye().x, snapshot.listener().eye().y,

@@ -14,9 +14,13 @@ import java.util.List;
  * meter per block cell and one square meter per block face, so partial blocks
  * are approximated. {@code reflectionSurfaces} contains the solid boundary
  * faces greedily merged into larger bounded patches for mirror discovery.
+ * {@code xAxis}, {@code yAxis} and {@code zAxis} split the same boundary into
+ * the three wall pairs used by the Fitzroy RT60 formula.
  */
 public record RoomFill(double volume, double surfaceArea, double openArea,
 					   double alphaLow, double alphaMid, double alphaHigh,
+					   AxisAbsorption xAxis, AxisAbsorption yAxis,
+					   AxisAbsorption zAxis,
 					   int cells, boolean complete, int openFaces,
 					   Vec3 min, Vec3 max, long gameTime,
 					   List<AcousticSurface> reflectionSurfaces) {
@@ -54,6 +58,9 @@ public record RoomFill(double volume, double surfaceArea, double openArea,
 		alphaLow = clamp01(alphaLow);
 		alphaMid = clamp01(alphaMid);
 		alphaHigh = clamp01(alphaHigh);
+		xAxis = xAxis == null ? AxisAbsorption.EMPTY : xAxis;
+		yAxis = yAxis == null ? AxisAbsorption.EMPTY : yAxis;
+		zAxis = zAxis == null ? AxisAbsorption.EMPTY : zAxis;
 		cells = Math.max(0, cells);
 		openFaces &= FACE_MASK;
 		min = min == null ? Vec3.ZERO : min;
@@ -64,6 +71,14 @@ public record RoomFill(double volume, double surfaceArea, double openArea,
 
 	public int reflectionSurfaceCount() {
 		return reflectionSurfaces.size();
+	}
+
+	public AxisAbsorption axis(AcousticSurface.Axis axis) {
+		return switch (axis) {
+			case X -> xAxis;
+			case Y -> yAxis;
+			case Z -> zAxis;
+		};
 	}
 
 	public boolean isOpen(Face face) {

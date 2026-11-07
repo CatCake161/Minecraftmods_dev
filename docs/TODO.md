@@ -50,8 +50,8 @@
 - [x] A0c 决策门：EAXReverb late tail 可用且 wet 能覆盖 5.1；选择 EAXReverb 作为 late-tail 首选，FDN 仅作为 EFX 不可用/布局不合适的回退。结论已回写 AUDIO-ACOUSTICS.md
 - [x] A1 声学数据模型：房间平面/包围盒、体积/表面积、材质吸收、扬声器位置/朝向/高度、玩家听者位置/朝向。已实现 `/cinema_acoustics` 快照；游戏内 dump 验证无明显问题
 - [ ] A1b 材质映射：已改为现实吸声系数的 3 频带估算（CDC/NIOSH、acoustic.ua；screen/植被/雪/多孔/金属为估计）；外部 JSON/数据驱动覆盖和试听校准待补
-- [x] A1c 房间检测：6 轴 × 25 射线扇形（可反射 2 次）+ 中位平面 + 9×9 材质采样（裁剪到平面边界） + 宽松内部空气验证 + 5 Hz 缓存 + fallback 保留真实面、缺失轴以已知面延伸 16 m/两面缺失时听者 ±8 m + 1.5 m 平面迟滞 + 有界 32³/8 ms flood fill（有效体积/面积、开口面、10 s 重扫、incomplete 回退盒值）；Eyring RT60 不设上下限（α=0 输出无穷，A3 再 clamp EAX 参数）；游戏内验证无明显问题
-- [ ] A1-RT60 备选：Fitzroy 公式作为非扩散/不规则房间的对照；先记录，不替换 Eyring
+- [x] A1c 房间检测：6 轴 × 25 射线扇形（可反射 2 次）+ 中位平面 + 9×9 材质采样（裁剪到平面边界） + 宽松内部空气验证 + 5 Hz 缓存 + fallback 保留真实面、缺失轴以已知面延伸 16 m/两面缺失时听者 ±8 m + 1.5 m 平面迟滞 + 有界 32³/8 ms flood fill（有效体积/面积、开口面、10 s 重扫、incomplete 回退盒值）；Fitzroy RT60（x/y/z 轴对面积加权）不设上下限（α_i=0 输出无穷，A3 再 clamp EAX 参数）；游戏内验证无明显问题
+- [x] A1-RT60：Fitzroy 公式 `0.161 V/S² · Σ S_i/(-ln(1-α_i))`，按 flood-fill/盒面统计的 x/y/z 轴对面积与平均吸收计算；均匀吸收时退化为 Eyring；不设上下限
 - [x] A1 扬声器朝向：36 档 10° 声学 yaw + Speaker Alignment Tool（右键 +10°，潜行 -10°）；方块模型由 `SpeakerBlockEntityRenderer` 同步物理旋转；游戏内验证无明显问题
 - [x] A1d ASR/Spinorama 数据管线：只读 `SPL Horizontal.txt`/`SPL Vertical.txt`；保留原始 194/200 点频率网格、不降采样；补 `-180°`；按全频段能量平均计算 -10 dB 频率范围并取整到 1 Hz；删除 `quality`；21 个型号生成到本地 `run/cinema/speaker_data/profiles/`，**不打包**。转换器：`docs/examples/speaker_data/convert_spinorama.py`。待游戏内加载验证
 - [ ] A1e Spinorama 许可决策：已确认 CC BY-NC-SA 4.0；profile 仅作为用户本地导入数据，不随模组分发；仍需在发布文档/THIRD-PARTY 写 attribution
@@ -62,7 +62,7 @@
 - [x] A2c-R 反射指向性 + 频带精度：独立 **2048-tap** 最小相位 FIR（8192 点 FFT，角度 = 扬声器→反射点，目标 = on-axis EQ + H/V − 反射路径空气吸收），以房间 Schroeder 频率 `f_s = 2000·sqrt(RT60_mid/V_eff)`（钳位 50–2000 Hz，无效回退 1000 Hz）归一为 0 dB，合并电平作为独立 `trimGain()`；3 频带材质 PEQ（低架 250 Hz Q≈0.707 + peaking 707.11 Hz Q=1 + 高架 2828.43 Hz Q≈0.707，由压力反射系数解 3×3）；两段反射路径遮挡扫描合并（衰减相加/较低截止/较高阶），被挡 tap 保留并衰减，Butterworth 1–4 阶低通 PEQ 近似；flood-fill 边界单位面贪心合并为补丁（4096 面/128 补丁）作为镜像种子，`AcousticRoom.reflectionSurfaces()` 优先补丁、回退六面盒；FIR/PEQ 缓存与 30 ms 系数交叉淡化已接入；**不实现散射**；单元测试通过，游戏内 A/B 验收待做
 - [x] A2d 直达声 A/B/CPU：4096-tap 指向性 FIR + 2048-tap 环境 FIR 的听感、移动/转头更新、约 ±1 dB 实测确认；32-bit float source buffer（`AL_EXT_FLOAT32`）、30 ms 半径 + 球面方向（slerp）声像平滑、30 ms 遮挡增益平滑已接入；游戏内复测通过：快速转头/移动无爆音或削波，遮挡切换正常，距离/空气/遮挡/指向性各只应用一次
 - [x] A2e Mod Menu 声学设置：空气吸收开关/温度/湿度、`earlyGainDb` 调试滑杆（仅调试，默认 0 dB，现已作用于反射 source 电平）；已持久化到 `config/cinema.json`
-- [ ] A3 晚期混响：EAXReverb 仅 late tail（`REFLECTIONS_GAIN=0`、`ECHO_DEPTH=0`）、RT60 Eyring、HF/LF ratio、density/diffusion、modulation、air absorption
+- [ ] A3 晚期混响：EAXReverb 仅 late tail（`REFLECTIONS_GAIN=0`、`ECHO_DEPTH=0`）、RT60 Fitzroy、HF/LF ratio、density/diffusion、modulation、air absorption
 - [ ] A3b 自定义 FDN 回退（可选）：8 线 FDN、吸收滤波、6 声道 wet、稳定性限制
 - [ ] A4 接收器集成：Speakers/Settings 页声学总开关、late reverb 电平、房间预设/重扫；服务端字段/网络包；`earlyGainDb` 放 Mod Menu，不进接收器 GUI
 - [ ] A4b 听者策略（决策已定，待 A4 接入）：始终使用玩家实际耳朵位置/朝向；不做 Seat 皇帝位、固定监听点或声场校正
