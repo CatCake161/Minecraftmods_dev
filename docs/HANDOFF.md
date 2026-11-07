@@ -84,7 +84,7 @@
 
 - **原地 seek 仍未启用**：当前 seek 复用音视频资源但会重新打开 FFmpeg 解码器，4K AV1/HEVC 仍可能需要数秒才出首帧；原地 seek 状态机未重新设计前不要直接恢复。
 - **BSL 下 ambient wash 某些值画面异常**：待确认是白色 overlay 的 bloom/exposure 还是 alpha 曲线；无音轨墙钟长播也未测试。两项按用户决定暂不处理，不阻塞当前验收。
-- **音频声学：A2 直达声已实现，反射/晚期混响仍规划**：见 `docs/design/AUDIO-ACOUSTICS.md`。直达声距离由 Java `1/max(r,1)` 计算（OpenAL `AL_NONE`），ISO 9613-1 空气吸收与遮挡低通合并为 2048-tap 环境 FIR，遮挡宽带衰减 30 ms 平滑；空气开关/温度/湿度、早反调试 gain 在 Mod Menu。A2 已接入 4096-tap 指向性 FIR；待游戏内听感验收距离/空气/遮挡/配置 UI。早期反射仍计划采用独立 OpenAL source（镜像源位置，每 tap 一个，上限 24–36/接收器），A2b 实现时距离同样由 Java 按 `1/max(L,1)` 计算。A0 `/cinema_efx_spike` 已通过游戏内验证：EFX/sharedCaps/真实设备 context=OK，max sends=2，5.1 wet 5 声道，HRTF enabled，reset=OK，CPU≈0.8%；真实设备听感/物理切换/硬件延迟留 A3/A4；材质/遮挡调参、型号映射仍需校准。
+- **音频声学：A2 直达声已实现，反射/晚期混响仍规划**：见 `docs/design/AUDIO-ACOUSTICS.md`。直达声距离由 Java `1/max(r,1)` 计算（OpenAL `AL_NONE`），ISO 9613-1 空气吸收与遮挡低通合并为 2048-tap 环境 FIR，遮挡宽带衰减 30 ms 平滑；空气开关/温度/湿度、早反调试 gain 在 Mod Menu。A2 已接入 4096-tap 指向性 FIR；已通过游戏内听感验收（距离/空气/遮挡/配置 UI、快速转头/移动无爆音或削波），遮挡扫描已修正为世界坐标碰撞盒并通过石墙/木板/玻璃/屏幕复测。早期反射仍计划采用独立 OpenAL source（镜像源位置，每 tap 一个，上限 24–36/接收器），A2b 实现时距离同样由 Java 按 `1/max(L,1)` 计算。A0 `/cinema_efx_spike` 已通过游戏内验证：EFX/sharedCaps/真实设备 context=OK，max sends=2，5.1 wet 5 声道，HRTF enabled，reset=OK，CPU≈0.8%；真实设备听感/物理切换/硬件延迟留 A3/A4；材质/遮挡调参、型号映射仍需校准。
 - **音频定位模型**：当前保留 `AL_SOURCE_RELATIVE = AL_TRUE`；距离衰减已由 Java 计算（`AL_NONE`），source 位置只负责声像/HRTF。世界坐标源迁移已完成评审，暂不迁移；A2b 反射需要时再做，见 `AUDIO-ACOUSTICS.md` §4.2.1。
 - Spinorama 数据默认 CC BY-NC-SA 4.0，与项目 CC0 不同；发布前必须做许可/attribution 决策。REST API 需要人工申请 Bearer key，key 只能放本地环境变量/转换工具，不能进仓库、发布包或日志。
 - 一阶声学模型不覆盖衍射、散射、高阶反射和低频房间模态；LFE 低频峰谷/驻波不会正确重现。低频管理与模态（含多低音炮）排在 A4 之后的 A5。
@@ -104,7 +104,7 @@
    - 按 `CHANNEL-LAYOUTS.md` 分阶段泛化 `CinemaAudioEngine`/`AudioChunk`/`SpeakerRole`，先保持 5.1 零回归。
 4. **房间声学**
    - 所有声学模拟原型/实验代码在 `acoustic-simulation` 分支开发，只有通过游戏内听感验收的部分才分段合并回 `main`。
-   - A0 EFX/EAXReverb 技术验证已通过（EAXReverb late tail 可用，FDN 仅回退）；A1d 数据管线已完成（profile 本地生成）；A1 房间快照已实现，游戏内 `/cinema_acoustics` dump 验证无明显问题；A2 直达声距离/空气吸收/遮挡/指向性已接入（4096-tap 指向性 FIR + 2048-tap 环境 FIR），待游戏内听感验收；A2b 早期反射待续；A1e attribution 仍待补。不要为了声学阻塞主线。
+   - A0 EFX/EAXReverb 技术验证已通过（EAXReverb late tail 可用，FDN 仅回退）；A1d 数据管线已完成（profile 本地生成）；A1 房间快照已实现，游戏内 `/cinema_acoustics` dump 验证无明显问题；A2 直达声距离/空气吸收/遮挡/指向性已接入（4096-tap 指向性 FIR + 2048-tap 环境 FIR）并通过游戏内听感验收；A2b 早期反射待续；A1e attribution 仍待补。不要为了声学阻塞主线。
 
 ## 6. 构建与运行
 
