@@ -4,11 +4,17 @@ import com.example.cinema.Cinema;
 import com.example.cinema.block.entity.AvReceiverBlockEntity;
 import com.example.cinema.block.entity.SpeakerBlockEntity;
 import com.example.cinema.block.entity.SpeakerRole;
+import com.example.cinema.client.audio.acoustics.OcclusionResult;
+import com.example.cinema.client.audio.acoustics.OcclusionScanner;
 import com.example.cinema.client.audio.directivity.MinimumPhaseFir;
 import com.example.cinema.client.audio.directivity.SpeakerDirectivityService;
+import com.example.cinema.client.audio.environment.AirAbsorption;
+import com.example.cinema.client.audio.environment.EnvironmentFirService;
+import com.example.cinema.client.audio.environment.EnvironmentProfile;
 import com.example.cinema.client.audio.speakerdata.SpeakerDataAssignments;
 import com.example.cinema.client.audio.speakerdata.SpeakerDataProfile;
 import com.example.cinema.client.audio.speakerdata.SpeakerDataRegistry;
+import com.example.cinema.client.config.CinemaClientConfig;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
@@ -59,6 +65,8 @@ public final class AvReceiverPlayback {
 	private int physicalChannels;
 	private final MinimumPhaseFir[] channelFilters =
 		new MinimumPhaseFir[CinemaAudioEngine.CHANNELS];
+	private final MinimumPhaseFir[] channelEnvironmentFilters =
+		new MinimumPhaseFir[CinemaAudioEngine.CHANNELS];
 
 	AvReceiverPlayback(BlockPos receiverPos) {
 		this.receiverPos = receiverPos;
@@ -67,6 +75,7 @@ public final class AvReceiverPlayback {
 		Minecraft.getInstance().getTextureManager().register(textureId, texture);
 		this.textureRegistered = true;
 		Arrays.fill(channelFilters, MinimumPhaseFir.FLAT);
+		Arrays.fill(channelEnvironmentFilters, MinimumPhaseFir.FLAT);
 	}
 
 	public BlockPos receiverPos() {
@@ -370,8 +379,18 @@ public final class AvReceiverPlayback {
 		float[][] positions = new float[CinemaAudioEngine.CHANNELS][];
 		float[] gains = new float[CinemaAudioEngine.CHANNELS];
 		MinimumPhaseFir[] filters = new MinimumPhaseFir[CinemaAudioEngine.CHANNELS];
+		MinimumPhaseFir[] environmentFilters =
+			new MinimumPhaseFir[CinemaAudioEngine.CHANNELS];
+		float[] occlusionGains = new float[CinemaAudioEngine.CHANNELS];
 		Arrays.fill(gains, 1.0f);
 		Arrays.fill(filters, MinimumPhaseFir.FLAT);
+		Arrays.fill(environmentFilters, MinimumPhaseFir.FLAT);
+		Arrays.fill(occlusionGains, 1.0f);
+		CinemaClientConfig config = CinemaClientConfig.get();
+		boolean airAbsorption = config.airAbsorption();
+		double temperatureC = config.airTemperatureC();
+		double humidityPercent = config.airHumidityPercent();
+		double pressureKpa = AirAbsorption.REFERENCE_PRESSURE_KPA;
 		double[] bestDistance = new double[CinemaAudioEngine.CHANNELS];
 		Arrays.fill(bestDistance, Double.MAX_VALUE);
 		for (BlockPos pos : receiver.speakerTargets()) {
@@ -389,17 +408,37 @@ public final class AvReceiverPlayback {
 			}
 			Vec3 center = speaker.acousticFrontPosition();
 			Vec3 relative = center.subtract(listener);
-			double distance = relative.lengthSqr();
-			if (distance < 0.01 || distance >= bestDistance[channel]) {
+			double distanceSqr = relative.lengthSqr();
+			if (distanceSqr < 0.01 || distanceSqr >= bestDistance[channel]) {
 				continue;
 			}
-			bestDistance[channel] = distance;
+			bestDistance[channel] = distanceSqr;
 			positions[channel] = toListenerSpace(relative, forward);
 			SpeakerDirectivityService.Angles angles = SpeakerDirectivityService.angles(
 				center, speaker.acousticForward(), listener);
 			MinimumPhaseFir filter = directivityFilter(speaker, angles);
 			filters[channel] = filter;
 			gains[channel] = speakerGain(speaker) * (float) filter.overallGain();
+			double distance = Math.sqrt(distanceSqr);
+			OcclusionResult occlusion = OcclusionScanner.scan(level, center, listener);
+			occlusionGains[channel] = (float) occlusion.linearGain();
+			EnvironmentProfile profile = new EnvironmentProfile(distance,
+				airAbsorption, temperatureC, humidityPercent, pressureKpa,
+				occlusion.cutoffHz(), occlusion.order());
+			environmentFilters[channel] = environmentFilter(channel, profile);
+		}
+		for (int channel = 0; channel < CinemaAudioEngine.CHANNELS; channel++) {
+			// Unpaired channels fall back to the engine's virtual layout. They
+			// still get distance and air absorption, but no occlusion because
+			// there is no physical source position to trace from.
+			if (positions[channel] != null) {
+				continue;
+			}
+			double distance = CinemaAudioEngine.defaultSourceDistance(channel);
+			EnvironmentProfile profile = new EnvironmentProfile(distance,
+				airAbsorption, temperatureC, humidityPercent, pressureKpa,
+				20_000.0, 0);
+			environmentFilters[channel] = environmentFilter(channel, profile);
 		}
 
 		int routed = 0;
@@ -410,7 +449,22 @@ public final class AvReceiverPlayback {
 		}
 		physicalChannels = routed;
 		System.arraycopy(filters, 0, channelFilters, 0, filters.length);
-		engine.setChannelLayout(positions, gains, filters);
+		engine.setChannelLayout(positions, gains, filters, environmentFilters,
+			occlusionGains);
+	}
+
+	private MinimumPhaseFir environmentFilter(int channel, EnvironmentProfile profile) {
+		MinimumPhaseFir design = EnvironmentFirService.get(profile);
+		if (design != null) {
+			if (channel >= 0 && channel < channelEnvironmentFilters.length) {
+				channelEnvironmentFilters[channel] = design;
+			}
+			return design;
+		}
+		if (channel >= 0 && channel < channelEnvironmentFilters.length) {
+			return channelEnvironmentFilters[channel];
+		}
+		return MinimumPhaseFir.FLAT;
 	}
 
 	private MinimumPhaseFir directivityFilter(SpeakerBlockEntity speaker,

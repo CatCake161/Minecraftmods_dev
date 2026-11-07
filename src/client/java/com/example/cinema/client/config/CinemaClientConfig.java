@@ -33,6 +33,19 @@ public final class CinemaClientConfig {
 	/** Only relevant when a {@code cinema.spike.*} test is active. */
 	public static final boolean DEFAULT_SPIKE_MODIFIES_WORLD = true;
 
+	/** ISO 9613-1 direct-path air absorption. */
+	public static final boolean DEFAULT_AIR_ABSORPTION = true;
+	public static final double MIN_AIR_TEMPERATURE_C = -20.0;
+	public static final double MAX_AIR_TEMPERATURE_C = 50.0;
+	public static final double DEFAULT_AIR_TEMPERATURE_C = 20.0;
+	public static final double MIN_AIR_HUMIDITY_PERCENT = 0.0;
+	public static final double MAX_AIR_HUMIDITY_PERCENT = 100.0;
+	public static final double DEFAULT_AIR_HUMIDITY_PERCENT = 50.0;
+	/** Debug only; no audible effect until early reflections are implemented. */
+	public static final double MIN_EARLY_GAIN_DB = -24.0;
+	public static final double MAX_EARLY_GAIN_DB = 12.0;
+	public static final double DEFAULT_EARLY_GAIN_DB = 0.0;
+
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 	private static final CinemaClientConfig INSTANCE = load();
 	private static final Integer SCREEN_MAX_SIZE_OVERRIDE = readScreenMaxSizeOverride();
@@ -41,6 +54,10 @@ public final class CinemaClientConfig {
 	private boolean pauseGameInDeviceGuis = DEFAULT_PAUSE_GAME_IN_DEVICE_GUIS;
 	private boolean emptyHandOpensDeviceGuis = DEFAULT_EMPTY_HAND_OPENS_DEVICE_GUIS;
 	private boolean spikeModifiesWorld = DEFAULT_SPIKE_MODIFIES_WORLD;
+	private boolean airAbsorption = DEFAULT_AIR_ABSORPTION;
+	private double airTemperatureC = DEFAULT_AIR_TEMPERATURE_C;
+	private double airHumidityPercent = DEFAULT_AIR_HUMIDITY_PERCENT;
+	private double earlyGainDb = DEFAULT_EARLY_GAIN_DB;
 
 	private CinemaClientConfig() {
 	}
@@ -90,12 +107,50 @@ public final class CinemaClientConfig {
 		spikeModifiesWorld = value;
 	}
 
+	public boolean airAbsorption() {
+		return airAbsorption;
+	}
+
+	public void setAirAbsorption(boolean value) {
+		airAbsorption = value;
+	}
+
+	public double airTemperatureC() {
+		return airTemperatureC;
+	}
+
+	public void setAirTemperatureC(double value) {
+		airTemperatureC = clamp(value, MIN_AIR_TEMPERATURE_C,
+			MAX_AIR_TEMPERATURE_C);
+	}
+
+	public double airHumidityPercent() {
+		return airHumidityPercent;
+	}
+
+	public void setAirHumidityPercent(double value) {
+		airHumidityPercent = clamp(value, MIN_AIR_HUMIDITY_PERCENT,
+			MAX_AIR_HUMIDITY_PERCENT);
+	}
+
+	public double earlyGainDb() {
+		return earlyGainDb;
+	}
+
+	public void setEarlyGainDb(double value) {
+		earlyGainDb = clamp(value, MIN_EARLY_GAIN_DB, MAX_EARLY_GAIN_DB);
+	}
+
 	public synchronized void save() {
 		JsonObject root = new JsonObject();
 		root.addProperty("screenMaxSize", screenMaxSize);
 		root.addProperty("pauseGameInDeviceGuis", pauseGameInDeviceGuis);
 		root.addProperty("emptyHandOpensDeviceGuis", emptyHandOpensDeviceGuis);
 		root.addProperty("spikeModifiesWorld", spikeModifiesWorld);
+		root.addProperty("airAbsorption", airAbsorption);
+		root.addProperty("airTemperatureC", airTemperatureC);
+		root.addProperty("airHumidityPercent", airHumidityPercent);
+		root.addProperty("earlyGainDb", earlyGainDb);
 		Path file = configFile();
 		try {
 			Files.createDirectories(file.getParent());
@@ -103,9 +158,12 @@ public final class CinemaClientConfig {
 				StandardCharsets.UTF_8);
 			Cinema.LOGGER.info(
 				"cinema config: saved {} (screenMaxSize={}, pauseGameInDeviceGuis={}, "
-					+ "emptyHandOpensDeviceGuis={}, spikeModifiesWorld={})",
+					+ "emptyHandOpensDeviceGuis={}, spikeModifiesWorld={}, "
+					+ "airAbsorption={}, airTemperatureC={}, airHumidityPercent={}, "
+					+ "earlyGainDb={})",
 				file, screenMaxSize, pauseGameInDeviceGuis,
-				emptyHandOpensDeviceGuis, spikeModifiesWorld);
+				emptyHandOpensDeviceGuis, spikeModifiesWorld,
+				airAbsorption, airTemperatureC, airHumidityPercent, earlyGainDb);
 		} catch (IOException e) {
 			Cinema.LOGGER.warn("cinema config: could not save {}: {}", file, e.getMessage());
 		}
@@ -113,6 +171,13 @@ public final class CinemaClientConfig {
 
 	public static int clampScreenMaxSize(int value) {
 		return Math.max(MIN_SCREEN_MAX_SIZE, Math.min(MAX_SCREEN_MAX_SIZE, value));
+	}
+
+	private static double clamp(double value, double min, double max) {
+		if (!Double.isFinite(value)) {
+			return min;
+		}
+		return Math.max(min, Math.min(max, value));
 	}
 
 	private static CinemaClientConfig load() {
@@ -137,11 +202,32 @@ public final class CinemaClientConfig {
 			if (root.has("spikeModifiesWorld")) {
 				config.spikeModifiesWorld = root.get("spikeModifiesWorld").getAsBoolean();
 			}
+			if (root.has("airAbsorption")) {
+				config.airAbsorption = root.get("airAbsorption").getAsBoolean();
+			}
+			if (root.has("airTemperatureC")) {
+				config.airTemperatureC = clamp(
+					root.get("airTemperatureC").getAsDouble(),
+					MIN_AIR_TEMPERATURE_C, MAX_AIR_TEMPERATURE_C);
+			}
+			if (root.has("airHumidityPercent")) {
+				config.airHumidityPercent = clamp(
+					root.get("airHumidityPercent").getAsDouble(),
+					MIN_AIR_HUMIDITY_PERCENT, MAX_AIR_HUMIDITY_PERCENT);
+			}
+			if (root.has("earlyGainDb")) {
+				config.earlyGainDb = clamp(root.get("earlyGainDb").getAsDouble(),
+					MIN_EARLY_GAIN_DB, MAX_EARLY_GAIN_DB);
+			}
 			Cinema.LOGGER.info(
 				"cinema config: loaded {} (screenMaxSize={}, pauseGameInDeviceGuis={}, "
-					+ "emptyHandOpensDeviceGuis={}, spikeModifiesWorld={})",
+					+ "emptyHandOpensDeviceGuis={}, spikeModifiesWorld={}, "
+					+ "airAbsorption={}, airTemperatureC={}, airHumidityPercent={}, "
+					+ "earlyGainDb={})",
 				file, config.screenMaxSize, config.pauseGameInDeviceGuis,
-				config.emptyHandOpensDeviceGuis, config.spikeModifiesWorld);
+				config.emptyHandOpensDeviceGuis, config.spikeModifiesWorld,
+				config.airAbsorption, config.airTemperatureC,
+				config.airHumidityPercent, config.earlyGainDb);
 		} catch (Exception e) {
 			Cinema.LOGGER.warn("cinema config: could not read {}: {}", file, e.getMessage());
 		}

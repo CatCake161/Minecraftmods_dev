@@ -105,7 +105,7 @@
 
 创造模式位置：接收器/座位/扬声器在 Functional Blocks，线材/遥控器/朝向校准器在 Tools & Utilities。
 
-5.1 音频路由：接收器用线材连接的扬声器会按 FL/FR/FC/LFE/BL/BR 角色映射到实际位置，每只扬声器可在接收器 Speakers 页调整 `Level`（-60.0..+6.0 dB）；未连接对应声道的扬声器时，该声道回退虚拟 5.1。双声道/单声道媒体会自动上混为 5.1：FL/FR 保持原样，FC 取中置，LFE 取 120 Hz 低通中置，BL/BR 取左右差信号。听者始终使用玩家实际耳朵位置和朝向，不做 Seat/皇帝位或屏幕锁定的声场校正，因此玩家走出影院后空间定位仍然正确。主音量使用 dBFS（-60..+6，+6 为最大增益），静音独立。
+5.1 音频路由：接收器用线材连接的扬声器会按 FL/FR/FC/LFE/BL/BR 角色映射到实际位置，每只扬声器可在接收器 Speakers 页调整 `Level`（-60.0..+6.0 dB）；未连接对应声道的扬声器时，该声道回退虚拟 5.1。双声道/单声道媒体会自动上混为 5.1：FL/FR 保持原样，FC 取中置，LFE 取 120 Hz 低通中置，BL/BR 取左右差信号。听者始终使用玩家实际耳朵位置和朝向，不做 Seat/皇帝位或屏幕锁定的声场校正，因此玩家走出影院后空间定位仍然正确。主音量使用 dBFS（-60..+6，+6 为最大增益），静音独立。A2 起直达声距离（`1/max(r,1)`）、ISO 9613-1 空气吸收和遮挡由客户端 Java 计算，OpenAL 距离模型为 `AL_NONE`；空气吸收开关/温度/湿度在 Mod Menu。
 
 ### 调试命令
 
@@ -114,7 +114,7 @@
 | `/cinema_speaker_data` | 打开 Speaker Data 的类型默认编辑器；`reload` 重新读取 profiles，`info` 打印类型默认与 on-axis 参考电平，`test <type> <h> <v> <hz>` 打印指向性采样与 on-axis EQ 增益 |
 | `/cinema_audio_spike` | 运行 5.1/OpenAL 音频测试，结果写入游戏日志 |
 | `/cinema_efx_spike` | A0 EFX/EAXReverb 能力测试：loopback 5.1/HRTF 湿声布局、aux send、CPU、reset；结果到聊天和日志 |
-| `/cinema_acoustics` | A1 调试：输出当前房间平面/尺寸/体积/表面积、材质吸收、RT60、听者和附近扬声器 |
+| `/cinema_acoustics` | A1/A2 调试：输出当前房间平面/尺寸/体积/表面积、材质吸收、RT60、听者和附近扬声器；另输出空气吸收配置（开关/温度/湿度/压力/earlyGain）、每扬声器距离增益、8 kHz 空气损失、遮挡 dB/截止/阶数、环境 FIR 状态/taps |
 
 ## 5. 手动 / 自动测试
 

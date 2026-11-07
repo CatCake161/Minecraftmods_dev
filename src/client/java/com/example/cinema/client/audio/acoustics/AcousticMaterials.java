@@ -44,6 +44,32 @@ public final class AcousticMaterials {
 	public static final AcousticMaterial DEFAULT =
 		new AcousticMaterial("default", 0.05, 0.05, 0.05, 0.10);
 
+	/*
+	 * Occlusion values are game tuning, not STC tables. Attenuation is per metre
+	 * of actual collision-shape path, so a slab contributes about half a block.
+	 * Stone is the reference strongest common wall; glass is thin and bright.
+	 */
+	private static final OcclusionProfile GLASS_OCCLUSION =
+		new OcclusionProfile(5.0, 8_000.0, 1);
+	private static final OcclusionProfile WOOD_OCCLUSION =
+		new OcclusionProfile(8.0, 2_500.0, 2);
+	private static final OcclusionProfile STONE_OCCLUSION =
+		new OcclusionProfile(18.0, 800.0, 2);
+	private static final OcclusionProfile METAL_OCCLUSION =
+		new OcclusionProfile(24.0, 600.0, 2);
+	private static final OcclusionProfile VEGETATION_OCCLUSION =
+		new OcclusionProfile(4.0, 5_000.0, 1);
+	private static final OcclusionProfile FABRIC_OCCLUSION =
+		new OcclusionProfile(6.0, 3_000.0, 1);
+	private static final OcclusionProfile POROUS_OCCLUSION =
+		new OcclusionProfile(10.0, 1_500.0, 1);
+	private static final OcclusionProfile SNOW_OCCLUSION =
+		new OcclusionProfile(12.0, 1_200.0, 1);
+	private static final OcclusionProfile WATER_OCCLUSION =
+		new OcclusionProfile(2.0, 12_000.0, 1);
+	private static final OcclusionProfile DEFAULT_OCCLUSION =
+		new OcclusionProfile(8.0, 2_500.0, 2);
+
 	private AcousticMaterials() {
 	}
 
@@ -109,6 +135,70 @@ public final class AcousticMaterials {
 			return METAL;
 		}
 		return DEFAULT;
+	}
+
+	/**
+	 * Direct-path occlusion properties. Screens are intentionally transparent
+	 * here: they are part of the room for reverb, but they should not muffle a
+	 * speaker placed behind them. The mod's own furniture is also transparent.
+	 */
+	public static OcclusionProfile occlusionForState(BlockState state) {
+		if (state.getBlock() instanceof ScreenBlock || isIgnoredObstacle(state)) {
+			return OcclusionProfile.TRANSPARENT;
+		}
+		if (state.is(BlockTags.IMPERMEABLE)) {
+			return GLASS_OCCLUSION;
+		}
+		if (state.is(BlockTags.PLANKS)) {
+			return WOOD_OCCLUSION;
+		}
+		if (state.is(BlockTags.STONE_BRICKS)) {
+			return STONE_OCCLUSION;
+		}
+		if (state.is(BlockTags.WOOL) || state.is(BlockTags.WOOL_CARPETS)
+			|| state.getBlock() instanceof CarpetBlock) {
+			return FABRIC_OCCLUSION;
+		}
+		if (state.is(BlockTags.LEAVES)) {
+			return VEGETATION_OCCLUSION;
+		}
+		if (state.is(BlockTags.DIRT) || state.is(BlockTags.SAND)
+			|| state.is(Blocks.GRAVEL)) {
+			return POROUS_OCCLUSION;
+		}
+		if (state.is(Blocks.SNOW) || state.is(Blocks.SNOW_BLOCK)
+			|| state.is(Blocks.POWDER_SNOW)) {
+			return SNOW_OCCLUSION;
+		}
+		if (state.is(Blocks.WATER)) {
+			return WATER_OCCLUSION;
+		}
+		SoundType sound = state.getSoundType();
+		if (sound == SoundType.GLASS) {
+			return GLASS_OCCLUSION;
+		}
+		if (sound == SoundType.WOOD) {
+			return WOOD_OCCLUSION;
+		}
+		if (sound == SoundType.STONE) {
+			return STONE_OCCLUSION;
+		}
+		if (sound == SoundType.METAL) {
+			return METAL_OCCLUSION;
+		}
+		if (sound == SoundType.GRAVEL || sound == SoundType.SAND) {
+			return POROUS_OCCLUSION;
+		}
+		if (sound == SoundType.GRASS || sound == SoundType.WET_GRASS) {
+			return VEGETATION_OCCLUSION;
+		}
+		if (sound == SoundType.SNOW || sound == SoundType.POWDER_SNOW) {
+			return SNOW_OCCLUSION;
+		}
+		if (sound == SoundType.WOOL) {
+			return FABRIC_OCCLUSION;
+		}
+		return DEFAULT_OCCLUSION;
 	}
 
 	/**
