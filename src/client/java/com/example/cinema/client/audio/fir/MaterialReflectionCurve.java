@@ -1,31 +1,28 @@
-package com.example.cinema.client.audio.acoustics;
+package com.example.cinema.client.audio.fir;
 
+import com.example.cinema.client.audio.acoustics.AcousticMaterial;
 import com.example.cinema.client.audio.filter.Biquad;
-import com.example.cinema.client.audio.filter.BiquadChain;
 
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Three-band parametric approximation of a material's pressure reflection
- * coefficient.
+ * Design-time three-band material reflection curve.
  *
- * <p>The material table stores energy absorption averages for three octave
- * bands. Their geometric centre frequencies are about 176.78 Hz, 707.11 Hz and
- * 2828.43 Hz. The reflection response is modelled as a low shelf at 250 Hz, a
- * peaking filter at 707.11 Hz and a high shelf at 2828.43 Hz. The three gains
- * are solved from the pressure-reflection targets relative to the mid band, so
- * the mid-band scalar in {@link ReflectionTap#gain()} is not applied twice.
+ * <p>The material table stores energy absorption in low/mid/high bands. The
+ * pressure reflection coefficient is {@code R = sqrt(1 - alpha)}. This class
+ * solves the same low-shelf / peaking / high-shelf target used by the former
+ * material biquad, then exposes only its magnitude in dB. It never creates a
+ * runtime filter: the curve is merged into the common FIR target.
  */
-public final class MaterialReflectionEq {
-	public static final double LOW_BAND_HZ = Math.sqrt(125.0 * 250.0);
-	public static final double MID_BAND_HZ = Math.sqrt(500.0 * 1_000.0);
-	public static final double HIGH_BAND_HZ = Math.sqrt(2_000.0 * 4_000.0);
-	public static final double LOW_SHELF_HZ = 250.0;
-	public static final double PEAK_HZ = MID_BAND_HZ;
-	public static final double HIGH_SHELF_HZ = HIGH_BAND_HZ;
-	public static final double SHELF_Q = Biquad.DEFAULT_Q;
-	public static final double PEAK_Q = 1.0;
-	public static final double SAMPLE_RATE = 48_000.0;
+final class MaterialReflectionCurve {
+	static final double LOW_BAND_HZ = Math.sqrt(125.0 * 250.0);
+	static final double MID_BAND_HZ = Math.sqrt(500.0 * 1_000.0);
+	static final double HIGH_BAND_HZ = Math.sqrt(2_000.0 * 4_000.0);
+	static final double LOW_SHELF_HZ = 250.0;
+	static final double HIGH_SHELF_HZ = HIGH_BAND_HZ;
+	static final double SHELF_Q = Biquad.DEFAULT_Q;
+	static final double PEAK_Q = 1.0;
+	static final double SAMPLE_RATE = 48_000.0;
 	private static final double MAX_TARGET_DB = 36.0;
 	private static final double FLAT_GAIN_DB = 0.01;
 	private static final double[] BAND_CENTERS = {
@@ -35,49 +32,61 @@ public final class MaterialReflectionEq {
 	};
 	private static final Biquad[] PROTOTYPES = {
 		Biquad.lowShelf(LOW_SHELF_HZ, SHELF_Q, 1.0, SAMPLE_RATE),
-		Biquad.peaking(PEAK_HZ, PEAK_Q, 1.0, SAMPLE_RATE),
+		Biquad.peaking(MID_BAND_HZ, PEAK_Q, 1.0, SAMPLE_RATE),
 		Biquad.highShelf(HIGH_SHELF_HZ, SHELF_Q, 1.0, SAMPLE_RATE),
 	};
 	private static final double[][] BASIS = createBasis();
-	private static final ConcurrentHashMap<AcousticMaterial, BiquadChain> CACHE =
+	private static final MaterialReflectionCurve FLAT =
+		new MaterialReflectionCurve(null, null, null);
+	private static final ConcurrentHashMap<AcousticMaterial, MaterialReflectionCurve> CACHE =
 		new ConcurrentHashMap<>();
 
-	private MaterialReflectionEq() {
+	private final Biquad low;
+	private final Biquad peak;
+	private final Biquad high;
+
+	private MaterialReflectionCurve(Biquad low, Biquad peak, Biquad high) {
+		this.low = low;
+		this.peak = peak;
+		this.high = high;
 	}
 
-	public static BiquadChain chain(AcousticMaterial material) {
+	static MaterialReflectionCurve of(AcousticMaterial material) {
 		if (material == null) {
-			return BiquadChain.FLAT;
+			return FLAT;
 		}
-		return CACHE.computeIfAbsent(material, MaterialReflectionEq::design);
+		return CACHE.computeIfAbsent(material, MaterialReflectionCurve::design);
 	}
 
-	public static void clearCache() {
+	double db(double frequencyHz) {
+		if (low == null) {
+			return 0.0;
+		}
+		return low.magnitudeDb(frequencyHz, SAMPLE_RATE)
+			+ peak.magnitudeDb(frequencyHz, SAMPLE_RATE)
+			+ high.magnitudeDb(frequencyHz, SAMPLE_RATE);
+	}
+
+	static void clearCache() {
 		CACHE.clear();
 	}
 
-	public static int cacheSize() {
-		return CACHE.size();
-	}
-
-	private static BiquadChain design(AcousticMaterial material) {
+	private static MaterialReflectionCurve design(AcousticMaterial material) {
 		double low = pressureReflection(material.low());
 		double mid = pressureReflection(material.mid());
 		double high = pressureReflection(material.high());
 		if (mid < 1.0e-6) {
-			// The mid-band scalar already mutes this tap; there is no useful
-			// relative shape to extract.
-			return BiquadChain.FLAT;
+			return FLAT;
 		}
 		double lowDb = clampTarget(relativeDb(low, mid));
 		double highDb = clampTarget(relativeDb(high, mid));
 		double[] gains = solve(BASIS, new double[]{lowDb, 0.0, highDb});
 		if (gains == null || maxAbs(gains) < FLAT_GAIN_DB) {
-			return BiquadChain.FLAT;
+			return FLAT;
 		}
-		return BiquadChain.of(
+		return new MaterialReflectionCurve(
 			Biquad.lowShelf(LOW_SHELF_HZ, SHELF_Q, gains[0], SAMPLE_RATE),
-			Biquad.peaking(PEAK_HZ, PEAK_Q, gains[1], SAMPLE_RATE),
+			Biquad.peaking(MID_BAND_HZ, PEAK_Q, gains[1], SAMPLE_RATE),
 			Biquad.highShelf(HIGH_SHELF_HZ, SHELF_Q, gains[2], SAMPLE_RATE));
 	}
 
@@ -92,10 +101,6 @@ public final class MaterialReflectionEq {
 		return basis;
 	}
 
-	/**
-	 * Solves a 3x3 linear system with partial pivoting. The input matrix is not
-	 * modified. Returns {@code null} when the system is singular.
-	 */
 	private static double[] solve(double[][] matrix, double[] values) {
 		double[][] a = new double[matrix.length][matrix.length + 1];
 		for (int row = 0; row < matrix.length; row++) {

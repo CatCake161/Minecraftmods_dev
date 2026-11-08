@@ -8,10 +8,8 @@ import com.example.cinema.client.audio.acoustics.AcousticScene;
 import com.example.cinema.client.audio.acoustics.AcousticRoom;
 import com.example.cinema.client.audio.acoustics.AcousticSurface;
 import com.example.cinema.client.audio.acoustics.ImageSourceSolver;
-import com.example.cinema.client.audio.acoustics.MaterialReflectionEq;
 import com.example.cinema.client.audio.acoustics.MirrorPlane;
 import com.example.cinema.client.audio.acoustics.MirrorPlaneDiscovery;
-import com.example.cinema.client.audio.acoustics.OcclusionEq;
 import com.example.cinema.client.audio.acoustics.OcclusionResult;
 import com.example.cinema.client.audio.acoustics.OcclusionScanner;
 import com.example.cinema.client.audio.acoustics.Point3;
@@ -21,11 +19,9 @@ import com.example.cinema.client.audio.acoustics.RoomAcousticSnapshot;
 import com.example.cinema.client.audio.directivity.MinimumPhaseFir;
 import com.example.cinema.client.audio.directivity.SpeakerDirectivityService;
 import com.example.cinema.client.audio.environment.AirAbsorption;
-import com.example.cinema.client.audio.environment.EnvironmentFirService;
-import com.example.cinema.client.audio.environment.EnvironmentProfile;
-import com.example.cinema.client.audio.environment.ReflectionFirProfile;
-import com.example.cinema.client.audio.environment.ReflectionFirService;
-import com.example.cinema.client.audio.filter.BiquadChain;
+import com.example.cinema.client.audio.fir.CommonAcousticFirDesigner;
+import com.example.cinema.client.audio.fir.CommonAcousticFirProfile;
+import com.example.cinema.client.audio.fir.CommonAcousticFirService;
 import com.example.cinema.client.audio.speakerdata.SpeakerDataAssignments;
 import com.example.cinema.client.audio.speakerdata.SpeakerDataProfile;
 import com.example.cinema.client.audio.speakerdata.SpeakerDataRegistry;
@@ -420,14 +416,11 @@ public final class AvReceiverPlayback {
 		float[][] positions = new float[CinemaAudioEngine.CHANNELS][];
 		float[] gains = new float[CinemaAudioEngine.CHANNELS];
 		MinimumPhaseFir[] filters = new MinimumPhaseFir[CinemaAudioEngine.CHANNELS];
-		MinimumPhaseFir[] environmentFilters =
-			new MinimumPhaseFir[CinemaAudioEngine.CHANNELS];
 		float[] occlusionGains = new float[CinemaAudioEngine.CHANNELS];
 		SpeakerBlockEntity[] routedSpeakers =
 			new SpeakerBlockEntity[CinemaAudioEngine.CHANNELS];
 		Arrays.fill(gains, 1.0f);
 		Arrays.fill(filters, MinimumPhaseFir.FLAT);
-		Arrays.fill(environmentFilters, MinimumPhaseFir.FLAT);
 		Arrays.fill(occlusionGains, 1.0f);
 		CinemaClientConfig config = CinemaClientConfig.get();
 		boolean airAbsorption = config.airAbsorption();
@@ -460,16 +453,16 @@ public final class AvReceiverPlayback {
 			positions[channel] = toListenerSpace(relative, forward);
 			SpeakerDirectivityService.Angles angles = SpeakerDirectivityService.angles(
 				center, speaker.acousticForward(), listener);
-			MinimumPhaseFir filter = directivityFilter(speaker, angles);
-			filters[channel] = filter;
-			gains[channel] = speakerGain(speaker) * (float) filter.overallGain();
 			double distance = Math.sqrt(distanceSqr);
 			OcclusionResult occlusion = OcclusionScanner.scan(level, center, listener);
+			CommonAcousticFirProfile firProfile = CommonAcousticFirProfile.direct(
+				speakerProfile(speaker), angles.horizontal(), angles.vertical(),
+				distance, airAbsorption, temperatureC, humidityPercent, pressureKpa,
+				occlusion);
+			MinimumPhaseFir filter = commonFilter(channel, firProfile);
+			filters[channel] = filter;
+			gains[channel] = speakerGain(speaker) * overallGain(firProfile);
 			occlusionGains[channel] = (float) occlusion.linearGain();
-			EnvironmentProfile profile = new EnvironmentProfile(distance,
-				airAbsorption, temperatureC, humidityPercent, pressureKpa,
-				occlusion.cutoffHz(), occlusion.order());
-			environmentFilters[channel] = environmentFilter(channel, profile);
 		}
 		for (int channel = 0; channel < CinemaAudioEngine.CHANNELS; channel++) {
 			// Unpaired channels fall back to the engine's virtual layout. They
@@ -479,10 +472,10 @@ public final class AvReceiverPlayback {
 				continue;
 			}
 			double distance = CinemaAudioEngine.defaultSourceDistance(channel);
-			EnvironmentProfile profile = new EnvironmentProfile(distance,
-				airAbsorption, temperatureC, humidityPercent, pressureKpa,
-				20_000.0, 0);
-			environmentFilters[channel] = environmentFilter(channel, profile);
+			CommonAcousticFirProfile firProfile = CommonAcousticFirProfile.direct(
+				null, 0.0, 0.0, distance, airAbsorption, temperatureC,
+				humidityPercent, pressureKpa, OcclusionResult.NONE);
+			filters[channel] = commonFilter(channel, firProfile);
 		}
 
 		int routed = 0;
@@ -493,8 +486,7 @@ public final class AvReceiverPlayback {
 		}
 		physicalChannels = routed;
 		System.arraycopy(filters, 0, channelFilters, 0, filters.length);
-		engine.setChannelLayout(positions, gains, filters, environmentFilters,
-			occlusionGains);
+		engine.setChannelLayout(positions, gains, filters, occlusionGains);
 		updateReflections(level, listener, forward, routedSpeakers, config);
 	}
 
@@ -502,16 +494,14 @@ public final class AvReceiverPlayback {
 	 * Recomputes first-order reflection taps at ~5 Hz from the receiver-linked
 	 * physical speakers. Flood-fill boundary patches are optional seeds;
 	 * speaker-centered rays work without a valid room box. The engine receives
-	 * listener-relative image-source positions (not reflection points), a
-	 * reflection-angle FIR normalized at the room Schroeder frequency, and a
-	 * material/occlusion biquad cascade.
+	 * listener-relative image-source positions (not reflection points) and one
+	 * 2048-tap FIR carrying the full reflection frequency shape.
 	 *
 	 * <p>The tap gain already carries {@code sqrt(1-alpha_mid)/max(L,1)} and the
-	 * combined broadband occlusion gain. Speaker trim is applied here, and the
-	 * reflection FIR's {@link ReflectionFirProfile#trimGain()} carries the
-	 * combined on-axis + reflection-angle + air level at the Schroeder
-	 * frequency. Neither the direct-angle overall gain nor the material
-	 * mid-band scalar is reused, so no term is applied twice.
+	 * combined broadband occlusion gain. Speaker trim and the FIR's
+	 * on-axis/directivity level at 1 kHz are applied here. Air absorption,
+	 * material reflection, occlusion low-pass and the Schroeder hard cut are
+	 * all inside the same FIR, so no term is applied twice.
 	 */
 	private void updateReflections(ClientLevel level, Vec3 listener, Vec3 forward,
 								   SpeakerBlockEntity[] speakers,
@@ -538,7 +528,7 @@ public final class AvReceiverPlayback {
 		List<AcousticSurface> seeds = room == null
 			? List.of() : room.reflectionSurfaces();
 		double schroederHz = room == null
-			? ReflectionFirProfile.DEFAULT_SCHROEDER_HZ : room.schroederHz();
+			? CommonAcousticFirProfile.DEFAULT_SCHROEDER_HZ : room.schroederHz();
 		double temperatureC = config.airTemperatureC();
 		double humidityPercent = config.airHumidityPercent();
 		double pressureKpa = AirAbsorption.REFERENCE_PRESSURE_KPA;
@@ -578,12 +568,13 @@ public final class AvReceiverPlayback {
 			SpeakerDirectivityService.Angles angles = SpeakerDirectivityService.angles(
 				speaker.acousticFrontPosition(), speaker.acousticForward(),
 				reflectionPoint);
-			ReflectionFirProfile firProfile = new ReflectionFirProfile(
+			CommonAcousticFirProfile firProfile = CommonAcousticFirProfile.reflection(
 				speakerProfile(speaker), angles.horizontal(), angles.vertical(),
 				tap.pathLength(), config.airAbsorption(), temperatureC,
-				humidityPercent, pressureKpa, schroederHz);
+				humidityPercent, pressureKpa, tap.material(), tap.occlusion(),
+				schroederHz);
 			MinimumPhaseFir filter = reflectionFilters.get(key);
-			MinimumPhaseFir design = ReflectionFirService.get(firProfile);
+			MinimumPhaseFir design = CommonAcousticFirService.get(firProfile);
 			if (design != null) {
 				filter = design;
 				reflectionFilters.put(key, design);
@@ -591,14 +582,11 @@ public final class AvReceiverPlayback {
 			if (filter == null) {
 				filter = MinimumPhaseFir.FLAT;
 			}
-			BiquadChain eq = BiquadChain.concat(
-				MaterialReflectionEq.chain(tap.material()),
-				OcclusionEq.chain(tap.occlusion()));
 			double gain = tap.gain() * speakerGain(speaker)
-				* firProfile.trimGain() * earlyGain;
+				* overallGain(firProfile) * earlyGain;
 			sources.add(new ReflectionSource(key, channel, position[0],
 				position[1], position[2], (float) gain, tap.delaySeconds(),
-				filter, eq));
+				filter));
 		}
 		reflectionFilters.keySet().retainAll(currentKeys);
 		engine.setReflections(sources);
@@ -614,30 +602,13 @@ public final class AvReceiverPlayback {
 		}
 	}
 
-	private MinimumPhaseFir environmentFilter(int channel, EnvironmentProfile profile) {
-		MinimumPhaseFir design = EnvironmentFirService.get(profile);
+	private MinimumPhaseFir commonFilter(int channel,
+										 CommonAcousticFirProfile profile) {
+		MinimumPhaseFir design = CommonAcousticFirService.get(profile);
 		if (design != null) {
-			if (channel >= 0 && channel < channelEnvironmentFilters.length) {
-				channelEnvironmentFilters[channel] = design;
+			if (channel >= 0 && channel < channelFilters.length) {
+				channelFilters[channel] = design;
 			}
-			return design;
-		}
-		if (channel >= 0 && channel < channelEnvironmentFilters.length) {
-			return channelEnvironmentFilters[channel];
-		}
-		return MinimumPhaseFir.FLAT;
-	}
-
-	private MinimumPhaseFir directivityFilter(SpeakerBlockEntity speaker,
-											  SpeakerDirectivityService.Angles angles) {
-		SpeakerDataProfile profile = speakerProfile(speaker);
-		if (profile == null) {
-			return MinimumPhaseFir.FLAT;
-		}
-		MinimumPhaseFir design = SpeakerDirectivityService.get(profile,
-			angles.horizontal(), angles.vertical());
-		int channel = speaker.role().ordinal() - 1;
-		if (design != null) {
 			return design;
 		}
 		if (channel >= 0 && channel < channelFilters.length) {
@@ -657,6 +628,11 @@ public final class AvReceiverPlayback {
 		double linear = Math.pow(10.0, db / 20.0);
 		double max = Math.pow(10.0, SpeakerBlockEntity.MAX_LEVEL_DB / 20.0);
 		return (float) Math.max(0.0, Math.min(max, linear));
+	}
+
+	private static float overallGain(CommonAcousticFirProfile profile) {
+		double db = CommonAcousticFirDesigner.overallDb(profile);
+		return (float) Math.pow(10.0, db / 20.0);
 	}
 
 	private static float[] toListenerSpace(Vec3 relative, Vec3 forward) {

@@ -20,10 +20,9 @@ import com.example.cinema.client.audio.acoustics.RoomFill;
 import com.example.cinema.client.audio.directivity.MinimumPhaseFir;
 import com.example.cinema.client.audio.directivity.SpeakerDirectivityService;
 import com.example.cinema.client.audio.environment.AirAbsorption;
-import com.example.cinema.client.audio.environment.EnvironmentFirService;
-import com.example.cinema.client.audio.environment.EnvironmentProfile;
-import com.example.cinema.client.audio.environment.ReflectionFirProfile;
-import com.example.cinema.client.audio.environment.ReflectionFirService;
+import com.example.cinema.client.audio.fir.CommonAcousticFirDesigner;
+import com.example.cinema.client.audio.fir.CommonAcousticFirProfile;
+import com.example.cinema.client.audio.fir.CommonAcousticFirService;
 import com.example.cinema.client.audio.speakerdata.SpeakerDataProfile;
 import com.example.cinema.client.audio.speakerdata.SpeakerDataRegistry;
 import com.example.cinema.client.config.CinemaClientConfig;
@@ -143,30 +142,25 @@ public final class ClientAcousticsCommand {
 				speaker.profileId());
 			SpeakerDirectivityService.Angles angles = SpeakerDirectivityService.angles(
 				speaker.position(), speaker.forward(), snapshot.listener().eye());
-			MinimumPhaseFir filter = profile == null ? null
-				: SpeakerDirectivityService.get(profile, angles.horizontal(),
-				angles.vertical());
-			String state = profile == null ? "none"
-				: filter == null ? "pending" : filter.isFlat() ? "flat" : "ready";
+			double distance = speaker.position().distanceTo(snapshot.listener().eye());
+			OcclusionResult occlusion = scanOcclusion(speaker,
+				snapshot.listener().eye());
+			CommonAcousticFirProfile firProfile = CommonAcousticFirProfile.direct(
+				profile, angles.horizontal(), angles.vertical(), distance,
+				config.airAbsorption(), config.airTemperatureC(),
+				config.airHumidityPercent(), AirAbsorption.REFERENCE_PRESSURE_KPA,
+				occlusion);
+			MinimumPhaseFir filter = CommonAcousticFirService.get(firProfile);
+			String state = filter == null ? "pending"
+				: filter.isFlat() ? "flat" : "ready";
 			source.sendFeedback(Component.literal(String.format(Locale.ROOT,
-				"acoustics: directivity %s h=%.1f v=%.1f eq=%s taps=%s maxErr=%s offset=%s",
+				"acoustics: direct fir %s h=%.1f v=%.1f state=%s taps=%s "
+					+ "maxErr=%s overall=%+.1f dB",
 				speaker.role().label(), angles.horizontal(), angles.vertical(), state,
 				filter == null ? "-" : Integer.toString(filter.length()),
 				filter == null ? "-" : String.format(Locale.ROOT, "%.2f dB",
 					filter.maxErrorDb()),
-				filter == null ? "-" : String.format(Locale.ROOT, "%+.1f dB",
-					filter.offsetDb()))));
-			double distance = speaker.position().distanceTo(snapshot.listener().eye());
-			OcclusionResult occlusion = scanOcclusion(speaker,
-				snapshot.listener().eye());
-			EnvironmentProfile environmentProfile = new EnvironmentProfile(distance,
-				config.airAbsorption(), config.airTemperatureC(),
-				config.airHumidityPercent(), AirAbsorption.REFERENCE_PRESSURE_KPA,
-				occlusion.cutoffHz(), occlusion.order());
-			MinimumPhaseFir environment = EnvironmentFirService.get(environmentProfile);
-			String environmentState = environmentProfile.isFlat() ? "flat"
-				: environment == null ? "pending"
-				: environment.isFlat() ? "flat" : "ready";
+				CommonAcousticFirDesigner.overallDb(firProfile))));
 			double distanceGainDb = -20.0 * Math.log10(Math.max(1.0, distance));
 			double air8kDb = config.airAbsorption()
 				? AirAbsorption.directPathAttenuationDb(distance, 8_000.0,
@@ -175,11 +169,9 @@ public final class ClientAcousticsCommand {
 				: 0.0;
 			source.sendFeedback(Component.literal(String.format(Locale.ROOT,
 				"acoustics: path %s dist=%.2f m distanceGain=%+.1f dB air8k=%.2f dB "
-					+ "occlusion=%.1f dB cutoff=%.0f Hz order=%d env=%s taps=%s",
+					+ "occlusion=%.1f dB cutoff=%.0f Hz order=%d",
 				speaker.role().label(), distance, distanceGainDb, air8kDb,
-				occlusion.attenuationDb(), occlusion.cutoffHz(), occlusion.order(),
-				environmentState,
-				environment == null ? "-" : Integer.toString(environment.length()))));
+				occlusion.attenuationDb(), occlusion.cutoffHz(), occlusion.order())));
 		}
 		ClientLevel level = Minecraft.getInstance().level;
 		if (level != null) {
@@ -218,25 +210,25 @@ public final class ClientAcousticsCommand {
 					SpeakerDirectivityService.Angles angles =
 						SpeakerDirectivityService.angles(speaker.position(),
 							speaker.forward(), reflectionPoint);
-					ReflectionFirProfile firProfile = new ReflectionFirProfile(profile,
-						angles.horizontal(), angles.vertical(), tap.pathLength(),
-						config.airAbsorption(), config.airTemperatureC(),
-						config.airHumidityPercent(),
-						AirAbsorption.REFERENCE_PRESSURE_KPA, room.schroederHz());
-					MinimumPhaseFir fir = ReflectionFirService.get(firProfile);
+					CommonAcousticFirProfile firProfile =
+						CommonAcousticFirProfile.reflection(profile,
+							angles.horizontal(), angles.vertical(), tap.pathLength(),
+							config.airAbsorption(), config.airTemperatureC(),
+							config.airHumidityPercent(),
+							AirAbsorption.REFERENCE_PRESSURE_KPA,
+							tap.material(), tap.occlusion(), room.schroederHz());
+					MinimumPhaseFir fir = CommonAcousticFirService.get(firProfile);
 					String firState = fir == null ? "pending"
 						: fir.isFlat() ? "flat" : "ready";
 					source.sendFeedback(Component.literal(String.format(Locale.ROOT,
 						"acoustics: reflection fir %s %s h=%.1f v=%.1f "
-							+ "trim=%+.2f dB eq=%s taps=%s maxErr=%s",
+							+ "state=%s taps=%s maxErr=%s overall=%+.1f dB",
 						speaker.role().label(), tap.planeKey(), angles.horizontal(),
-						angles.vertical(),
-						20.0 * Math.log10(Math.max(1.0e-12,
-							firProfile.trimGain())),
-						firState,
+						angles.vertical(), firState,
 						fir == null ? "-" : Integer.toString(fir.length()),
 						fir == null ? "-" : String.format(Locale.ROOT, "%.2f dB",
-							fir.maxErrorDb()))));
+							fir.maxErrorDb()),
+						CommonAcousticFirDesigner.overallDb(firProfile))));
 				}
 			}
 			List<ReflectionTap> limited = ImageSourceSolver.strongest(allTaps,

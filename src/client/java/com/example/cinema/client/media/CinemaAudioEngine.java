@@ -4,8 +4,6 @@ import com.example.cinema.Cinema;
 import com.example.cinema.client.audio.directivity.FirProcessor;
 import com.example.cinema.client.audio.directivity.MinimumPhaseFir;
 import com.example.cinema.client.audio.environment.AirAbsorption;
-import com.example.cinema.client.audio.filter.BiquadChain;
-import com.example.cinema.client.audio.filter.BiquadProcessor;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.openal.AL;
 import org.lwjgl.openal.AL10;
@@ -54,7 +52,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	public static final int CHANNELS = 6;
 	private static final int SPEAKERS = 6;
 	private static final int BUFFER_COUNT = 4;
-	/** Small queue blocks keep directivity updates within ~170 ms of playback. */
+	/** Small queue blocks keep FIR updates within ~170 ms of playback. */
 	private static final int BLOCK_FRAMES = 2_048;
 	private static final float BASE_GAIN = 0.65f;
 	/** Time constant for smoothing listener-relative source positions. */
@@ -128,13 +126,10 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	private long lastPositionUpdateNanos;
 	private volatile float[] channelGains = defaultChannelGains();
 	private volatile MinimumPhaseFir[] channelFilters = defaultFilters();
-	private volatile MinimumPhaseFir[] channelEnvironmentFilters = defaultFilters();
 	private volatile float[] channelOcclusionGains = defaultChannelGains();
 	private final FirProcessor[] firProcessors = new FirProcessor[SPEAKERS];
-	private final FirProcessor[] environmentProcessors = new FirProcessor[SPEAKERS];
 	private final float[] appliedGains = new float[SPEAKERS];
 	private final float[] renderedOcclusionGains = defaultChannelGains();
-	private final float[] environmentScratch = new float[BLOCK_FRAMES];
 	private int appliedLayoutVersion = -1;
 	private long lastGainUpdateNanos;
 	private final ReflectionSlot[] reflectionSlots =
@@ -166,7 +161,6 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			freeBuffers[i] = new ArrayDeque<>(BUFFER_COUNT);
 			appliedGains[i] = Float.NaN;
 			firProcessors[i] = new FirProcessor();
-			environmentProcessors[i] = new FirProcessor();
 		}
 		thread = new Thread(this::run, "cinema-audio");
 		thread.setDaemon(true);
@@ -278,33 +272,31 @@ public final class CinemaAudioEngine implements AutoCloseable {
 
 	/**
 	 * Updates the six mono source positions (listener-relative: x right, y up,
-	 * z forward is negative), per-channel linear gains, directivity filters,
-	 * environment filters and broadband occlusion gains. Null entries keep the
-	 * default virtual 5.1 layout for that channel. Channel gain is capped at
-	 * +6 dB to match the receiver's level limit.
+	 * z forward is negative), per-channel linear gains, combined direct FIRs
+	 * and broadband occlusion gains. Null entries keep the default virtual 5.1
+	 * layout for that channel. Channel gain is capped at +6 dB to match the
+	 * receiver's level limit.
 	 *
 	 * <p>Distance attenuation is computed here from the smoothed source radius;
-	 * the environment FIR carries only air absorption and the occlusion
-	 * low-pass shape. The occlusion gain is smoothed before it reaches AL_GAIN
-	 * so a newly blocked path does not click.
+	 * the direct FIR already carries on-axis/directivity, air absorption and
+	 * the occlusion low-pass shape. The occlusion gain is smoothed before it
+	 * reaches AL_GAIN so a newly blocked path does not click.
 	 */
 	public void setChannelLayout(float[][] positions, float[] gains) {
-		setChannelLayout(positions, gains, null, null, null);
+		setChannelLayout(positions, gains, null, null);
 	}
 
 	public void setChannelLayout(float[][] positions, float[] gains,
 								 MinimumPhaseFir[] filters) {
-		setChannelLayout(positions, gains, filters, null, null);
+		setChannelLayout(positions, gains, filters, null);
 	}
 
 	public void setChannelLayout(float[][] positions, float[] gains,
 								 MinimumPhaseFir[] filters,
-								 MinimumPhaseFir[] environmentFilters,
 								 float[] occlusionGains) {
 		float[][] nextPositions = new float[SPEAKERS][];
 		float[] nextGains = new float[SPEAKERS];
 		MinimumPhaseFir[] nextFilters = new MinimumPhaseFir[SPEAKERS];
-		MinimumPhaseFir[] nextEnvironmentFilters = new MinimumPhaseFir[SPEAKERS];
 		float[] nextOcclusionGains = new float[SPEAKERS];
 		for (int i = 0; i < SPEAKERS; i++) {
 			float[] position = positions != null && i < positions.length ? positions[i] : null;
@@ -315,35 +307,26 @@ public final class CinemaAudioEngine implements AutoCloseable {
 				? Math.max(0.0f, Math.min(2.0f, gain)) : 1.0f;
 			MinimumPhaseFir filter = filters != null && i < filters.length ? filters[i] : null;
 			nextFilters[i] = filter == null ? MinimumPhaseFir.FLAT : filter;
-			MinimumPhaseFir environment = environmentFilters != null
-				&& i < environmentFilters.length ? environmentFilters[i] : null;
-			nextEnvironmentFilters[i] = environment == null
-				? MinimumPhaseFir.FLAT : environment;
 			float occlusion = occlusionGains != null && i < occlusionGains.length
 				? occlusionGains[i] : 1.0f;
 			nextOcclusionGains[i] = Float.isFinite(occlusion)
 				? Math.max(0.0f, Math.min(1.0f, occlusion)) : 1.0f;
 		}
-		if (sameLayout(nextPositions, nextGains, nextFilters,
-			nextEnvironmentFilters, nextOcclusionGains)) {
+		if (sameLayout(nextPositions, nextGains, nextFilters, nextOcclusionGains)) {
 			return;
 		}
 		channelPositions = nextPositions;
 		channelGains = nextGains;
 		channelFilters = nextFilters;
-		channelEnvironmentFilters = nextEnvironmentFilters;
 		channelOcclusionGains = nextOcclusionGains;
 		layoutVersion.incrementAndGet();
 	}
 
 	private boolean sameLayout(float[][] positions, float[] gains,
-							   MinimumPhaseFir[] filters,
-							   MinimumPhaseFir[] environmentFilters,
-							   float[] occlusionGains) {
+							   MinimumPhaseFir[] filters, float[] occlusionGains) {
 		float[][] currentPositions = channelPositions;
 		float[] currentGains = channelGains;
 		MinimumPhaseFir[] currentFilters = channelFilters;
-		MinimumPhaseFir[] currentEnvironmentFilters = channelEnvironmentFilters;
 		float[] currentOcclusionGains = channelOcclusionGains;
 		for (int i = 0; i < SPEAKERS; i++) {
 			for (int axis = 0; axis < 3; axis++) {
@@ -355,9 +338,6 @@ public final class CinemaAudioEngine implements AutoCloseable {
 				return false;
 			}
 			if (filters[i] != currentFilters[i]) {
-				return false;
-			}
-			if (environmentFilters[i] != currentEnvironmentFilters[i]) {
 				return false;
 			}
 			if (Math.abs(occlusionGains[i] - currentOcclusionGains[i]) > 1.0e-4f) {
@@ -404,7 +384,6 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			}
 			if (!a.key().equals(b.key()) || a.channel() != b.channel()
 				|| a.filter() != b.filter()
-				|| !a.eq().equals(b.eq())
 				|| Math.abs(a.gain() - b.gain()) > 1.0e-4f
 				|| Math.abs(a.delaySeconds() - b.delaySeconds()) > 1.0e-6
 				|| Math.abs(a.x() - b.x()) > 1.0e-4f
@@ -452,8 +431,6 @@ public final class CinemaAudioEngine implements AutoCloseable {
 				// delay snap is hidden by the fade and avoids a long glide
 				// from an unrelated tap's delay.
 				slot.processor.reset();
-				slot.eqProcessor.reset();
-				slot.eq = BiquadChain.FLAT;
 				slot.key = target.key();
 				slot.envelope = 0.0f;
 				slot.envelopeStep = 1.0f / REFLECTION_FADE_FRAMES;
@@ -481,10 +458,6 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			if (slot.filter != target.filter()) {
 				slot.filter = target.filter();
 				slot.processor.setFilter(target.filter());
-			}
-			if (!slot.eq.equals(target.eq())) {
-				slot.eq = target.eq();
-				slot.eqProcessor.setChain(target.eq());
 			}
 		}
 		for (ReflectionSlot slot : reflectionSlots) {
@@ -626,8 +599,8 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		AL10.alListener3f(AL10.AL_POSITION, 0f, 0f, 0f);
 		AL10.alListenerfv(AL10.AL_ORIENTATION, new float[]{0f, 0f, -1f, 0f, 1f, 0f});
 		// Distance and air absorption are applied in Java: source positions are
-		// listener-relative, AL_GAIN carries 1/max(r,1), and the environment FIR
-		// carries the frequency-dependent part. AL_NONE prevents double
+		// listener-relative, AL_GAIN carries 1/max(r,1), and the combined direct
+		// FIR carries the frequency-dependent part. AL_NONE prevents double
 		// attenuation.
 		AL10.alDistanceModel(AL10.AL_NONE);
 		float32Buffers = supportsFloat32();
@@ -649,7 +622,6 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			alSourcei(sources[i], AL_SOURCE_RELATIVE, AL_TRUE);
 			appliedGains[i] = Float.NaN;
 			firProcessors[i].reset();
-			environmentProcessors[i].reset();
 		}
 		Cinema.LOGGER.info("cinema audio: source buffers are {}; distance model AL_NONE",
 			float32Buffers ? "32-bit float" : "16-bit integer");
@@ -727,10 +699,8 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	private void applyChannelLayout() {
 		int version = layoutVersion.get();
 		MinimumPhaseFir[] filters = channelFilters;
-		MinimumPhaseFir[] environmentFilters = channelEnvironmentFilters;
 		for (int i = 0; i < SPEAKERS; i++) {
 			firProcessors[i].setFilter(filters[i]);
-			environmentProcessors[i].setFilter(environmentFilters[i]);
 		}
 		if (appliedLayoutVersion < 0 || lastPositionUpdateNanos == 0L) {
 			snapSourcePositions();
@@ -904,7 +874,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	}
 
 	/**
-	 * Applies receiver volume, speaker trim, directivity gain, the Java
+	 * Applies receiver volume, speaker trim/on-axis gain, the Java
 	 * inverse-distance law and the smoothed occlusion gain. OpenAL's own
 	 * distance model is AL_NONE, so this is the only distance attenuation in the
 	 * chain.
@@ -1049,23 +1019,18 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		for (int channel = 0; channel < SPEAKERS; channel++) {
 			firProcessors[channel].process(samples, CHANNELS, channel, frameOffset,
 				frames, blockScratch);
-			// Second stage: air absorption + occlusion low-pass. It operates on
-			// the already directivity-filtered mono signal and its own 1024-frame
-			// crossfade keeps filter changes click-free.
-			environmentProcessors[channel].process(blockScratch, 1, 0, 0, frames,
-				environmentScratch);
 			int buffer = freeBuffers[channel].removeFirst();
 			if (float32Buffers) {
 				FloatBuffer mono = monoFloatBuffers[channel];
 				mono.clear();
-				mono.put(environmentScratch, 0, frames);
+				mono.put(blockScratch, 0, frames);
 				mono.flip();
 				alBufferData(buffer, EXTFloat32.AL_FORMAT_MONO_FLOAT32, mono, SAMPLE_RATE);
 			} else {
 				ShortBuffer mono = monoShortBuffers[channel];
 				mono.clear();
 				for (int i = 0; i < frames; i++) {
-					float value = environmentScratch[i];
+					float value = blockScratch[i];
 					if (!Float.isFinite(value)) {
 						value = 0.0f;
 					}
@@ -1136,9 +1101,9 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	 * Feeds one block to one reflection slot. Every slot receives exactly one
 	 * buffer per direct block, including idle slots (silence), so all sources
 	 * keep the same queue depth and media-time alignment. The tap delay is
-	 * read from the raw ring; the per-tap FIR carries the reflection-angle
-	 * directivity and air absorption, then the biquad chain applies material
-	 * band shaping and occlusion low-pass.
+	 * read from the raw ring; the per-tap FIR carries the full reflection
+	 * frequency shape: on-axis/directivity, air absorption, material reflection,
+	 * occlusion low-pass and the Schroeder hard cut.
 	 */
 	private void queueReflectionBlock(ReflectionSlot slot, int frames) {
 		int buffer = slot.freeBuffers.removeFirst();
@@ -1161,8 +1126,6 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			input[i] = rawSample(slot.channel, startFrame + i - delay);
 		}
 		slot.processor.process(input, 1, 0, 0, frames,
-			reflectionOutputScratch);
-		slot.eqProcessor.process(reflectionOutputScratch, 1, 0, frames,
 			reflectionOutputScratch);
 		applyReflectionEnvelope(slot, reflectionOutputScratch, frames);
 		uploadSamples(buffer, reflectionOutputScratch, frames);
@@ -1211,8 +1174,6 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		slot.targetGain = 0.0f;
 		slot.appliedGain = 0.0f;
 		slot.processor.reset();
-		slot.eqProcessor.reset();
-		slot.eq = BiquadChain.FLAT;
 		alSourcef(slot.source, AL_GAIN, 0.0f);
 	}
 
@@ -1405,9 +1366,6 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		for (FirProcessor processor : firProcessors) {
 			processor.reset();
 		}
-		for (FirProcessor processor : environmentProcessors) {
-			processor.reset();
-		}
 		for (ReflectionSlot slot : reflectionSlots) {
 			alSourceStop(slot.source);
 			int queued = alGetSourcei(slot.source, AL_BUFFERS_QUEUED);
@@ -1536,7 +1494,6 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		private final int[] buffers = new int[BUFFER_COUNT];
 		private final Deque<Integer> freeBuffers = new ArrayDeque<>(BUFFER_COUNT);
 		private final FirProcessor processor = new FirProcessor();
-		private final BiquadProcessor eqProcessor = new BiquadProcessor();
 		private final float[] position = new float[3];
 		private final float[] targetPosition = new float[3];
 		private String key = "";
@@ -1551,6 +1508,5 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		private double delayFrames;
 		private double targetDelayFrames;
 		private MinimumPhaseFir filter = MinimumPhaseFir.FLAT;
-		private BiquadChain eq = BiquadChain.FLAT;
 	}
 }

@@ -34,7 +34,7 @@
 ## P1：扬声器 / 音频
 
 - [ ] 5.1 downmix 纯函数 + 单元测试。
-- [x] 扬声器遮挡 / 材料 low-pass（A2 直达声：碰撞形状路径扫描 + 材质表 + 环境 FIR）。
+- [x] 扬声器遮挡 / 材料 low-pass（A2 直达声：碰撞形状路径扫描 + 材质表 + 单个 4096-tap 联合 FIR）。
 - [ ] EFX 房间混响参数化（仅晚期尾音；早期反射见下方“音频计算 / 房间声学”）。
 - [ ] LFE / 低频管理（分频、低音炮管理，见 A5）。
 - [ ] 每扬声器距离/延迟校准（接收器 GUI）。
@@ -55,19 +55,19 @@
 - [x] A1 扬声器朝向：36 档 10° 声学 yaw + Speaker Alignment Tool（右键 +10°，潜行 -10°）；方块模型由 `SpeakerBlockEntityRenderer` 同步物理旋转；游戏内验证无明显问题
 - [x] A1d ASR/Spinorama 数据管线：只读 `SPL Horizontal.txt`/`SPL Vertical.txt`；保留原始 194/200 点频率网格、不降采样；补 `-180°`；按全频段能量平均计算 -10 dB 频率范围并取整到 1 Hz；删除 `quality`；21 个型号生成到本地 `run/cinema/speaker_data/profiles/`，**不打包**。转换器：`docs/examples/speaker_data/convert_spinorama.py`。待游戏内加载验证
 - [ ] A1e Spinorama 许可决策：已确认 CC BY-NC-SA 4.0；profile 仅作为用户本地导入数据，不随模组分发；仍需在发布文档/THIRD-PARTY 写 attribution
-- [x] A2 直达声：Java 距离衰减 `1/max(r,1)`（OpenAL `AL_NONE`，避免双重衰减）、ISO 9613-1 空气吸收（1 m/20 °C/50 % RH/101.325 kPa 为 0 dB 参考点，仅计算超过 1 m 的路径）、遮挡路径扫描 + 宽带衰减/低通、2048-tap 环境 FIR（串在 4096-tap 指向性 FIR 后）、Mod Menu 空气开关/温度/湿度；`/cinema_acoustics` 输出 distanceGain/air8k/occlusion/cutoff/order/env/taps；数值 harness 已验证 ISO α 与环境 FIR 幅度，游戏内听感验收通过（距离/空气/遮挡/配置持久化）
+- [x] A2 直达声：Java 距离衰减 `1/max(r,1)`（OpenAL `AL_NONE`，避免双重衰减）、ISO 9613-1 空气吸收（1 m/20 °C/50 % RH/101.325 kPa 为 0 dB 参考点，仅计算超过 1 m 的路径）、遮挡路径扫描 + 宽带衰减/低通、单个 **4096-tap 联合 FIR**（on-axis/指向性 + 空气 + 遮挡低通）、Mod Menu 空气开关/温度/湿度；`/cinema_acoustics` 输出 distanceGain/air8k/occlusion/cutoff/order/fir/taps；数值 harness 已验证 ISO α 与 FIR 幅度，游戏内听感验收通过（距离/空气/遮挡/配置持久化）
 - [x] A2b 几何/可见性：`MirrorPlane`/`MirrorPlaneDiscovery`/`ImageSourceSolver`/`ReflectionProbe`；扬声器 26 方向射线（6 轴 + 12 棱对角 + 8 角对角，方向集合可扩展）+ 房间 `samples>0` / flood-fill 补丁种子 + 近共面容差合并（0.10 m）；R 处真实墙面/法线验证、`S→R`/`R→L` 两段遮挡扫描；纯几何 JUnit + 方向/合并测试通过；`/cinema_acoustics` 输出 planes/taps
-- [x] A2b 播放：每个 tap 一个独立 OpenAL source（镜像源位置，固定 32 source 池、最多 24 个活动 tap + 8 个淡入/淡出余量）、播放未处理 `sourceChannel` 的延迟副本（8192-frame 原始历史环、分数延迟 + 150 ms 平滑、30 ms 淡入/淡出）、每 tap 2048-tap 空气吸收 FIR；反射 source 由 OpenAL 负责方向/声像，距离由 Java 按 `1/max(L,1)` 计算，不按 5.1 声道混入直达；增益按距离/空气吸收/材质/轴上 EQ 一次计算，不设固定 -6..-12 dB 默认；`/cinema_acoustics` 输出几何 taps，播放日志输出活动 tap 数；**游戏内听感/CPU/多接收器验收已通过**
-- [x] A2c 扬声器指向性（直达）：目标幅度 = on-axis EQ + Spinorama H/V 相对指向性；4096-tap 最小相位 FIR @48k（cepstrum），FIR 在 1 kHz 归一为 0 dB，总 1 kHz 偏移进 source gain；5° 角度缓存、异步设计、overlap-add 卷积；实测样本最大误差约 1.1 dB（JBL A180 0.69、Genelec 8351B 1.09、Adam T5V 0.50）；声学中心/朝向/低音炮 omni 已接入
-- [x] A2c-R 反射指向性 + 频带精度：独立 **2048-tap** 最小相位 FIR（8192 点 FFT，角度 = 扬声器→反射点，目标 = on-axis EQ + H/V − 反射路径空气吸收），以房间 Schroeder 频率 `f_s = 2000·sqrt(RT60_mid/V_eff)`（钳位 50–2000 Hz，无效回退 1000 Hz）归一为 0 dB，合并电平作为独立 `trimGain()`；3 频带材质 PEQ（低架 250 Hz Q≈0.707 + peaking 707.11 Hz Q=1 + 高架 2828.43 Hz Q≈0.707，由压力反射系数解 3×3）；两段反射路径遮挡扫描合并（衰减相加/较低截止/较高阶），被挡 tap 保留并衰减，Butterworth 1–4 阶低通 PEQ 近似；flood-fill 边界单位面贪心合并为补丁（4096 面/128 补丁）作为镜像种子，`AcousticRoom.reflectionSurfaces()` 优先补丁、回退六面盒；FIR/PEQ 缓存与 30 ms 系数交叉淡化已接入；**不实现散射**；单元测试通过，游戏内 A/B 验收待做
-- [x] A2d 直达声 A/B/CPU：4096-tap 指向性 FIR + 2048-tap 环境 FIR 的听感、移动/转头更新、约 ±1 dB 实测确认；32-bit float source buffer（`AL_EXT_FLOAT32`）、30 ms 半径 + 球面方向（slerp）声像平滑、30 ms 遮挡增益平滑已接入；游戏内复测通过：快速转头/移动无爆音或削波，遮挡切换正常，距离/空气/遮挡/指向性各只应用一次
+- [x] A2b 播放：每个 tap 一个独立 OpenAL source（镜像源位置，固定 32 source 池、最多 24 个活动 tap + 8 个淡入/淡出余量）、播放未处理 `sourceChannel` 的延迟副本（8192-frame 原始历史环、分数延迟 + 150 ms 平滑、30 ms 淡入/淡出）、每 tap 2048-tap 反射 FIR；反射 source 由 OpenAL 负责方向/声像，距离由 Java 按 `1/max(L,1)` 计算，不按 5.1 声道混入直达；增益按距离/反射系数/宽带遮挡一次计算，不设固定 -6..-12 dB 默认；`/cinema_acoustics` 输出几何 taps，播放日志输出活动 tap 数；**游戏内听感/CPU/多接收器验收已通过**
+- [x] A2c 扬声器指向性（直达）：目标幅度 = on-axis EQ + Spinorama H/V 相对指向性 + 空气 + 遮挡低通；单个 4096-tap 最小相位 FIR @48k（cepstrum），`overallGain` = on-axis + H/V 在 1 kHz 的电平；5° 角度缓存、异步设计、overlap-add 卷积；实测样本最大误差约 1.1 dB（JBL A180 0.69、Genelec 8351B 1.09、Adam T5V 0.50）；声学中心/朝向/低音炮 omni 已接入
+- [x] A2c-R 统一直达/反射 FIR：`CommonAcousticFirProfile` / `CommonAcousticFirDesigner`；直达 4096 taps，反射 **2048-tap**（8192 点 FFT，角度 = 扬声器→反射点）；反射 FIR 目标 = on-axis + H/V（相对 1 kHz）− 空气 + 材质相对形状 + 遮挡低通；`f_s = 2000·sqrt(RT60_mid/V_eff)`（钳位 50–2000 Hz，无效回退 1000 Hz），`f <= f_s` 硬切为 -96 dB；`overallGain` 与直达声同为 1 kHz 的 on-axis/H/V；`tap.gain()` 只保留 `sqrt(1-α_mid)/max(L,1)` × 遮挡宽带；材质/遮挡不再使用 biquad，删除 `trimGain()`；两段遮挡合并（衰减相加/较低截止/较高阶），被挡 tap 保留并衰减；flood-fill 补丁种子；**不实现散射**；单元测试通过，游戏内 A/B 验收待做
+- [x] A2d 直达声 A/B/CPU：单个 4096-tap 联合 FIR 的听感、移动/转头更新、约 ±1 dB 实测确认；32-bit float source buffer（`AL_EXT_FLOAT32`）、30 ms 半径 + 球面方向（slerp）声像平滑、30 ms 遮挡增益平滑已接入；游戏内复测通过：快速转头/移动无爆音或削波，遮挡切换正常，距离/空气/遮挡/指向性各只应用一次
 - [x] A2e Mod Menu 声学设置：空气吸收开关/温度/湿度、`earlyGainDb` 调试滑杆（仅调试，默认 0 dB，现已作用于反射 source 电平）；已持久化到 `config/cinema.json`
 - [ ] A3 晚期混响：EAXReverb 仅 late tail（`REFLECTIONS_GAIN=0`、`ECHO_DEPTH=0`）、RT60 Fitzroy、HF/LF ratio、density/diffusion、modulation、air absorption
 - [ ] A3b 自定义 FDN 回退（可选）：8 线 FDN、吸收滤波、6 声道 wet、稳定性限制
 - [ ] A4 接收器集成：Speakers/Settings 页声学总开关、late reverb 电平、房间预设/重扫；服务端字段/网络包；`earlyGainDb` 放 Mod Menu，不进接收器 GUI
 - [ ] A4b 听者策略（决策已定，待 A4 接入）：始终使用玩家实际耳朵位置/朝向；不做 Seat 皇帝位、固定监听点或声场校正
 - [ ] A5 低频管理与模态（原 A6 提前，排在 A4 之后）：LFE 分频/低频管理、多低音炮路由与校准（增益/延迟）、低频模态计算与模态 EQ、测量；依赖 A4 的接收器设置与同步
-- [ ] A6 调试/验收：dump 房间/RT60/taps；A/B 开关；矩形房间、材质、旋转、移动、5.1、4K/BSL、设备切换；A2c-R 反射角指向性/3 频带材质 PEQ/遮挡 PEQ/flood-fill 补丁种子/多接收器 CPU，部分墙/柱子/开放空间/玻璃/屏幕/门洞
+- [ ] A6 调试/验收：dump 房间/RT60/taps；A/B 开关；矩形房间、材质、旋转、移动、5.1、4K/BSL、设备切换；A2c-R 直达单 FIR/反射 2048-tap FIR（材质/遮挡/空气/f_s 硬切）/flood-fill 补丁种子/多接收器 CPU，部分墙/柱子/开放空间/玻璃/屏幕/门洞
 - [ ] A7 后续：衍射/散射、测量 RIR/卷积、HRTF
 
 ## P2：可变声道布局 / 天空声道（规划）

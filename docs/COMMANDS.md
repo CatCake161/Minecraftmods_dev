@@ -114,7 +114,7 @@
 | `/cinema_speaker_data` | 打开 Speaker Data 的类型默认编辑器；`reload` 重新读取 profiles，`info` 打印类型默认与 on-axis 参考电平，`test <type> <h> <v> <hz>` 打印指向性采样与 on-axis EQ 增益 |
 | `/cinema_audio_spike` | 运行 5.1/OpenAL 音频测试，结果写入游戏日志 |
 | `/cinema_efx_spike` | A0 EFX/EAXReverb 能力测试：loopback 5.1/HRTF 湿声布局、aux send、CPU、reset；结果到聊天和日志 |
-| `/cinema_acoustics` | A1/A2 调试：输出当前房间平面/尺寸/体积/表面积、材质吸收、Fitzroy RT60（含 x/y/z 轴对面积与平均吸收）、听者和附近扬声器；另输出空气吸收配置（开关/温度/湿度/压力/earlyGain）、每扬声器距离增益、8 kHz 空气损失、遮挡 dB/截止/阶数、环境 FIR 状态/taps；A2b 另输出每扬声器候选镜面（planes）与验证后的反射 taps（镜像源/反射点/路径/延迟/材质/增益）。接收器播放时日志另输出活动反射 tap 数（最多每 5 s 一次） |
+| `/cinema_acoustics` | A1/A2 调试：输出当前房间平面/尺寸/体积/表面积、材质吸收、Fitzroy RT60（含 x/y/z 轴对面积与平均吸收）、听者和附近扬声器；另输出空气吸收配置（开关/温度/湿度/压力/earlyGain）、每扬声器距离增益、8 kHz 空气损失、遮挡 dB/截止/阶数、直达/反射 FIR 状态/taps/maxErr；A2b 另输出每扬声器候选镜面（planes）与验证后的反射 taps（镜像源/反射点/路径/延迟/材质/增益）。接收器播放时日志另输出活动反射 tap 数（最多每 5 s 一次） |
 
 ## 5. 手动 / 自动测试
 
