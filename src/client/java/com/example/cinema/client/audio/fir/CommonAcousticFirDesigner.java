@@ -21,7 +21,7 @@ public final class CommonAcousticFirDesigner {
 	public static final double REFERENCE_HZ = 1_000.0;
 	public static final double MIN_HZ = 20.0;
 	public static final double MAX_HZ = 20_000.0;
-	private static final double ERROR_MIN_HZ = 50.0;
+	private static final int CURVE_POINTS = 512;
 	private static final double MIN_DB = -96.0;
 	private static final double FLAT_THRESHOLD_DB = 0.01;
 	private static final double MAX_ERROR_TARGET_DB = -40.0;
@@ -43,10 +43,21 @@ public final class CommonAcousticFirDesigner {
 		double overallDb = overallDb(profile);
 		MaterialReflectionCurve material =
 			MaterialReflectionCurve.of(profile.material());
+		double[] directivityCurve = new double[CURVE_POINTS];
+		double[] airCurve = new double[CURVE_POINTS];
+		double[] materialCurve = new double[CURVE_POINTS];
+		for (int i = 0; i < CURVE_POINTS; i++) {
+			double t = i / (double) (CURVE_POINTS - 1);
+			double frequency = MIN_HZ * Math.pow(MAX_HZ / MIN_HZ, t);
+			directivityCurve[i] = onAxisDirectivityDb(profile, frequency);
+			airCurve[i] = -airAbsorptionDb(profile, frequency);
+			materialCurve[i] = material.db(frequency);
+		}
 		boolean shaped = false;
 		for (int i = 0; i <= half; i++) {
 			double frequency = i * SAMPLE_RATE / profile.fftSize();
-			target[i] = targetDb(profile, frequency, overallDb, material);
+			target[i] = targetDb(profile, frequency, overallDb, directivityCurve,
+				airCurve, materialCurve);
 			if (Math.abs(target[i]) >= FLAT_THRESHOLD_DB) {
 				shaped = true;
 			}
@@ -70,7 +81,10 @@ public final class CommonAcousticFirDesigner {
 		for (int i = 0; i < taps.length; i++) {
 			taps[i] *= (float) scale;
 		}
-		double maxError = maxError(profile, taps, overallDb, material);
+		double[] responseDb = MinimumPhaseFirDesigner.magnitudeDb(taps,
+			profile.fftSize());
+		double maxError = maxError(profile, target, responseDb,
+			profile.fftSize());
 		return new MinimumPhaseFir(taps, overallGain, overallDb, maxError, id,
 			profile.horizontalDegrees(), profile.verticalDegrees());
 	}
@@ -82,22 +96,43 @@ public final class CommonAcousticFirDesigner {
 	 */
 	public static double targetDb(CommonAcousticFirProfile profile,
 								  double frequencyHz) {
-		return targetDb(profile, frequencyHz, overallDb(profile),
-			MaterialReflectionCurve.of(profile.material()));
-	}
-
-	private static double targetDb(CommonAcousticFirProfile profile,
-								   double frequencyHz, double overallDb,
-								   MaterialReflectionCurve material) {
 		double frequency = Math.max(MIN_HZ, Math.min(MAX_HZ, frequencyHz));
 		if (profile.isReflection() && frequency <= profile.schroederHz()) {
 			return MIN_DB;
 		}
-		double db = onAxisDirectivityDb(profile, frequency) - overallDb
+		double db = onAxisDirectivityDb(profile, frequency) - overallDb(profile)
 			- airAbsorptionDb(profile, frequency)
-			+ material.db(frequency)
+			+ MaterialReflectionCurve.of(profile.material()).db(frequency)
 			+ occlusionLowPassDb(profile.occlusion(), frequency);
 		return Math.max(MIN_DB, db);
+	}
+
+	private static double targetDb(CommonAcousticFirProfile profile,
+								   double frequencyHz, double overallDb,
+								   double[] directivityCurve,
+								   double[] airCurve,
+								   double[] materialCurve) {
+		double frequency = Math.max(MIN_HZ, Math.min(MAX_HZ, frequencyHz));
+		if (profile.isReflection() && frequency <= profile.schroederHz()) {
+			return MIN_DB;
+		}
+		double db = interpolateCurve(directivityCurve, frequency) - overallDb
+			+ interpolateCurve(airCurve, frequency)
+			+ interpolateCurve(materialCurve, frequency)
+			+ occlusionLowPassDb(profile.occlusion(), frequency);
+		return Math.max(MIN_DB, db);
+	}
+
+	private static double interpolateCurve(double[] curve, double frequencyHz) {
+		double t = Math.log(frequencyHz / MIN_HZ)
+			/ Math.log(MAX_HZ / MIN_HZ) * (curve.length - 1);
+		t = Math.max(0.0, Math.min(curve.length - 1.0, t));
+		int index = (int) t;
+		if (index >= curve.length - 1) {
+			return curve[curve.length - 1];
+		}
+		double fraction = t - index;
+		return curve[index] + (curve[index + 1] - curve[index]) * fraction;
 	}
 
 	/** On-axis plus directivity level at 1 kHz; excludes all other terms. */
@@ -157,14 +192,12 @@ public final class CommonAcousticFirDesigner {
 		return -10.0 * Math.log10(1.0 + power);
 	}
 
-	private static double maxError(CommonAcousticFirProfile profile, float[] taps,
-									double overallDb,
-									MaterialReflectionCurve material) {
+	private static double maxError(CommonAcousticFirProfile profile,
+								   double[] target, double[] responseDb,
+								   int fftSize) {
 		double maxError = 0.0;
-		int samples = 256;
-		for (int i = 0; i < samples; i++) {
-			double t = i / (double) (samples - 1);
-			double frequency = ERROR_MIN_HZ * Math.pow(MAX_HZ / ERROR_MIN_HZ, t);
+		for (int i = 0; i < target.length; i++) {
+			double frequency = i * SAMPLE_RATE / fftSize;
 			if (profile.isReflection()) {
 				double transition = Math.max(
 					profile.schroederHz() * CUT_TRANSITION_RATIO,
@@ -173,13 +206,11 @@ public final class CommonAcousticFirDesigner {
 					continue;
 				}
 			}
-			double target = targetDb(profile, frequency, overallDb, material);
-			if (target < MAX_ERROR_TARGET_DB) {
+			double value = target[i];
+			if (value < MAX_ERROR_TARGET_DB) {
 				continue;
 			}
-			double actual = 20.0 * Math.log10(Math.max(1.0e-12,
-				MinimumPhaseFirDesigner.responseAt(taps, frequency, SAMPLE_RATE)));
-			maxError = Math.max(maxError, Math.abs(target - actual));
+			maxError = Math.max(maxError, Math.abs(value - responseDb[i]));
 		}
 		return maxError;
 	}

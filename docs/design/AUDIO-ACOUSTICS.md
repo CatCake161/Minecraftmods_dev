@@ -523,8 +523,8 @@ targetDb(f) =
   不能把它们的 1 kHz 电平并入 `overallGain`。
 - 缓存键：profile、角度 5°、路径 0.5 m、温度 0.5 °C、湿度 2 %、气压 0.1 kPa、
   材质、遮挡 cutoff 10 Hz + order、`f_s` 10 Hz；上限 2048 条，超限时按批淘汰而不是清空。
-  单 daemon worker 异步设计，设计期间沿用上一个 FIR。直达设计预算为 8 次 burst + 5 次/秒，
-  反射为 24 次 burst + 20 次/秒，避免移动时排队过多 4096-tap 设计。
+  单 daemon worker 异步设计，设计期间沿用上一个 FIR。直达设计预算为 12 次 burst + 20 次/秒，
+  反射为 24 次 burst + 30 次/秒；优化后单次设计约 1–2 ms，移动时可接近 20 Hz 刷新。
   宽带遮挡 attenuation 不进入缓存键（只用于 gain）。
 
 **Schroeder 频率**
@@ -611,7 +611,7 @@ f_s = 2000 * sqrt(RT60_mid / V_eff)
 
 - **直达声 FIR**：目标幅度 = `onAxisEqGainDb(f) + gainDb(h, v, f)`，即实测 on-axis 频响 + 相对指向性；减去 1 kHz 总偏移后，用 cepstrum 法设计 **4096-tap 最小相位 FIR @48 kHz**。4096 taps 的实测误差约 1.1 dB（Genelec 8351B 最差）；1 kHz 偏移作为独立 source gain，不进入 FIR。
 - **on-axis 聆听**：D=0，FIR 仍保留 `onAxisEqGainDb(f) - onAxisEqGainDb(1k)`，所以听到的是该型号实测轴向曲线（以全频段能量平均归一化），不再是平直参考。未测量/omni profile 的 on-axis EQ 为 0，仍为直通。
-- **缓存**：角度量化到 **5°**，按 profile、角度、路径、空气、遮挡 cutoff/order、`f_s` 组合缓存；直达 4096-tap / 反射 2048-tap FIR 在单个 daemon worker 上异步设计，设计期间沿用上一个 FIR，避免卡渲染线程。缓存上限 2048 条，超限按批淘汰；直达设计为 8 次 burst + 5 次/秒，反射为 24 次 burst + 20 次/秒。
+- **缓存**：角度量化到 **5°**，按 profile、角度、路径、空气、遮挡 cutoff/order、`f_s` 组合缓存；直达 4096-tap / 反射 2048-tap FIR 在单个 daemon worker 上异步设计，设计期间沿用上一个 FIR，避免卡渲染线程。缓存上限 2048 条，超限按批淘汰；直达设计为 12 次 burst + 20 次/秒，反射为 24 次 burst + 30 次/秒。
 - **音频路径**：每个扬声器通道在 `CinemaAudioEngine` 中用 overlap-add FFT 卷积应用单个 4096-tap 直达 FIR；引擎按 **2048 frame**（≈42.7 ms）小块排队，4 个缓冲 ≈171 ms 前瞻，使更新不必等 0.5 s 解码块。卷积核 4096 taps 的 tail 跨块保留；FIR 改变时旧/新滤波器并行运行 **1024 frame（≈21 ms）**线性交叉淡化，旧路径淡出后丢弃，避免块边界换系数产生 click；seek/flush 时清空。FIR 输出保持 **32-bit float**（`AL_FORMAT_MONO_FLOAT32`），允许目标形状在 source gain 之前超过 0 dBFS；只有 `AL_EXT_FLOAT32` 不可用时才回退 16-bit 并在最终转换处钳位。旧实现直接把 FIR 输出写成 short，导致 JBL A180 正轴 +2.48 dB、垂直 20° +9.87 dB 的峰被硬削，是实测过载失真的原因。
 - **声学中心**：source 位置改用 `SpeakerBlockEntity.acousticFrontPosition()`（类型高度 + 0.45 m 前面板偏移）；直达角、Java 距离衰减和遮挡扫描都用该位置。
 - **声像更新**：20 Hz 的 listener-relative 位置跳变在音频线程内用 **30 ms** 时间常数、约 200 Hz 分别插值半径和球面方向（slerp）；不动 OpenAL listener，不增加解码/视频延迟。视角 yaw 直接取 `getViewYRot()`，俯仰到 ±90° 时不会退回固定北方。
@@ -844,8 +844,8 @@ for t in data:
 - 干声路径不引入 lookahead；反射用因果 delay line，播放开始后先填零，前 100 ms 没有反射是可接受的。
 - 每个 chunk 处理；delay line 预分配；避免在音频循环中创建 `Vec3`/集合。
 - CPU 预算：Java DSP 目标 < 1 ms / 10 ms 音频（约 10% 单核）；EFX 混响 < 1%。
-- 指向性/空气吸收/遮挡：直达声每声道使用单个 4096-tap 联合 FIR，overlap-add；滤波器切换做 1024-frame（≈21 ms）交叉淡化。FIR 在 daemon worker 异步设计并缓存（角度 5°、距离 0.5 m、温度 0.5 °C、湿度 2 %、压力 0.1 kPa、遮挡 cutoff 100 Hz/order，上限 2048 条，超限按批淘汰），音频线程只换引用。当前机器实测单次直达联合 FIR 约 **29–36 ms**，因此新设计限制为 **8 次 burst + 5 次/秒**，移动时沿用上一个 FIR；不能再按旧的 1–3 ms 环境 FIR 预算来估算。
-- 反射 source：每接收器固定 32 个额外 source + buffer（24 活动 taps）；source/buffer 预分配并随房间快照复用。A2c-R 每 tap 使用 2048-tap 反射 FIR（角度 5°、路径 0.5 m、温度 0.5 °C、湿度 2 %、气压 0.1 kPa、材质、遮挡 cutoff/order、`f_s` 10 Hz 分桶，上限 2048 条，24 次 burst + 20 次/秒）；没有反射 biquad。多接收器、HRTF、设备切换下要实测 OpenAL source 上限和 CPU。
+- 指向性/空气吸收/遮挡：直达声每声道使用单个 4096-tap 联合 FIR，overlap-add；滤波器切换做 1024-frame（≈21 ms）交叉淡化。FIR 在 daemon worker 异步设计并缓存（角度 5°、距离 0.5 m、温度 0.5 °C、湿度 2 %、压力 0.1 kPa、遮挡 cutoff 100 Hz/order，上限 2048 条，超限按批淘汰），音频线程只换引用。设计目标曲线先按 512 个对数频点预计算，误差用 8192 点 FFT 一次性评估；当前机器实测单次直达联合 FIR 约 **1–2 ms**。直达设计预算 **12 次 burst + 20 次/秒**，移动时可接近 20 Hz 刷新；被限流时沿用上一个 FIR。
+- 反射 source：每接收器固定 32 个额外 source + buffer（24 活动 taps）；source/buffer 预分配并随房间快照复用。A2c-R 每 tap 使用 2048-tap 反射 FIR（角度 5°、路径 0.5 m、温度 0.5 °C、湿度 2 %、气压 0.1 kPa、材质、遮挡 cutoff/order、`f_s` 10 Hz 分桶，上限 2048 条，24 次 burst + 30 次/秒）；没有反射 biquad。多接收器、HRTF、设备切换下要实测 OpenAL source 上限和 CPU。
 - 反射 FIR 用 2048 taps 而非直达声 4096 taps；材质/遮挡/空气/硬切全部合并进这一个 FIR，避免每 tap 再串 biquad。若实测 CPU 仍偏高，优先降低活动 taps/多接收器并发，而不是增加频带数。
 - 参数平滑：增益/滤波系数一阶平滑；延迟变化交叉淡化。
 - EFX 生命周期：context/reset/device switch 时重建 effect/slot/filter；失败则禁用混响，不影响干声。
@@ -911,7 +911,7 @@ UI 归属：
 - A2b 播放：每个 tap 的镜像源位置/延迟/方向正确；反射/直达比与物理计算一致（`sqrt(1-α_mid)/max(L,1)` × 扬声器 trim/EQ × `earlyGainDb`，空气吸收只由每 tap FIR 施加）；32 source 池/24 活动 taps 无爆音、无掉帧、无双重处理；空闲槽静音保持媒体时钟对齐；游戏内听感/CPU/多接收器已验收。
 - A2c-R：`CommonAcousticFirDesignerTest` 验证直达单 4096-tap FIR 与旧 4096+2048 两级 FIR 响应误差 ≤1 dB；反射 2048-tap FIR 的材质三带相对目标、遮挡 cutoff/order、`f_s` 以下硬切；`overallGain` 与同角度直达声一致；两段遮挡合并规则/40 dB 上限（`OcclusionResultTest`）；flood-fill 补丁合并/材质加权/上限（`ReflectionSurfaceMergerTest`）；Schroeder 公式/回退（`AcousticRoomTest`）；`ImageSourceSolverTest` 验证被挡 tap 保留且增益按两段遮挡衰减。
 - A2c-R 游戏内 A/B：固定座位对比直达声（应与旧两级 FIR 听感一致）、反射材质三频带（石墙/木墙/玻璃/吸声）、遮挡反射（墙角/薄墙）、`f_s` 以下是否被切除；确认没有双重材质/空气/指向性，无爆音；`/cinema_acoustics` 的 `fs=`、`patches=`、`seeds=`、每 tap `occ/cutoff/order`、直达/反射 FIR `state/taps/maxErr/overall` 与预期一致。
-- A2 数值：ISO 9613-1 α 与参考值误差 `<1e-6 dB/m`；1 m / 20 °C / 50 % RH / 101.325 kPa 为 0 dB 参考点，1 m 以内的空气吸收必须为 0；当前机器单次直达联合 FIR 设计约 29–36 ms，因此不能按旧的 1–3 ms 环境 FIR 预算估算，必须保留设计预算/限流。
+- A2 数值：ISO 9613-1 α 与参考值误差 `<1e-6 dB/m`；1 m / 20 °C / 50 % RH / 101.325 kPa 为 0 dB 参考点，1 m 以内的空气吸收必须为 0；直达联合 FIR 首次优化后实测约 1–2 ms（预计算 512 点目标曲线 + 8192 点 FFT 误差评估），设计预算 12 次 burst + 20 次/秒。
 - 直达声：空气吸收随距离/频率变化、遮挡随材质/路径长度变化、指向性随扬声器旋转/听者角度变化；确认距离/空气/遮挡/指向性各只应用一次。
 - 指向性数据：Spinorama 表归一化/角度方向/插值正确；4096-tap 直达 FIR 实测误差约 1.1 dB；profile 来源/许可证记录完整。
 - 游戏内：10×6×4 m 与 20×10×6 m 矩形房间；吸声/反射材质切换；扬声器旋转；听者移动（含走出影院）；遮挡（石墙/木墙/玻璃/屏幕）；部分墙/柱子/开放空间/门洞下的反射 tap；反射 source 的镜像位置/方向/距离 L 正确（A2b）；Seat 仅验证可乘坐，不参与声学。

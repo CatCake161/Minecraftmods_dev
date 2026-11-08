@@ -21,8 +21,8 @@ import java.util.concurrent.Executors;
  * <p>Direct FIRs depend on angle, distance, air absorption and occlusion, so a
  * moving listener can otherwise queue far more 4096-tap designs than the
  * worker can finish. A token bucket allows an initial burst, then limits new
- * direct designs to five per second; callers keep the previous FIR until the
- * next update. Reflection designs are cheaper and get a higher budget.
+ * direct designs to twenty per second; callers keep the previous FIR until the
+ * next update. Reflection designs get a separate 30/s budget.
  */
 public final class CommonAcousticFirService {
 	private static final int MAX_CACHE_ENTRIES = 2_048;
@@ -36,8 +36,8 @@ public final class CommonAcousticFirService {
 		});
 	private static final ConcurrentHashMap<CommonAcousticFirProfile,
 		CompletableFuture<MinimumPhaseFir>> CACHE = new ConcurrentHashMap<>();
-	private static final TokenBucket DIRECT_BUDGET = new TokenBucket(8.0, 5.0);
-	private static final TokenBucket REFLECTION_BUDGET = new TokenBucket(24.0, 20.0);
+	private static final TokenBucket DIRECT_BUDGET = new TokenBucket(12.0, 20.0);
+	private static final TokenBucket REFLECTION_BUDGET = new TokenBucket(24.0, 30.0);
 
 	private CommonAcousticFirService() {
 	}

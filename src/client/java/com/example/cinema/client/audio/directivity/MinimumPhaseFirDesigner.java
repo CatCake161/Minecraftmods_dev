@@ -107,6 +107,32 @@ public final class MinimumPhaseFirDesigner {
 		return Math.hypot(re, im);
 	}
 
+	/**
+	 * Magnitude response at every FFT bin, in dB. Used by the common designer
+	 * to evaluate the error of a finished FIR without an O(taps * samples)
+	 * direct DFT.
+	 */
+	public static double[] magnitudeDb(float[] taps, int fftSize) {
+		if (taps == null || taps.length == 0 || fftSize < 2
+			|| (fftSize & (fftSize - 1)) != 0) {
+			throw new IllegalArgumentException("invalid magnitude request");
+		}
+		double[] re = new double[fftSize];
+		double[] im = new double[fftSize];
+		int copy = Math.min(taps.length, fftSize);
+		for (int i = 0; i < copy; i++) {
+			re[i] = taps[i];
+		}
+		Fft.transform(re, im, false);
+		int half = fftSize / 2;
+		double[] magnitude = new double[half + 1];
+		for (int i = 0; i <= half; i++) {
+			magnitude[i] = 20.0 * Math.log10(Math.max(1.0e-12,
+				Math.hypot(re[i], im[i])));
+		}
+		return magnitude;
+	}
+
 	private static double maxAbs(double[] values) {
 		double max = 0.0;
 		for (double value : values) {

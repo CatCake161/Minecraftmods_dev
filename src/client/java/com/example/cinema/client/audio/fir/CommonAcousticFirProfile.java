@@ -41,7 +41,7 @@ public record CommonAcousticFirProfile(Role role,
 	}
 
 	public static final int DIRECT_TAPS = 4_096;
-	public static final int DIRECT_FFT_SIZE = 16_384;
+	public static final int DIRECT_FFT_SIZE = 8_192;
 	public static final int REFLECTION_TAPS = 2_048;
 	public static final int REFLECTION_FFT_SIZE = 8_192;
 	public static final double MIN_SCHROEDER_HZ = 50.0;
