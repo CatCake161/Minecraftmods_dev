@@ -80,6 +80,15 @@ public record Biquad(double b0, double b1, double b2, double a1, double a2) {
 			1.0 + alpha, -2.0 * cos, 1.0 - alpha);
 	}
 
+	public static Biquad highPass(double frequencyHz, double q, double sampleRate) {
+		double w0 = angularFrequency(frequencyHz, sampleRate);
+		double alpha = Math.sin(w0) / (2.0 * clampQ(q));
+		double cos = Math.cos(w0);
+		double b0 = (1.0 + cos) * 0.5;
+		return normalized(b0, -(1.0 + cos), b0,
+			1.0 + alpha, -2.0 * cos, 1.0 - alpha);
+	}
+
 	/**
 	 * First-order Butterworth low-pass expressed as a biquad. The bilinear
 	 * transform gives {@code K = tan(pi f0 / fs)} and

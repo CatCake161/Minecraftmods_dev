@@ -11,8 +11,8 @@ import com.example.cinema.client.audio.speakerdata.SpeakerDataProfile;
  *
  * <p>The target is always the same frequency-shaping chain:
  * on-axis + directivity relative to 1 kHz, minus air absorption, plus optional
- * material reflection, optional occlusion low-pass and the reflection-only
- * Schroeder hard cut. Broadband levels (speaker trim, distance, material
+ * material reflection and optional occlusion low-pass. First-order reflections
+ * are intentionally full-band. Broadband levels (speaker trim, distance, material
  * mid-band coefficient and occlusion broadband attenuation) are deliberately
  * not part of this filter; they belong to the source gain.
  */
@@ -25,9 +25,6 @@ public final class CommonAcousticFirDesigner {
 	private static final double MIN_DB = -96.0;
 	private static final double FLAT_THRESHOLD_DB = 0.01;
 	private static final double MAX_ERROR_TARGET_DB = -40.0;
-	/** Ignore the unavoidable transition just above the hard cut. */
-	private static final double CUT_TRANSITION_RATIO = 1.5;
-	private static final double CUT_TRANSITION_HZ = 50.0;
 	private static final double MIN_OVERALL_DB = -120.0;
 	private static final double MAX_OVERALL_DB = 24.0;
 
@@ -91,15 +88,12 @@ public final class CommonAcousticFirDesigner {
 
 	/**
 	 * Frequency-shaping target in dB relative to the on-axis/directivity level
-	 * at 1 kHz. The reflection profile returns the hard-cut floor at and below
-	 * the Schroeder frequency.
+	 * at 1 kHz. First-order reflections remain full-band; there is no Schroeder
+	 * cut or high-pass in this design.
 	 */
 	public static double targetDb(CommonAcousticFirProfile profile,
 								  double frequencyHz) {
 		double frequency = Math.max(MIN_HZ, Math.min(MAX_HZ, frequencyHz));
-		if (profile.isReflection() && frequency <= profile.schroederHz()) {
-			return MIN_DB;
-		}
 		double db = onAxisDirectivityDb(profile, frequency) - overallDb(profile)
 			- airAbsorptionDb(profile, frequency)
 			+ MaterialReflectionCurve.of(profile.material()).db(frequency)
@@ -113,9 +107,6 @@ public final class CommonAcousticFirDesigner {
 								   double[] airCurve,
 								   double[] materialCurve) {
 		double frequency = Math.max(MIN_HZ, Math.min(MAX_HZ, frequencyHz));
-		if (profile.isReflection() && frequency <= profile.schroederHz()) {
-			return MIN_DB;
-		}
 		double db = interpolateCurve(directivityCurve, frequency) - overallDb
 			+ interpolateCurve(airCurve, frequency)
 			+ interpolateCurve(materialCurve, frequency)
@@ -145,19 +136,11 @@ public final class CommonAcousticFirDesigner {
 	}
 
 	/**
-	 * FIR normalization reference. Direct designs use 1 kHz. Reflection designs
-	 * use 1 kHz when it is above the hard cut, otherwise a point above
-	 * {@code f_s} so the cut is not normalized away.
+	 * FIR normalization reference. Both direct and full-band reflection
+	 * designs use 1 kHz.
 	 */
 	public static double referenceHz(CommonAcousticFirProfile profile) {
-		if (profile == null || !profile.isReflection()) {
-			return REFERENCE_HZ;
-		}
-		double schroeder = profile.schroederHz();
-		if (schroeder < REFERENCE_HZ) {
-			return REFERENCE_HZ;
-		}
-		return Math.min(MAX_HZ, Math.max(REFERENCE_HZ, schroeder * 1.1));
+		return REFERENCE_HZ;
 	}
 
 	private static double onAxisDirectivityDb(CommonAcousticFirProfile profile,
@@ -197,15 +180,6 @@ public final class CommonAcousticFirDesigner {
 								   int fftSize) {
 		double maxError = 0.0;
 		for (int i = 0; i < target.length; i++) {
-			double frequency = i * SAMPLE_RATE / fftSize;
-			if (profile.isReflection()) {
-				double transition = Math.max(
-					profile.schroederHz() * CUT_TRANSITION_RATIO,
-					profile.schroederHz() + CUT_TRANSITION_HZ);
-				if (frequency <= transition) {
-					continue;
-				}
-			}
 			double value = target[i];
 			if (value < MAX_ERROR_TARGET_DB) {
 				continue;

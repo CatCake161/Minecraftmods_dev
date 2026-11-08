@@ -44,7 +44,7 @@ class CommonAcousticFirDesignerTest {
 	void reflectionMaterialBandsMatchRelativeTargets() {
 		CommonAcousticFirProfile profile = CommonAcousticFirProfile.reflection(null,
 			0.0, 0.0, 5.0, false, 20.0, 50.0, 101.325, MATERIAL,
-			OcclusionResult.NONE, 100.0);
+			OcclusionResult.NONE);
 
 		MinimumPhaseFir fir = CommonAcousticFirDesigner.design(profile);
 
@@ -63,7 +63,7 @@ class CommonAcousticFirDesignerTest {
 	void reflectionOcclusionFollowsButterworthLowPass() {
 		CommonAcousticFirProfile profile = CommonAcousticFirProfile.reflection(null,
 			0.0, 0.0, 5.0, false, 20.0, 50.0, 101.325, null,
-			new OcclusionResult(0.0, 1_000.0, 2), 100.0);
+			new OcclusionResult(0.0, 1_000.0, 2));
 
 		MinimumPhaseFir fir = CommonAcousticFirDesigner.design(profile);
 
@@ -73,23 +73,19 @@ class CommonAcousticFirDesignerTest {
 	}
 
 	@Test
-	void reflectionHardCutIsSilentAtAndBelowSchroeder() {
-		CommonAcousticFirProfile profile = CommonAcousticFirProfile.reflection(null,
-			0.0, 0.0, 5.0, false, 20.0, 50.0, 101.325, MATERIAL,
-			OcclusionResult.NONE, 500.0);
-
-		assertEquals(-96.0, CommonAcousticFirDesigner.targetDb(profile, 100.0),
-			1.0e-9);
-		assertEquals(-96.0, CommonAcousticFirDesigner.targetDb(profile, 500.0),
-			1.0e-9);
-		assertTrue(CommonAcousticFirDesigner.targetDb(profile, 501.0) > -96.0);
-
+	void reflectionIsFullBandWithSpeakerAndMaterial() {
+		SpeakerDataProfile speaker = syntheticProfile();
+		CommonAcousticFirProfile profile = CommonAcousticFirProfile.reflection(
+			speaker, 60.0, 0.0, 5.0, false, 20.0, 50.0, 101.325, MATERIAL,
+			OcclusionResult.NONE);
+		double lowTarget = CommonAcousticFirDesigner.targetDb(profile, 100.0);
+		assertTrue(lowTarget > -30.0,
+			"full-band reflection target should not be cut below Schroeder: "
+				+ lowTarget);
 		MinimumPhaseFir fir = CommonAcousticFirDesigner.design(profile);
-		double low = responseDb(fir, 100.0);
-		double pass = responseDb(fir, 2_000.0);
-		assertTrue(low < pass - 20.0,
-			"hard cut should suppress the stop band, low=" + low
-				+ " dB pass=" + pass + " dB");
+		assertResponseMatchesTarget(profile, fir, 100.0, 2.0);
+		assertTrue(fir.maxErrorDb() < 2.0,
+			"full-band reflection maxError " + fir.maxErrorDb() + " dB");
 	}
 
 	@Test
@@ -100,12 +96,12 @@ class CommonAcousticFirDesignerTest {
 			OcclusionResult.NONE);
 		CommonAcousticFirProfile reflection = CommonAcousticFirProfile.reflection(
 			speaker, 60.0, 0.0, 5.0, false, 20.0, 50.0, 101.325, null,
-			OcclusionResult.NONE, 100.0);
+			OcclusionResult.NONE);
 
 		assertEquals(CommonAcousticFirDesigner.overallDb(direct),
 			CommonAcousticFirDesigner.overallDb(reflection), 1.0e-9);
 		assertEquals(CommonAcousticFirDesigner.targetDb(direct, 2_000.0),
-			CommonAcousticFirDesigner.targetDb(reflection, 2_000.0), 1.0e-9);
+			CommonAcousticFirDesigner.targetDb(reflection, 2_000.0), 0.01);
 		MinimumPhaseFir directFir = CommonAcousticFirDesigner.design(direct);
 		MinimumPhaseFir reflectionFir = CommonAcousticFirDesigner.design(reflection);
 		assertEquals(directFir.overallGain(), reflectionFir.overallGain(), 1.0e-9);
@@ -189,20 +185,13 @@ class CommonAcousticFirDesignerTest {
 	}
 
 	@Test
-	void reflectionHighSchroederKeepsTheHardCutAtOneKilohertz() {
+	void reflectionUsesOneKilohertzAsNormalizationReference() {
 		CommonAcousticFirProfile profile = CommonAcousticFirProfile.reflection(null,
-			0.0, 0.0, 5.0, false, 20.0, 50.0, 101.325, MATERIAL,
-			OcclusionResult.NONE, 1_500.0);
+			0.0, 0.0, 5.0, false, 20.0, 50.0, 101.325, null,
+			OcclusionResult.NONE);
 
-		assertEquals(-96.0, CommonAcousticFirDesigner.targetDb(profile, 1_000.0),
-			1.0e-9);
-		assertTrue(CommonAcousticFirDesigner.referenceHz(profile) > 1_500.0);
-		MinimumPhaseFir fir = CommonAcousticFirDesigner.design(profile);
-		double atOneK = responseDb(fir, 1_000.0);
-		double atThreeK = responseDb(fir, 3_000.0);
-		assertTrue(atOneK < atThreeK - 20.0,
-			"1 kHz must stay cut when f_s >= 1 kHz, 1k=" + atOneK
-				+ " dB 3k=" + atThreeK + " dB");
+		assertEquals(CommonAcousticFirDesigner.REFERENCE_HZ,
+			CommonAcousticFirDesigner.referenceHz(profile), 1.0e-9);
 	}
 
 	private static void assertResponseMatchesTarget(CommonAcousticFirProfile profile,

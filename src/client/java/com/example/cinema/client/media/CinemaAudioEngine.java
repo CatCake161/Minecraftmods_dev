@@ -4,6 +4,9 @@ import com.example.cinema.Cinema;
 import com.example.cinema.client.audio.directivity.FirProcessor;
 import com.example.cinema.client.audio.directivity.MinimumPhaseFir;
 import com.example.cinema.client.audio.environment.AirAbsorption;
+import com.example.cinema.client.audio.reverb.LateReflectionBus;
+import com.example.cinema.client.audio.reverb.LateReverb;
+import com.example.cinema.client.audio.reverb.LateReverbSettings;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.openal.AL;
 import org.lwjgl.openal.AL10;
@@ -22,6 +25,7 @@ import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.nio.ShortBuffer;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Deque;
 import java.util.HashSet;
@@ -43,9 +47,10 @@ import static org.lwjgl.system.MemoryUtil.NULL;
  * <p>Each AV receiver playback proxy owns one engine/context, so multiple
  * receivers can play independently. The decoder submits interleaved 5.1 chunks.
  * The audio thread deinterleaves each chunk, queues one mono buffer per speaker,
- * and schedules all six sources at the same device-clock instant. It also
- * publishes the audible media clock so the render thread can choose video frames
- * without touching OpenAL.
+ * and schedules all six sources at the same device-clock instant. It also runs
+ * the first-order reflection pool and a full-band 8-line FDN late tail
+ * (six fixed wet sources, including LFE), then publishes the audible media clock
+ * so the render thread can choose video frames without touching OpenAL.
  */
 public final class CinemaAudioEngine implements AutoCloseable {
 	public static final int SAMPLE_RATE = 48_000;
@@ -63,14 +68,39 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	 * Fixed reflection-source pool. The planner caps active taps below this so
 	 * appearing/disappearing taps have spare slots to fade through.
 	 */
-	public static final int MAX_REFLECTION_SOURCES = 32;
-	/** 80 ms maximum geometric delay plus one processing block. */
-	private static final int RAW_HISTORY_FRAMES = 8192;
+	public static final int MAX_REFLECTION_SOURCES = 56;
+	/** One extra source per output channel for the decorrelated late tail. */
+	private static final int WET_SOURCES = LateReverb.CHANNELS;
+	/**
+	 * OpenAL implementations clamp source gain to 1.0 unless AL_MAX_GAIN is
+	 * raised. Attenuation and mute therefore use the wet source gain, while
+	 * any portion of a positive trim above this ceiling is baked into newly
+	 * generated wet samples.
+	 */
+	private static final float MAX_WET_SOURCE_GAIN = 1.0f;
+	/** 160 ms maximum geometric delay plus one processing block. */
+	private static final int RAW_HISTORY_FRAMES = 16384;
 	private static final int RAW_HISTORY_MASK = RAW_HISTORY_FRAMES - 1;
+	/** Order-2/3/4 geometric late bus: ~341 ms history and 512 taps. */
+	private static final int LATE_BUS_HISTORY_FRAMES = 16_384;
+	private static final int LATE_BUS_MAX_TAPS = 512;
 	/** 30 ms fade-in/out for reflection tap appearance and disappearance. */
 	private static final int REFLECTION_FADE_FRAMES = 1_440;
 	/** Delay changes glide instead of jumping when the listener moves. */
 	private static final double REFLECTION_DELAY_SMOOTHING_SECONDS = 0.15;
+	/**
+	 * Source-power weights for the late-reverb send. Unity weights keep
+	 * {@code Σw²P = ΣP} for uncorrelated channels, which is required by the
+	 * room-constant target. A normalized 5.1 downmix would make the FDN input
+	 * depend on the number of active channels and break the physical gain.
+	 * LFE is included as a normal unity-weight source; low-frequency room modes
+	 * remain A5's separate concern. Correlated channels can temporarily make the
+	 * mono sum hot; the FDN output
+	 * normalization and source gain are referenced to this send level.
+	 */
+	private static final float[] LATE_SEND_WEIGHTS = {
+		1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
+	};
 	private static final String[] LABELS = {"FL", "FR", "FC", "LFE", "BL", "BR"};
 	private static final Set<CinemaAudioEngine> OPEN_ENGINES = ConcurrentHashMap.newKeySet();
 
@@ -107,6 +137,35 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	private final int[][] buffers = new int[SPEAKERS][BUFFER_COUNT];
 	private final ShortBuffer[] monoShortBuffers = new ShortBuffer[SPEAKERS];
 	private final FloatBuffer[] monoFloatBuffers = new FloatBuffer[SPEAKERS];
+	private final int[] wetSources = new int[WET_SOURCES];
+	private final int[][] wetBuffers = new int[WET_SOURCES][BUFFER_COUNT];
+	@SuppressWarnings("unchecked")
+	private final Deque<Integer>[] wetFreeBuffers = new Deque[WET_SOURCES];
+	private boolean wetSourcesAllocated;
+	/** FDN fallback scratch; the geometric bus is the active late path. */
+	private final float[][] wetOutputs = new float[WET_SOURCES][BLOCK_FRAMES];
+	private final float[] lateSendScratch = new float[BLOCK_FRAMES];
+	private final LateReverb lateReverb = new LateReverb(SAMPLE_RATE);
+	/**
+	 * Geometric order-2 late path. It replaces the FDN as the active late
+	 * renderer while {@code lateSettings.enabled()}; {@link #lateReverb} stays
+	 * in the tree as the experimental fallback. Audio-thread only.
+	 */
+	private final LateReflectionBus lateBus = new LateReflectionBus(SAMPLE_RATE,
+		LATE_BUS_HISTORY_FRAMES, LATE_BUS_MAX_TAPS, 0.030);
+	private final float[][] lateBusInput =
+		new float[LateReflectionBus.CHANNELS][BLOCK_FRAMES];
+	private final float[][] lateBusOutput =
+		new float[LateReflectionBus.CHANNELS][BLOCK_FRAMES];
+	private volatile List<LateReflectionBus.Tap> lateReflectionTargets = List.of();
+	private final AtomicInteger lateReflectionVersion = new AtomicInteger();
+	private int appliedLateReflectionVersion = -1;
+	private volatile LateReverbSettings lateSettings = LateReverbSettings.OFF;
+	private final AtomicInteger lateSettingsVersion = new AtomicInteger();
+	private int appliedLateSettingsVersion = -1;
+	private float wetTrimGain;
+	private float wetSampleGain = 1.0f;
+	private float appliedWetGain = Float.NaN;
 	private final float[] blockScratch = new float[BLOCK_FRAMES];
 	private boolean float32Buffers;
 	private final DoubleBuffer latencyQuery = BufferUtils.createDoubleBuffer(2);
@@ -125,10 +184,13 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	private final double[] slerpScratch = new double[3];
 	private long lastPositionUpdateNanos;
 	private volatile float[] channelGains = defaultChannelGains();
+	private volatile float[] channelLateSendGains = defaultChannelGains();
 	private volatile MinimumPhaseFir[] channelFilters = defaultFilters();
 	private volatile float[] channelOcclusionGains = defaultChannelGains();
 	private final FirProcessor[] firProcessors = new FirProcessor[SPEAKERS];
 	private final float[] appliedGains = new float[SPEAKERS];
+	private final float[] renderedChannelGains = defaultChannelGains();
+	private final float[] renderedLateSendGains = defaultChannelGains();
 	private final float[] renderedOcclusionGains = defaultChannelGains();
 	private int appliedLayoutVersion = -1;
 	private long lastGainUpdateNanos;
@@ -161,6 +223,9 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			freeBuffers[i] = new ArrayDeque<>(BUFFER_COUNT);
 			appliedGains[i] = Float.NaN;
 			firProcessors[i] = new FirProcessor();
+		}
+		for (int i = 0; i < WET_SOURCES; i++) {
+			wetFreeBuffers[i] = new ArrayDeque<>(BUFFER_COUNT);
 		}
 		thread = new Thread(this::run, "cinema-audio");
 		thread.setDaemon(true);
@@ -294,10 +359,24 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	public void setChannelLayout(float[][] positions, float[] gains,
 								 MinimumPhaseFir[] filters,
 								 float[] occlusionGains) {
+		setChannelLayout(positions, gains, filters, occlusionGains, null);
+	}
+
+	/**
+	 * Adds the source-strength gains used by the late-reverb send. They exclude
+	 * distance and broadband occlusion; the engine combines them with the
+	 * smoothed occlusion gain, so the FDN is driven by source power rather than
+	 * by the direct sound level at the listener.
+	 */
+	public void setChannelLayout(float[][] positions, float[] gains,
+								 MinimumPhaseFir[] filters,
+								 float[] occlusionGains,
+								 float[] lateSendGains) {
 		float[][] nextPositions = new float[SPEAKERS][];
 		float[] nextGains = new float[SPEAKERS];
 		MinimumPhaseFir[] nextFilters = new MinimumPhaseFir[SPEAKERS];
 		float[] nextOcclusionGains = new float[SPEAKERS];
+		float[] nextLateSendGains = new float[SPEAKERS];
 		for (int i = 0; i < SPEAKERS; i++) {
 			float[] position = positions != null && i < positions.length ? positions[i] : null;
 			nextPositions[i] = isValidPosition(position)
@@ -311,23 +390,31 @@ public final class CinemaAudioEngine implements AutoCloseable {
 				? occlusionGains[i] : 1.0f;
 			nextOcclusionGains[i] = Float.isFinite(occlusion)
 				? Math.max(0.0f, Math.min(1.0f, occlusion)) : 1.0f;
+			float lateSend = lateSendGains != null && i < lateSendGains.length
+				? lateSendGains[i] : 1.0f;
+			nextLateSendGains[i] = Float.isFinite(lateSend)
+				? Math.max(0.0f, Math.min(8.0f, lateSend)) : 1.0f;
 		}
-		if (sameLayout(nextPositions, nextGains, nextFilters, nextOcclusionGains)) {
+		if (sameLayout(nextPositions, nextGains, nextFilters, nextOcclusionGains,
+			nextLateSendGains)) {
 			return;
 		}
 		channelPositions = nextPositions;
 		channelGains = nextGains;
 		channelFilters = nextFilters;
 		channelOcclusionGains = nextOcclusionGains;
+		channelLateSendGains = nextLateSendGains;
 		layoutVersion.incrementAndGet();
 	}
 
 	private boolean sameLayout(float[][] positions, float[] gains,
-							   MinimumPhaseFir[] filters, float[] occlusionGains) {
+							   MinimumPhaseFir[] filters, float[] occlusionGains,
+							   float[] lateSendGains) {
 		float[][] currentPositions = channelPositions;
 		float[] currentGains = channelGains;
 		MinimumPhaseFir[] currentFilters = channelFilters;
 		float[] currentOcclusionGains = channelOcclusionGains;
+		float[] currentLateSendGains = channelLateSendGains;
 		for (int i = 0; i < SPEAKERS; i++) {
 			for (int axis = 0; axis < 3; axis++) {
 				if (Math.abs(positions[i][axis] - currentPositions[i][axis]) > 1.0e-4f) {
@@ -341,6 +428,9 @@ public final class CinemaAudioEngine implements AutoCloseable {
 				return false;
 			}
 			if (Math.abs(occlusionGains[i] - currentOcclusionGains[i]) > 1.0e-4f) {
+				return false;
+			}
+			if (Math.abs(lateSendGains[i] - currentLateSendGains[i]) > 1.0e-4f) {
 				return false;
 			}
 		}
@@ -366,6 +456,47 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		}
 		reflectionTargets = next;
 		reflectionVersion.incrementAndGet();
+	}
+
+	/**
+	 * Updates the high-frequency late-reverb target. The DSP parameters are
+	 * derived from the room snapshot by the client thread; the audio thread only
+	 * swaps this immutable value and keeps the previous tail until it arrives.
+	 */
+	public void setLateReverb(LateReverbSettings settings) {
+		LateReverbSettings next = settings == null
+			? LateReverbSettings.OFF : settings;
+		if (next.equals(lateSettings)) {
+			return;
+		}
+		lateSettings = next;
+		lateSettingsVersion.incrementAndGet();
+	}
+
+	/**
+	 * Publishes the immutable order-2 geometric tap set for the late bus. The
+	 * client thread only swaps this list; the audio thread applies it on the
+	 * next {@code pump()}. Taps already carry path gain, speaker trim and the
+	 * reflection FIR level, so the bus only adds delay and damping.
+	 */
+	public void setLateReflectionTaps(List<LateReflectionBus.Tap> taps) {
+		List<LateReflectionBus.Tap> next;
+		if (taps == null || taps.isEmpty()) {
+			next = List.of();
+		} else {
+			List<LateReflectionBus.Tap> copy = new ArrayList<>(taps.size());
+			for (LateReflectionBus.Tap tap : taps) {
+				if (tap != null) {
+					copy.add(tap);
+				}
+			}
+			next = List.copyOf(copy);
+		}
+		if (next.equals(lateReflectionTargets)) {
+			return;
+		}
+		lateReflectionTargets = next;
+		lateReflectionVersion.incrementAndGet();
 	}
 
 	private static boolean sameReflections(ReflectionSource[] first,
@@ -490,7 +621,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	}
 
 	private static double reflectionDelayFrames(double seconds) {
-		return Math.max(0.0, Math.min(0.080, seconds)) * SAMPLE_RATE;
+		return Math.max(0.0, Math.min(0.160, seconds)) * SAMPLE_RATE;
 	}
 
 	private static float[][] copyDefaultPositions() {
@@ -626,6 +757,9 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		Cinema.LOGGER.info("cinema audio: source buffers are {}; distance model AL_NONE",
 			float32Buffers ? "32-bit float" : "16-bit integer");
 		setupReflectionSources();
+		if (lateSettings.enabled()) {
+			setupWetSources();
+		}
 		applyChannelLayout();
 		applyChannelGains();
 		checkError("setupSources");
@@ -650,6 +784,63 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		clearRawHistory();
 		Cinema.LOGGER.info("cinema audio: {} reflection sources allocated",
 			MAX_REFLECTION_SOURCES);
+	}
+
+	private void setupWetSources() {
+		if (wetSourcesAllocated) {
+			return;
+		}
+		for (int channel = 0; channel < WET_SOURCES; channel++) {
+			wetFreeBuffers[channel].clear();
+			wetSources[channel] = alGenSources();
+			for (int i = 0; i < BUFFER_COUNT; i++) {
+				wetBuffers[channel][i] = alGenBuffers();
+				uploadSilence(wetBuffers[channel][i], BLOCK_FRAMES);
+				wetFreeBuffers[channel].addLast(wetBuffers[channel][i]);
+			}
+			alSourcei(wetSources[channel], AL_SOURCE_RELATIVE, AL_TRUE);
+			alSourcef(wetSources[channel], AL_GAIN, 0.0f);
+			float[] position = DEFAULT_POSITIONS[channel];
+			alSource3f(wetSources[channel], AL_POSITION,
+				position[0], position[1], position[2]);
+		}
+		wetSourcesAllocated = true;
+		resetLateReverb();
+		Cinema.LOGGER.info("cinema audio: {} late-reverb wet sources allocated",
+			WET_SOURCES);
+	}
+
+	/**
+	 * Stops and releases the wet-source pool. The code stays available for a
+	 * later enable, but a disabled late reverb should not keep six sources or
+	 * the FDN running.
+	 */
+	private void releaseWetSources() {
+		if (!wetSourcesAllocated) {
+			return;
+		}
+		for (int channel = 0; channel < WET_SOURCES; channel++) {
+			if (wetSources[channel] != 0) {
+				alSourceStop(wetSources[channel]);
+				alDeleteSources(wetSources[channel]);
+				wetSources[channel] = 0;
+			}
+			for (int buffer : wetBuffers[channel]) {
+				if (buffer != 0) {
+					alDeleteBuffers(buffer);
+				}
+			}
+			Arrays.fill(wetBuffers[channel], 0);
+			wetFreeBuffers[channel].clear();
+		}
+		wetSourcesAllocated = false;
+		wetTrimGain = 0.0f;
+		wetSampleGain = 1.0f;
+		appliedWetGain = Float.NaN;
+		appliedLateReflectionVersion = -1;
+		lateReverb.reset();
+		lateBus.clear();
+		Cinema.LOGGER.info("cinema audio: late-reverb wet sources released");
 	}
 
 	private void clearRawHistory() {
@@ -752,6 +943,13 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			if (smoothPosition(slot.position, slot.targetPosition, alpha)) {
 				alSource3f(slot.source, AL_POSITION, slot.position[0],
 					slot.position[1], slot.position[2]);
+			}
+		}
+		if (wetSourcesAllocated) {
+			for (int channel = 0; channel < WET_SOURCES; channel++) {
+				float[] position = renderedPositions[channel];
+				alSource3f(wetSources[channel], AL_POSITION,
+					position[0], position[1], position[2]);
 			}
 		}
 	}
@@ -869,6 +1067,10 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			float[] position = renderedPositions[channel];
 			alSource3f(sources[channel], AL_POSITION,
 				position[0], position[1], position[2]);
+			if (wetSourcesAllocated) {
+				alSource3f(wetSources[channel], AL_POSITION,
+					position[0], position[1], position[2]);
+			}
 		}
 		lastPositionUpdateNanos = System.nanoTime();
 	}
@@ -893,18 +1095,27 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			1.0 - Math.exp(-dt / GAIN_SMOOTHING_SECONDS));
 		float master = masterMuted ? 0.0f : BASE_GAIN * masterGain;
 		float[] gains = channelGains;
+		float[] lateSendGains = channelLateSendGains;
 		float[] occlusionGains = channelOcclusionGains;
 		for (int i = 0; i < SPEAKERS; i++) {
 			float occlusionTarget = occlusionGains[i];
 			renderedOcclusionGains[i] += (occlusionTarget - renderedOcclusionGains[i])
+				* (float) alpha;
+			float lateSendTarget = lateSendGains[i];
+			renderedLateSendGains[i] += (lateSendTarget - renderedLateSendGains[i])
 				* (float) alpha;
 			float[] position = renderedPositions[i];
 			double radius = Math.sqrt(position[0] * position[0]
 				+ position[1] * position[1] + position[2] * position[2]);
 			double distanceGain = 1.0
 				/ Math.max(AirAbsorption.REFERENCE_DISTANCE_METERS, radius);
-			float target = (float) (master * gains[i] * distanceGain
+			float sourceGain = (float) (gains[i] * distanceGain
 				* renderedOcclusionGains[i]);
+			if (!Float.isFinite(sourceGain)) {
+				sourceGain = 0.0f;
+			}
+			renderedChannelGains[i] = sourceGain;
+			float target = master * sourceGain;
 			if (!Float.isFinite(target)) {
 				target = 0.0f;
 			}
@@ -941,6 +1152,70 @@ public final class CinemaAudioEngine implements AutoCloseable {
 				alSourcef(slot.source, AL_GAIN, target);
 			}
 		}
+		// The send carries speaker trim/distance/occlusion but not the receiver
+		// master. The smoothed late trim and receiver master are applied through
+		// the wet source AL_GAIN so trim/volume/mute also affect already queued
+		// blocks on the next mixer update. If the requested gain is above the
+		// usual AL_GAIN ceiling of 1.0 (positive late trim), only that excess is
+		// baked into newly generated samples.
+		LateReverbSettings settings = lateSettings;
+		float lateGain = settings.enabled()
+			? (float) Math.pow(10.0, settings.wetGainDb() / 20.0) : 0.0f;
+		wetTrimGain += (lateGain - wetTrimGain) * (float) alpha;
+		if (!Float.isFinite(wetTrimGain)) {
+			wetTrimGain = 0.0f;
+		}
+		float wetTarget = master * wetTrimGain;
+		float sampleGain = 1.0f;
+		if (wetTarget > MAX_WET_SOURCE_GAIN) {
+			sampleGain = wetTarget / MAX_WET_SOURCE_GAIN;
+			wetTarget = MAX_WET_SOURCE_GAIN;
+		}
+		if (!Float.isFinite(wetTarget) || !Float.isFinite(sampleGain)) {
+			wetTarget = 0.0f;
+			sampleGain = 1.0f;
+		}
+		wetSampleGain = sampleGain;
+		if (wetSourcesAllocated && (Float.isNaN(appliedWetGain)
+			|| Math.abs(wetTarget - appliedWetGain) >= 0.0005f)) {
+			appliedWetGain = wetTarget;
+			for (int channel = 0; channel < WET_SOURCES; channel++) {
+				alSourcef(wetSources[channel], AL_GAIN, wetTarget);
+			}
+		}
+	}
+
+	private void resetLateReverb() {
+		int version = lateSettingsVersion.get();
+		lateReverb.setSettings(lateSettings);
+		lateReverb.reset();
+		lateBus.clear();
+		appliedLateReflectionVersion = -1;
+		appliedLateSettingsVersion = version;
+		wetTrimGain = 0.0f;
+		wetSampleGain = 1.0f;
+		appliedWetGain = Float.NaN;
+	}
+
+	private void applyLateReverbSettings() {
+		int version = lateSettingsVersion.get();
+		boolean enabled = lateSettings.enabled();
+		if (enabled && !wetSourcesAllocated) {
+			setupWetSources();
+		} else if (!enabled && wetSourcesAllocated) {
+			releaseWetSources();
+		}
+		lateReverb.setSettings(lateSettings);
+		appliedLateSettingsVersion = version;
+	}
+
+	private void applyLateReflectionTaps() {
+		int version = lateReflectionVersion.get();
+		if (version == appliedLateReflectionVersion) {
+			return;
+		}
+		lateBus.setTaps(lateReflectionTargets);
+		appliedLateReflectionVersion = version;
 	}
 
 	private void pump() {
@@ -958,6 +1233,12 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		if (appliedReflectionVersion != reflectionVersion.get()) {
 			applyReflectionTargets();
 		}
+		if (appliedLateSettingsVersion != lateSettingsVersion.get()) {
+			applyLateReverbSettings();
+		}
+		if (appliedLateReflectionVersion != lateReflectionVersion.get()) {
+			applyLateReflectionTaps();
+		}
 		updateSourcePositions();
 		applyChannelGains();
 		reclaimProcessed();
@@ -965,7 +1246,8 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			pendingChunk = input.poll();
 			pendingFrameOffset = 0;
 		}
-		while (pendingChunk != null && allSpeakersFree() && allReflectionsFree()) {
+		while (pendingChunk != null && allSpeakersFree() && allReflectionsFree()
+			&& allWetSourcesFree()) {
 			int totalFrames = pendingChunk.samples().length / CHANNELS;
 			int frames = Math.min(BLOCK_FRAMES, totalFrames - pendingFrameOffset);
 			if (frames <= 0) {
@@ -1007,6 +1289,18 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		return true;
 	}
 
+	private boolean allWetSourcesFree() {
+		if (!wetSourcesAllocated) {
+			return true;
+		}
+		for (Deque<Integer> free : wetFreeBuffers) {
+			if (free.isEmpty()) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	private void queueBlock(AudioChunk chunk, int frameOffset, int frames) {
 		float[] samples = chunk.samples();
 		if (blockScratch.length < frames) {
@@ -1016,6 +1310,19 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		// directivity, air absorption and occlusion are applied. Copy it into
 		// the delay ring before any direct processing mutates the scratch.
 		writeRawHistory(samples, frameOffset, frames);
+		boolean lateActive = wetSourcesAllocated && lateSettings.enabled();
+		if (lateActive) {
+			// The geometric bus reads the raw interleaved 5.1 source channels
+			// directly, before the direct-path FIR. Each tap already carries its
+			// path gain, speaker trim and reflection-FIR level from the client
+			// thread; the bus only adds delay, gain and damping.
+			for (int channel = 0; channel < LateReflectionBus.CHANNELS; channel++) {
+				float[] busInput = lateBusInput[channel];
+				for (int i = 0; i < frames; i++) {
+					busInput[i] = samples[(frameOffset + i) * CHANNELS + channel];
+				}
+			}
+		}
 		for (int channel = 0; channel < SPEAKERS; channel++) {
 			firProcessors[channel].process(samples, CHANNELS, channel, frameOffset,
 				frames, blockScratch);
@@ -1044,6 +1351,30 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		}
 		for (ReflectionSlot slot : reflectionSlots) {
 			queueReflectionBlock(slot, frames);
+		}
+		if (lateActive) {
+			lateBus.process(lateBusInput, frames, lateBusOutput);
+			float sampleGain = wetSampleGain;
+			for (int channel = 0; channel < WET_SOURCES; channel++) {
+				float[] wet = lateBusOutput[channel];
+				// Attenuation/mute is handled by AL_GAIN; only the positive-trim
+				// excess above the gain ceiling is applied to the samples here.
+				if (sampleGain != 1.0f) {
+					for (int i = 0; i < frames; i++) {
+						wet[i] *= sampleGain;
+					}
+				}
+				int buffer = wetFreeBuffers[channel].removeFirst();
+				uploadSamples(buffer, wet, frames);
+				alSourceQueueBuffers(wetSources[channel], buffer);
+				// Wet sources are created lazily when late reverb is enabled
+				// during playback; queuing a buffer does not start them.
+				if (started && !paused
+					&& alGetSourcei(wetSources[channel], AL_SOURCE_STATE)
+						!= AL_PLAYING) {
+					alSourcePlay(wetSources[channel]);
+				}
+			}
 		}
 		double start = chunk.startPtsSeconds() + frameOffset / (double) SAMPLE_RATE;
 		double duration = frames / (double) SAMPLE_RATE;
@@ -1103,7 +1434,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	 * keep the same queue depth and media-time alignment. The tap delay is
 	 * read from the raw ring; the per-tap FIR carries the full reflection
 	 * frequency shape: on-axis/directivity, air absorption, material reflection,
-	 * occlusion low-pass and the Schroeder hard cut.
+	 * occlusion low-pass; first-order reflections remain full-band.
 	 */
 	private void queueReflectionBlock(ReflectionSlot slot, int frames) {
 		int buffer = slot.freeBuffers.removeFirst();
@@ -1187,6 +1518,11 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		for (ReflectionSlot slot : reflectionSlots) {
 			SOFTSourceStartDelay.alSourcePlayAtTimeSOFT(slot.source, scheduled);
 		}
+		for (int source : wetSources) {
+			if (source != 0) {
+				SOFTSourceStartDelay.alSourcePlayAtTimeSOFT(source, scheduled);
+			}
+		}
 		started = true;
 		Cinema.LOGGER.info("cinema audio: six sources scheduled in {} ms (src0 state={}, gain={}, queued={}, muted={})",
 			String.format("%.1f", (scheduled - now) / 1e6),
@@ -1222,6 +1558,16 @@ public final class CinemaAudioEngine implements AutoCloseable {
 				alSourcePause(slot.source);
 			} else {
 				alSourcePlay(slot.source);
+			}
+		}
+		for (int source : wetSources) {
+			if (source == 0) {
+				continue;
+			}
+			if (paused) {
+				alSourcePause(source);
+			} else {
+				alSourcePlay(source);
 			}
 		}
 	}
@@ -1283,6 +1629,23 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			}
 			reflectionReclaimScratch.limit(reflectionReclaimScratch.capacity());
 		}
+		if (wetSourcesAllocated) {
+			for (int channel = 0; channel < WET_SOURCES; channel++) {
+				int processed = alGetSourcei(wetSources[channel],
+					AL_BUFFERS_PROCESSED);
+				if (processed <= 0) {
+					continue;
+				}
+				reflectionReclaimScratch.clear();
+				int count = Math.min(processed, reflectionReclaimScratch.capacity());
+				reflectionReclaimScratch.limit(count);
+				alSourceUnqueueBuffers(wetSources[channel], reflectionReclaimScratch);
+				for (int i = 0; i < count; i++) {
+					wetFreeBuffers[channel].addLast(reflectionReclaimScratch.get(i));
+				}
+				reflectionReclaimScratch.limit(reflectionReclaimScratch.capacity());
+			}
+		}
 	}
 
 	private void cleanup() {
@@ -1316,6 +1679,23 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			Arrays.fill(slot.buffers, 0);
 			slot.freeBuffers.clear();
 		}
+		for (int channel = 0; channel < WET_SOURCES; channel++) {
+			if (wetSources[channel] != 0) {
+				alSourceStop(wetSources[channel]);
+				alDeleteSources(wetSources[channel]);
+				wetSources[channel] = 0;
+			}
+			for (int buffer : wetBuffers[channel]) {
+				if (buffer != 0) {
+					alDeleteBuffers(buffer);
+				}
+			}
+			Arrays.fill(wetBuffers[channel], 0);
+			wetFreeBuffers[channel].clear();
+		}
+		wetSourcesAllocated = false;
+		appliedLateReflectionVersion = -1;
+		lateBus.clear();
 	}
 
 	private static void checkError(String where) {
@@ -1394,6 +1774,28 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			slot.appliedGain = 0.0f;
 			alSourcef(slot.source, AL_GAIN, 0.0f);
 		}
+		if (wetSourcesAllocated) {
+			for (int channel = 0; channel < WET_SOURCES; channel++) {
+				alSourceStop(wetSources[channel]);
+				int queued = alGetSourcei(wetSources[channel], AL_BUFFERS_QUEUED);
+				if (queued > 0) {
+					IntBuffer released = BufferUtils.createIntBuffer(queued);
+					alSourceUnqueueBuffers(wetSources[channel], released);
+					for (int i = 0; i < queued; i++) {
+						int buffer = released.get(i);
+						if (buffer == 0) {
+							valid = false;
+						} else {
+							wetFreeBuffers[channel].addLast(buffer);
+						}
+					}
+				}
+				alSourcei(wetSources[channel], AL_BUFFER, 0);
+				alSourceRewind(wetSources[channel]);
+				alSourcef(wetSources[channel], AL_GAIN, 0.0f);
+			}
+		}
+		resetLateReverb();
 		clearRawHistory();
 		appliedReflectionVersion = -1;
 		int error = alGetError();
@@ -1435,6 +1837,11 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		}
 		for (ReflectionSlot slot : reflectionSlots) {
 			if (slot == null || slot.freeBuffers.size() != BUFFER_COUNT) {
+				return false;
+			}
+		}
+		for (Deque<Integer> free : wetFreeBuffers) {
+			if (wetSourcesAllocated && free.size() != BUFFER_COUNT) {
 				return false;
 			}
 		}

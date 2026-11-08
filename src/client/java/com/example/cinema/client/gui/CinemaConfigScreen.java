@@ -23,22 +23,21 @@ import java.util.function.DoubleConsumer;
  * the screen closes. The screen-size launch property still overrides the saved
  * value; the control is disabled and the override is shown in the panel.
  *
- * <p>The left column holds screen and direct-path acoustics settings: ISO
- * 9613-1 air absorption, temperature, humidity and the debug-only early
- * reflection gain. The right column holds the behavior switches that change
- * vanilla interaction. Early gain has no audible effect until early reflections
- * exist; the note in the panel says so instead of pretending it is calibrated.
+ * <p>The left column holds screen and acoustics settings: ISO 9613-1 air
+ * absorption, temperature, humidity, the debug-only early reflection gain and
+ * the full-band late-reverb switch/trim. The right column holds the
+ * behavior switches that change vanilla interaction.
  *
  * <p>Video output resolution/processing is intentionally not exposed here; it
  * belongs to the future AV Receiver Video Processing module.
  */
 public final class CinemaConfigScreen extends Screen {
 	private static final int PANEL_MAX_WIDTH = 500;
-	private static final int PANEL_MAX_HEIGHT = 280;
+	private static final int PANEL_MAX_HEIGHT = 300;
 	private static final int ROW_HEIGHT = 18;
 	private static final int ROW_SPACING = 20;
 	private static final int COLUMN_GAP = 8;
-	private static final int COMPACT_HEIGHT = 260;
+	private static final int COMPACT_HEIGHT = 290;
 	private static final long SAVE_DEBOUNCE_MS = 250L;
 
 	private final Screen parent;
@@ -50,6 +49,8 @@ public final class CinemaConfigScreen extends Screen {
 	private double draftAirTemperatureC;
 	private double draftAirHumidityPercent;
 	private double draftEarlyGainDb;
+	private boolean draftLateReverb;
+	private double draftLateTrimDb;
 	private boolean closing;
 	private boolean savePending;
 	private long saveAtMillis;
@@ -78,6 +79,8 @@ public final class CinemaConfigScreen extends Screen {
 	private ValueSlider temperatureSlider;
 	private ValueSlider humiditySlider;
 	private ValueSlider earlyGainSlider;
+	private ValueSlider lateGainSlider;
+	private Button lateButton;
 	private Button airButton;
 	private Button pauseButton;
 	private Button emptyHandButton;
@@ -95,6 +98,8 @@ public final class CinemaConfigScreen extends Screen {
 		draftAirTemperatureC = config.airTemperatureC();
 		draftAirHumidityPercent = config.airHumidityPercent();
 		draftEarlyGainDb = config.earlyGainDb();
+		draftLateReverb = config.lateReverb();
+		draftLateTrimDb = config.lateTrimDb();
 	}
 
 	@Override
@@ -120,7 +125,7 @@ public final class CinemaConfigScreen extends Screen {
 			screenNoteY = -1;
 			columnLabelY = top + 56;
 			firstRowY = top + 68;
-			noteY = top + 148;
+			noteY = top + 190;
 			pathY = -1;
 		} else {
 			screenLabelY = top + 24;
@@ -128,7 +133,7 @@ public final class CinemaConfigScreen extends Screen {
 			screenNoteY = top + 62;
 			columnLabelY = top + 88;
 			firstRowY = top + 102;
-			noteY = top + 190;
+			noteY = top + 226;
 			pathY = contentBottom - 12;
 		}
 
@@ -157,6 +162,14 @@ public final class CinemaConfigScreen extends Screen {
 			"Early gain (debug): %+.1f dB", CinemaClientConfig.MIN_EARLY_GAIN_DB,
 			CinemaClientConfig.MAX_EARLY_GAIN_DB, 0.5, draftEarlyGainDb,
 			value -> draftEarlyGainDb = value));
+		lateButton = addRenderableWidget(toggle(leftColumnX,
+			firstRowY + ROW_SPACING * 4, "Late reverb", () -> draftLateReverb,
+			value -> draftLateReverb = value));
+		lateGainSlider = addRenderableWidget(new ValueSlider(leftColumnX,
+			firstRowY + ROW_SPACING * 5, leftColumnWidth,
+			"Late trim: %+.1f dB", CinemaClientConfig.MIN_LATE_TRIM_DB,
+			CinemaClientConfig.MAX_LATE_TRIM_DB, 0.5, draftLateTrimDb,
+			value -> draftLateTrimDb = value));
 
 		pauseButton = addRenderableWidget(toggle(rightColumnX, firstRowY,
 			"Pause in device GUIs", () -> draftPauseGameInDeviceGuis,
@@ -202,6 +215,8 @@ public final class CinemaConfigScreen extends Screen {
 		draftAirTemperatureC = CinemaClientConfig.DEFAULT_AIR_TEMPERATURE_C;
 		draftAirHumidityPercent = CinemaClientConfig.DEFAULT_AIR_HUMIDITY_PERCENT;
 		draftEarlyGainDb = CinemaClientConfig.DEFAULT_EARLY_GAIN_DB;
+		draftLateReverb = CinemaClientConfig.DEFAULT_LATE_REVERB;
+		draftLateTrimDb = CinemaClientConfig.DEFAULT_LATE_TRIM_DB;
 		if (screenSlider != null) {
 			screenSlider.setActual(draftScreenMaxSize);
 		}
@@ -213,6 +228,12 @@ public final class CinemaConfigScreen extends Screen {
 		}
 		if (earlyGainSlider != null) {
 			earlyGainSlider.setActual(draftEarlyGainDb);
+		}
+		if (lateGainSlider != null) {
+			lateGainSlider.setActual(draftLateTrimDb);
+		}
+		if (lateButton != null) {
+			lateButton.setMessage(toggleLabel("Late reverb", draftLateReverb));
 		}
 		if (airButton != null) {
 			airButton.setMessage(toggleLabel("Air absorption", draftAirAbsorption));
@@ -248,6 +269,8 @@ public final class CinemaConfigScreen extends Screen {
 		config.setAirTemperatureC(draftAirTemperatureC);
 		config.setAirHumidityPercent(draftAirHumidityPercent);
 		config.setEarlyGainDb(draftEarlyGainDb);
+		config.setLateReverb(draftLateReverb);
+		config.setLateTrimDb(draftLateTrimDb);
 		config.save();
 		ProjectorOptics.clearCache();
 	}
@@ -301,7 +324,7 @@ public final class CinemaConfigScreen extends Screen {
 			y += 11;
 		}
 		graphics.drawString(font, truncate(
-				"Early gain is debug only; no effect until reflections exist.",
+				"Late level is computed from room constant; the slider is trim.",
 				contentWidth),
 			contentLeft, y, 0x9A9A9A, false);
 		if (!compact) {
@@ -334,8 +357,19 @@ public final class CinemaConfigScreen extends Screen {
 				mouseX, mouseY);
 		} else if (isOver(earlyGainSlider, mouseX, mouseY)) {
 			renderSettingTooltip(graphics,
-				"Debug-only early reflection gain. No audible effect until early "
-					+ "reflections are implemented.",
+				"Debug-only early reflection gain. The physical early-reflection "
+					+ "level comes from distance, material and directivity.",
+				mouseX, mouseY);
+		} else if (isOver(lateButton, mouseX, mouseY)) {
+			renderSettingTooltip(graphics,
+				"Eight-line full-band late field. Only a 20 Hz DC high-pass is "
+					+ "applied; LFE is included, and room modes remain A5's concern.",
+				mouseX, mouseY);
+		} else if (isOver(lateGainSlider, mouseX, mouseY)) {
+			renderSettingTooltip(graphics,
+				"Trim added to the computed source-power late gain. The gain uses "
+					+ "room constant, source power and measured directivity; the "
+					+ "dry and early-reflection paths are unchanged.",
 				mouseX, mouseY);
 		} else if (isOver(pauseButton, mouseX, mouseY)) {
 			renderSettingTooltip(graphics,

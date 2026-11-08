@@ -11,15 +11,15 @@ import com.example.cinema.client.audio.speakerdata.SpeakerDataProfile;
  *
  * <p>The profile carries every frequency-shaping input: speaker on-axis and
  * directivity response, path air absorption, optional material reflection and
- * occlusion low-pass, and optional Schroeder-frequency cut. Broadband levels
- * are not part of the profile; they are applied to the source gain.
+ * occlusion low-pass. First-order reflections remain full-band. Broadband
+ * levels are not part of the profile; they are applied to the source gain.
  *
  * <p>Values are quantized in the compact constructor so the cache key is
  * bounded: angles in 5 degree steps, path length in 0.5 m steps, temperature
- * in 0.5 C steps, humidity in 2 % steps, pressure in 0.1 kPa steps, occlusion
- * cutoff in 100 Hz (direct) or 10 Hz (reflection) steps and Schroeder
- * frequency in 10 Hz steps. The occlusion field carries only cutoff/order; its
- * broadband attenuation stays in the source gain.
+ * in 0.5 C steps, humidity in 2 % steps, pressure in 0.1 kPa steps and
+ * occlusion cutoff in 100 Hz (direct) or 10 Hz (reflection) steps. The
+ * occlusion field carries only cutoff/order; its broadband attenuation stays
+ * in the source gain.
  */
 public record CommonAcousticFirProfile(Role role,
 									   SpeakerDataProfile speaker,
@@ -32,7 +32,6 @@ public record CommonAcousticFirProfile(Role role,
 									   double pressureKpa,
 									   AcousticMaterial material,
 									   OcclusionResult occlusion,
-									   double schroederHz,
 									   int taps,
 									   int fftSize) {
 	public enum Role {
@@ -44,9 +43,6 @@ public record CommonAcousticFirProfile(Role role,
 	public static final int DIRECT_FFT_SIZE = 8_192;
 	public static final int REFLECTION_TAPS = 2_048;
 	public static final int REFLECTION_FFT_SIZE = 8_192;
-	public static final double MIN_SCHROEDER_HZ = 50.0;
-	public static final double MAX_SCHROEDER_HZ = 2_000.0;
-	public static final double DEFAULT_SCHROEDER_HZ = 1_000.0;
 
 	public CommonAcousticFirProfile {
 		role = role == null ? Role.DIRECT : role;
@@ -68,11 +64,7 @@ public record CommonAcousticFirProfile(Role role,
 		occlusion = new OcclusionResult(0.0,
 			Math.round(occlusion.cutoffHz() / cutoffStep) * cutoffStep,
 			occlusion.order());
-		if (role == Role.REFLECTION) {
-			schroederHz = quantize(schroederHz, 10.0, MIN_SCHROEDER_HZ,
-				MAX_SCHROEDER_HZ, DEFAULT_SCHROEDER_HZ);
-		} else {
-			schroederHz = 0.0;
+		if (role == Role.DIRECT) {
 			material = null;
 		}
 		if (taps <= 0) {
@@ -97,7 +89,7 @@ public record CommonAcousticFirProfile(Role role,
 												  OcclusionResult occlusion) {
 		return new CommonAcousticFirProfile(Role.DIRECT, speaker,
 			horizontalDegrees, verticalDegrees, distanceMeters, airAbsorption,
-			temperatureC, humidityPercent, pressureKpa, null, occlusion, 0.0,
+			temperatureC, humidityPercent, pressureKpa, null, occlusion,
 			DIRECT_TAPS, DIRECT_FFT_SIZE);
 	}
 
@@ -110,12 +102,11 @@ public record CommonAcousticFirProfile(Role role,
 													 double humidityPercent,
 													 double pressureKpa,
 													 AcousticMaterial material,
-													 OcclusionResult occlusion,
-													 double schroederHz) {
+													 OcclusionResult occlusion) {
 		return new CommonAcousticFirProfile(Role.REFLECTION, speaker,
 			horizontalDegrees, verticalDegrees, pathLengthMeters, airAbsorption,
 			temperatureC, humidityPercent, pressureKpa, material, occlusion,
-			schroederHz, REFLECTION_TAPS, REFLECTION_FFT_SIZE);
+			REFLECTION_TAPS, REFLECTION_FFT_SIZE);
 	}
 
 	public boolean isReflection() {

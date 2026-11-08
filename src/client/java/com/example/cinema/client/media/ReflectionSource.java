@@ -13,7 +13,7 @@ import com.example.cinema.client.audio.directivity.MinimumPhaseFir;
  * {@code sqrt(1 - alpha_mid)}, the Java {@code 1/max(L,1)} distance rule and
  * the combined broadband occlusion gain of both legs. {@code filter} carries
  * the remaining frequency shape: on-axis/directivity, air absorption, material
- * reflection, occlusion low-pass and the Schroeder hard cut.
+ * reflection and occlusion low-pass; first-order reflections remain full-band.
  *
  * <p>The {@code key} is {@code channel + ":" + planeKey}; it keeps a tap on the
  * same OpenAL source while the listener moves, so only delay/gain/position are
@@ -31,7 +31,7 @@ public record ReflectionSource(String key, int channel,
 		z = Float.isFinite(z) ? z : 0.0f;
 		gain = Float.isFinite(gain) ? Math.max(0.0f, gain) : 0.0f;
 		delaySeconds = Double.isFinite(delaySeconds)
-			? Math.max(0.0, Math.min(0.080, delaySeconds)) : 0.0;
+			? Math.max(0.0, Math.min(0.160, delaySeconds)) : 0.0;
 		filter = filter == null ? MinimumPhaseFir.FLAT : filter;
 	}
 }

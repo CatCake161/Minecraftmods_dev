@@ -41,12 +41,19 @@ public final class CinemaClientConfig {
 	public static final double MIN_AIR_HUMIDITY_PERCENT = 0.0;
 	public static final double MAX_AIR_HUMIDITY_PERCENT = 100.0;
 	public static final double DEFAULT_AIR_HUMIDITY_PERCENT = 50.0;
-	/** Debug only; no audible effect until early reflections are implemented. */
+	/** Debug only; early reflection level. */
 	public static final double MIN_EARLY_GAIN_DB = -24.0;
 	public static final double MAX_EARLY_GAIN_DB = 12.0;
 	public static final double DEFAULT_EARLY_GAIN_DB = 0.0;
+	/** Full-band statistical late field; low-frequency modes remain A5's concern. */
+	public static final boolean DEFAULT_LATE_REVERB = false;
+	/** User trim added to the computed source-power late gain. */
+	public static final double MIN_LATE_TRIM_DB = -24.0;
+	public static final double MAX_LATE_TRIM_DB = 6.0;
+	public static final double DEFAULT_LATE_TRIM_DB = 0.0;
 
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+	private static final int CONFIG_VERSION = 2;
 	private static final CinemaClientConfig INSTANCE = load();
 	private static final Integer SCREEN_MAX_SIZE_OVERRIDE = readScreenMaxSizeOverride();
 
@@ -58,6 +65,8 @@ public final class CinemaClientConfig {
 	private double airTemperatureC = DEFAULT_AIR_TEMPERATURE_C;
 	private double airHumidityPercent = DEFAULT_AIR_HUMIDITY_PERCENT;
 	private double earlyGainDb = DEFAULT_EARLY_GAIN_DB;
+	private boolean lateReverb = DEFAULT_LATE_REVERB;
+	private double lateTrimDb = DEFAULT_LATE_TRIM_DB;
 
 	private CinemaClientConfig() {
 	}
@@ -141,8 +150,25 @@ public final class CinemaClientConfig {
 		earlyGainDb = clamp(value, MIN_EARLY_GAIN_DB, MAX_EARLY_GAIN_DB);
 	}
 
+	public boolean lateReverb() {
+		return lateReverb;
+	}
+
+	public void setLateReverb(boolean value) {
+		lateReverb = value;
+	}
+
+	public double lateTrimDb() {
+		return lateTrimDb;
+	}
+
+	public void setLateTrimDb(double value) {
+		lateTrimDb = clamp(value, MIN_LATE_TRIM_DB, MAX_LATE_TRIM_DB);
+	}
+
 	public synchronized void save() {
 		JsonObject root = new JsonObject();
+		root.addProperty("configVersion", CONFIG_VERSION);
 		root.addProperty("screenMaxSize", screenMaxSize);
 		root.addProperty("pauseGameInDeviceGuis", pauseGameInDeviceGuis);
 		root.addProperty("emptyHandOpensDeviceGuis", emptyHandOpensDeviceGuis);
@@ -151,6 +177,8 @@ public final class CinemaClientConfig {
 		root.addProperty("airTemperatureC", airTemperatureC);
 		root.addProperty("airHumidityPercent", airHumidityPercent);
 		root.addProperty("earlyGainDb", earlyGainDb);
+		root.addProperty("lateReverb", lateReverb);
+		root.addProperty("lateTrimDb", lateTrimDb);
 		Path file = configFile();
 		try {
 			Files.createDirectories(file.getParent());
@@ -160,10 +188,11 @@ public final class CinemaClientConfig {
 				"cinema config: saved {} (screenMaxSize={}, pauseGameInDeviceGuis={}, "
 					+ "emptyHandOpensDeviceGuis={}, spikeModifiesWorld={}, "
 					+ "airAbsorption={}, airTemperatureC={}, airHumidityPercent={}, "
-					+ "earlyGainDb={})",
+					+ "earlyGainDb={}, lateReverb={}, lateTrimDb={})",
 				file, screenMaxSize, pauseGameInDeviceGuis,
 				emptyHandOpensDeviceGuis, spikeModifiesWorld,
-				airAbsorption, airTemperatureC, airHumidityPercent, earlyGainDb);
+				airAbsorption, airTemperatureC, airHumidityPercent, earlyGainDb,
+				lateReverb, lateTrimDb);
 		} catch (IOException e) {
 			Cinema.LOGGER.warn("cinema config: could not save {}: {}", file, e.getMessage());
 		}
@@ -189,6 +218,8 @@ public final class CinemaClientConfig {
 		try {
 			JsonObject root = JsonParser.parseString(Files.readString(file, StandardCharsets.UTF_8))
 				.getAsJsonObject();
+			int version = root.has("configVersion")
+				? root.get("configVersion").getAsInt() : 1;
 			if (root.has("screenMaxSize")) {
 				config.screenMaxSize = clampScreenMaxSize(root.get("screenMaxSize").getAsInt());
 			}
@@ -219,15 +250,35 @@ public final class CinemaClientConfig {
 				config.earlyGainDb = clamp(root.get("earlyGainDb").getAsDouble(),
 					MIN_EARLY_GAIN_DB, MAX_EARLY_GAIN_DB);
 			}
+			if (version < 2) {
+				// A3 late reverb failed listening acceptance. Existing configs
+				// are migrated to the new default once; the Mod Menu toggle can
+				// still re-enable it for experiments.
+				config.lateReverb = false;
+				Cinema.LOGGER.info(
+					"cinema config: migrated to version {}; late reverb default is off",
+					CONFIG_VERSION);
+			} else if (root.has("lateReverb")) {
+				config.lateReverb = root.get("lateReverb").getAsBoolean();
+			}
+			if (root.has("lateTrimDb")) {
+				config.lateTrimDb = clamp(root.get("lateTrimDb").getAsDouble(),
+					MIN_LATE_TRIM_DB, MAX_LATE_TRIM_DB);
+			} else if (root.has("lateGainDb")) {
+				Cinema.LOGGER.info(
+					"cinema config: legacy lateGainDb is ignored; late level is "
+						+ "now computed from the room and the lateTrimDb offset is 0 dB");
+			}
 			Cinema.LOGGER.info(
 				"cinema config: loaded {} (screenMaxSize={}, pauseGameInDeviceGuis={}, "
 					+ "emptyHandOpensDeviceGuis={}, spikeModifiesWorld={}, "
 					+ "airAbsorption={}, airTemperatureC={}, airHumidityPercent={}, "
-					+ "earlyGainDb={})",
+					+ "earlyGainDb={}, lateReverb={}, lateTrimDb={})",
 				file, config.screenMaxSize, config.pauseGameInDeviceGuis,
 				config.emptyHandOpensDeviceGuis, config.spikeModifiesWorld,
 				config.airAbsorption, config.airTemperatureC,
-				config.airHumidityPercent, config.earlyGainDb);
+				config.airHumidityPercent, config.earlyGainDb,
+				config.lateReverb, config.lateTrimDb);
 		} catch (Exception e) {
 			Cinema.LOGGER.warn("cinema config: could not read {}: {}", file, e.getMessage());
 		}

@@ -40,17 +40,17 @@
 - [ ] 每扬声器距离/延迟校准（接收器 GUI）。
 - [ ] 世界坐标音频源迁移（若后续需要稳定世界坐标时）：`AL_SOURCE_RELATIVE=false` + listener 世界姿态 + 不可变快照；先做坐标等价测试与游戏内 A/B。评审见 `AUDIO-ACOUSTICS.md` §4.2.1，当前仍不迁移。
 
-## P1：音频计算 / 房间声学（A2 直达声、A2b 反射几何/播放已通过游戏内验收，A2c-R 已实现、游戏内 A/B 验收待做）
+## P1：音频计算 / 房间声学（A2 直达声、A2b 反射几何/播放已通过游戏内验收，A2c-R 游戏内 A/B 待做，A3 已实现但听感验收未通过，默认关闭/降级已接入）
 
 > 方案、可行性/声学判断见 [AUDIO-ACOUSTICS.md](design/AUDIO-ACOUSTICS.md)。
 > M4 扬声器路由已完成；A0 EFX spike、A1d 数据管线已通过；A2 直达声已通过游戏内听感验收（距离/空气/遮挡/配置 UI）。
 
 - [x] A0 EFX/EAXReverb spike：`/cinema_efx_spike` 游戏内通过。OpenAL Soft；EFX/HRTF/loopback/reopen/deviceClock=true；`ALC_MAX_AUXILIARY_SENDS=2`；shared-caps EFX call=OK；真实设备临时 context EFX=OK；5.1 wet 出现在 5 个非 LFE 声道；HRTF enabled；loopback CPU≈0.8%、≈123× realtime；reset=OK；探针后 UI 音效正常。未测：真实设备听感、物理设备切换、真实硬件延迟（听感留 A3/A4）
-- [ ] A0b EFX 不可用回退：禁用 late reverb 或最小 Java FDN；干声/播放不受影响
-- [x] A0c 决策门：EAXReverb late tail 可用且 wet 能覆盖 5.1；选择 EAXReverb 作为 late-tail 首选，FDN 仅作为 EFX 不可用/布局不合适的回退。结论已回写 AUDIO-ACOUSTICS.md
+- [x] A0b EFX 不可用回退：A3 改为 Java FDN 作为主路径，不依赖 EFX；EFX 不可用时直达/反射/晚期混响均不受影响
+- [x] A0c 决策门：A0 验证 EAXReverb late tail 可用；A3 最终选择可控的 Java 64-line FDN（便于全频带尾音、6 路去相关和 LFE 参与），EAXReverb 仅保留为后续可选 fallback。结论已回写 AUDIO-ACOUSTICS.md
 - [x] A1 声学数据模型：房间平面/包围盒、体积/表面积、材质吸收、扬声器位置/朝向/高度、玩家听者位置/朝向。已实现 `/cinema_acoustics` 快照；游戏内 dump 验证无明显问题
 - [ ] A1b 材质映射：已改为现实吸声系数的 3 频带估算（CDC/NIOSH、acoustic.ua；screen/植被/雪/多孔/金属为估计）；外部 JSON/数据驱动覆盖和试听校准待补
-- [x] A1c 房间检测：6 轴 × 25 射线扇形（可反射 2 次）+ 中位平面 + 9×9 材质采样（裁剪到平面边界） + 宽松内部空气验证 + 5 Hz 缓存 + fallback 保留真实面、缺失轴以已知面延伸 16 m/两面缺失时听者 ±8 m + 1.5 m 平面迟滞 + 有界 32³/8 ms flood fill（有效体积/面积、开口面、10 s 重扫、incomplete 回退盒值）；Fitzroy RT60（x/y/z 轴对面积加权）不设上下限（α_i=0 输出无穷，A3 再 clamp EAX 参数）；游戏内验证无明显问题
+- [x] A1c 房间检测：6 轴 × 25 射线扇形（可反射 2 次）+ 中位平面 + 9×9 材质采样（裁剪到平面边界） + 宽松内部空气验证 + 5 Hz 缓存 + fallback 保留真实面、缺失轴以已知面延伸 16 m/两面缺失时听者 ±8 m + 1.5 m 平面迟滞 + 有界 32³/8 ms flood fill（有效体积/面积、开口面、10 s 重扫、incomplete 回退盒值）；Fitzroy RT60（x/y/z 轴对面积加权）不设上下限（α_i=0 输出无穷，A3 映射 FDN 时 clamp 到 0.15–5.0 s）；游戏内验证无明显问题
 - [x] A1-RT60：Fitzroy 公式 `0.161 V/S² · Σ S_i/(-ln(1-α_i))`，按 flood-fill/盒面统计的 x/y/z 轴对面积与平均吸收计算；均匀吸收时退化为 Eyring；不设上下限
 - [x] A1 扬声器朝向：36 档 10° 声学 yaw + Speaker Alignment Tool（右键 +10°，潜行 -10°）；方块模型由 `SpeakerBlockEntityRenderer` 同步物理旋转；游戏内验证无明显问题
 - [x] A1d ASR/Spinorama 数据管线：只读 `SPL Horizontal.txt`/`SPL Vertical.txt`；保留原始 194/200 点频率网格、不降采样；补 `-180°`；按全频段能量平均计算 -10 dB 频率范围并取整到 1 Hz；删除 `quality`；21 个型号生成到本地 `run/cinema/speaker_data/profiles/`，**不打包**。转换器：`docs/examples/speaker_data/convert_spinorama.py`。待游戏内加载验证
@@ -59,17 +59,23 @@
 - [x] A2b 几何/可见性：`MirrorPlane`/`MirrorPlaneDiscovery`/`ImageSourceSolver`/`ReflectionProbe`；扬声器 26 方向射线（6 轴 + 12 棱对角 + 8 角对角，方向集合可扩展）+ 房间 `samples>0` / flood-fill 补丁种子 + 近共面容差合并（0.10 m）；R 处真实墙面/法线验证、`S→R`/`R→L` 两段遮挡扫描；纯几何 JUnit + 方向/合并测试通过；`/cinema_acoustics` 输出 planes/taps
 - [x] A2b 播放：每个 tap 一个独立 OpenAL source（镜像源位置，固定 32 source 池、最多 24 个活动 tap + 8 个淡入/淡出余量）、播放未处理 `sourceChannel` 的延迟副本（8192-frame 原始历史环、分数延迟 + 150 ms 平滑、30 ms 淡入/淡出）、每 tap 2048-tap 反射 FIR；反射 source 由 OpenAL 负责方向/声像，距离由 Java 按 `1/max(L,1)` 计算，不按 5.1 声道混入直达；增益按距离/反射系数/宽带遮挡一次计算，不设固定 -6..-12 dB 默认；`/cinema_acoustics` 输出几何 taps，播放日志输出活动 tap 数；**游戏内听感/CPU/多接收器验收已通过**
 - [x] A2c 扬声器指向性（直达）：目标幅度 = on-axis EQ + Spinorama H/V 相对指向性 + 空气 + 遮挡低通；单个 4096-tap 最小相位 FIR @48k（cepstrum），`overallGain` = on-axis + H/V 在 1 kHz 的电平；5° 角度缓存、异步设计、overlap-add 卷积；实测样本最大误差约 1.1 dB（JBL A180 0.69、Genelec 8351B 1.09、Adam T5V 0.50）；声学中心/朝向/低音炮 omni 已接入
-- [x] A2c-R 统一直达/反射 FIR：`CommonAcousticFirProfile` / `CommonAcousticFirDesigner`；直达 4096 taps，反射 **2048-tap**（8192 点 FFT，角度 = 扬声器→反射点）；反射 FIR 目标 = on-axis + H/V（相对 1 kHz）− 空气 + 材质相对形状 + 遮挡低通；`f_s = 2000·sqrt(RT60_mid/V_eff)`（钳位 50–2000 Hz，无效回退 1000 Hz），`f <= f_s` 硬切为 -96 dB；`overallGain` 与直达声同为 1 kHz 的 on-axis/H/V；`tap.gain()` 只保留 `sqrt(1-α_mid)/max(L,1)` × 遮挡宽带；材质/遮挡不再使用 biquad，删除 `trimGain()`；两段遮挡合并（衰减相加/较低截止/较高阶），被挡 tap 保留并衰减；flood-fill 补丁种子；**不实现散射**；单元测试通过，游戏内 A/B 验收待做
+- [x] A2c-R 统一直达/反射 FIR：`CommonAcousticFirProfile` / `CommonAcousticFirDesigner`；直达 4096 taps，反射 **2048-tap**（8192 点 FFT，角度 = 扬声器→反射点）；反射 FIR 目标 = on-axis + H/V（相对 1 kHz）− 空气 + 材质相对形状 + 遮挡低通；`f_s = 2000·sqrt(RT60_mid/V_eff)`（钳位 50–2000 Hz，无效回退 1000 Hz），一阶反射保持全频带，不做 `f_s` 高通/硬切；`overallGain` 与直达声同为 1 kHz 的 on-axis/H/V；`tap.gain()` 只保留 `sqrt(1-α_mid)/max(L,1)` × 遮挡宽带；材质/遮挡不再使用 biquad，删除 `trimGain()`；两段遮挡合并（衰减相加/较低截止/较高阶），被挡 tap 保留并衰减；flood-fill 补丁种子；**不实现散射**；单元测试通过，游戏内 A/B 验收待做
 - [x] A2c-R 性能修复（2026-11-08）：日志显示 3 分钟内 1953 次直达 FIR 设计、平均 34 ms（峰值 15–22 次/秒），设计 worker 饱和。优化 `overallDb`/材质曲线复用、512 点目标曲线预计算、8192 点 FFT 误差评估后，实测单次设计约 **1–2 ms**；直达设计改为 **12 次 burst + 20 次/秒** token bucket，反射 24 + 30 次/秒；缓存上限 2048，超限按批淘汰而不是全清；移动时可接近 20 Hz 刷新，增益/位置/遮挡宽带仍 20 Hz 更新
 - [x] A2b tap 稳定性（2026-11-08）：`AcousticRoom.reflectionKey()` 只包含边界/材质/fill 补丁指纹，`MirrorPlaneDiscovery` 不再用每 5 Hz 变化的 snapshot version 做缓存键；bounded 反射点 margin 提高到 0.10 m；`ImageSourceSolver.strongest` 对已有 `(channel, planeKey)` 加约 1 dB 迟滞，新 tap 需明显更强才替换；减少移动时 tap 闪烁/重排
 - [x] A2d 直达声 A/B/CPU：单个 4096-tap 联合 FIR 的听感、移动/转头更新、约 ±1 dB 实测确认；32-bit float source buffer（`AL_EXT_FLOAT32`）、30 ms 半径 + 球面方向（slerp）声像平滑、30 ms 遮挡增益平滑已接入；游戏内复测通过：快速转头/移动无爆音或削波，遮挡切换正常，距离/空气/遮挡/指向性各只应用一次
 - [x] A2e Mod Menu 声学设置：空气吸收开关/温度/湿度、`earlyGainDb` 调试滑杆（仅调试，默认 0 dB，现已作用于反射 source 电平）；已持久化到 `config/cinema.json`
-- [ ] A3 晚期混响：EAXReverb 仅 late tail（`REFLECTIONS_GAIN=0`、`ECHO_DEPTH=0`）、RT60 Fitzroy、HF/LF ratio、density/diffusion、modulation、air absorption
-- [ ] A3b 自定义 FDN 回退（可选）：8 线 FDN、吸收滤波、6 声道 wet、稳定性限制
+- [x] A3 全频带晚期混响（2026-11-08）：Java **64-line FDN**（4 级输入扩散 + 轻量慢速调制 + 高频阻尼输出 + 120 Hz 低频支撑 + 7 kHz 输出低通），Householder 混合、逐线 `g_i = 10^(-3 L_i/RT60_mid)`、200 Hz low-shelf 实现 `RT60_low`、按 `RT60_high` 在 4 kHz 求一阶阻尼极点、20 Hz DC 高通（`f_s` 以下保留）、20–50 ms pre-delay、64 点 Hadamard 生成 6 个去相关 wet 声道（LFE 也参与 send 和 wet 输出）；每接收器在启用时创建 6 个 wet source/buffer，默认关闭时不分配；发送改为直达 FIR 之前的原始 5.1 声道 × source power（`onAxis × √∫g²dΩ × occlusion`），unity 权重 `{1,1,1,1,1,1}` 保证 `Σw²P=ΣP`；FDN 输出按 mid-band 环路增益归一化，高频阻尼降低总 wet 能量。`LateReverbSettings` 约 20 Hz 更新，block 边界 80 ms 平滑（pre-delay 150 ms）；seek/reset/device rebuild 清空状态。`LateReverbTest` 覆盖稳定性、脉冲衰减、LFE wet 活跃、6 声道去相关、mid-band 归一化、阻尼后能量下降、低频 RT60 差异、10 kHz 高频衰减；**2026-11-08 听感验收结论：不通过（高频“沙沙”、低频不足、整体音色不平衡），当前方案基本失败；已默认关闭晚期混响。**
+- [x] A3 验收/降级（2026-11-08）：A3 晚期混响听感验收不通过，继续调 FDN 参数收益低。已执行降级方案 B：`DEFAULT_LATE_REVERB=false`；`CinemaAudioEngine` 在启用时才创建 6 个 wet source，禁用时释放 source/buffer 并跳过 FDN 处理和 late send。保留 `LateReverb`、配置/UI 和测试作为实验路径；配置版本升到 2，旧配置会迁移一次并把 `lateReverb` 置为 false，仍可在 Mod Menu 重新开启。默认路径只保留直达 4096-tap FIR + 一阶反射 2048-tap FIR。低频模态/SBIR 仍归 A5，不再靠加 FDN line 数解决。
+- [x] A3-R1 高阶反射几何 spike（2026-11-08）：新增 `ImageSourcePathSolver` / `ReflectionPathTap`，支持 2–5 阶镜像源、完整 plane 序列、逐点 `wallAt` 和分段遮挡；6 面矩形房间单扬声器累计有效路径 **18 / 56 / 122 / 224**（2/3/4/5 阶），JVM 热身后纯几何约 **2–3 ms/扬声器**（不含真实 `ReflectionProbe`）。新增 `/cinema_acoustics paths [order]` 诊断命令，用真实世界统计路径数/延迟/耗时，默认 order 3、每扬声器 cap 256；spike 本身不接入音频。
+- [x] A3-R2a order-2 geometric late bus 接入（2026-11-08）：`LateReflectionBus` 已接入 `CinemaAudioEngine`，复用 lazy wet source；`AvReceiverPlayback` 在 5 Hz 反射更新里生成 order-2 路径并发布；`lateReverb` 开关现在驱动几何 bus，FDN `LateReverb` 保留但 inactive；默认 `lateReverb=false`；30 ms fade-in、seek/reset 后重新应用 taps；78 项测试通过。**首轮游戏内听感：变化较微妙，但方向正确；无其他问题。**
+- [x] A3-R2b 动态规划 order-4 增量接入 + premium per-tap（2026-11-08）：真实世界路径探测只能留在客户端线程。**动态稳态**按 listener 移动 EMA 取 150–600 ms；**phase fast** 也使用可恢复 `ImageSourcePathSolver.Session`，每个 client tick 只跑 **4 ms**，按扬声器逐步完成 order-3；**phase deep** 同样每 tick 4 ms 完成 order-4（默认 visit cap 200k、path cap 512）。两阶段都不再按 200 ms 批量求解，避免单帧尖峰。移动 >0.15 m 会中止并回到 order-2。**premium per-tap：一阶 24 + 最强 16 条二阶 + 8 条三阶走完整 2048-tap FIR；其余二阶/三阶/四阶进 bus 并从 bus 剔除 premium；反射池 56，raw history 16384，延迟上限 160 ms；bus maxTaps 512。** 78 项测试通过。低频模态仍走 A5。
+- [ ] A3 已知 bug（2026-11-08）：进入稳态后，speakerGain（speaker level/profile）变化不会刷新 late bus / premium 2/3 taps；一阶反射会更新。原因：`lateOrder2Stable` 跳过 order2/premium 重建，且 fast/deep bus taps 只在 listener 移动 >0.15 m 或 roomVersion 变化时重算。待修复：speakerGain/level/profile/layout 变化时作废 late path build 并重建 bus/premium。
+- [x] A3 物理 wet/dry 目标（2026-11-08）：新增 `LateReverbTarget`，用 `R = S·α/(1-α)`、`r_c = √(R/16π)`、source power 和实测指向性功率积分计算 `T = √(4ΣP/(RΣD))`；`sourceGainDb = 20log10(2/√R)` 驱动归一化 FDN；`lateTrimDb`（默认 0 dB，范围 -24..+6）叠加在物理 gain 上；`/cinema_acoustics` 输出 R/r_c/target/sourceGain/trim/effective；旧 `lateGainDb` 键忽略。`LateReverbTargetTest`、`SpeakerDataProfileTest`、`LateReverbSettingsTest` 覆盖公式/指向性/积分/参数
+- [ ] A3b EAXReverb fallback（可选，待决策）：A3 FDN 听感验收已不合格；是否把 A0 的 EAXReverb late tail 接入为可控回退仍未定。当前已默认关闭晚期混响（`lateReverb=false`），不启用 EFX
 - [ ] A4 接收器集成：Speakers/Settings 页声学总开关、late reverb 电平、房间预设/重扫；服务端字段/网络包；`earlyGainDb` 放 Mod Menu，不进接收器 GUI
 - [ ] A4b 听者策略（决策已定，待 A4 接入）：始终使用玩家实际耳朵位置/朝向；不做 Seat 皇帝位、固定监听点或声场校正
 - [ ] A5 低频管理与模态（原 A6 提前，排在 A4 之后）：LFE 分频/低频管理、多低音炮路由与校准（增益/延迟）、低频模态计算与模态 EQ、测量；依赖 A4 的接收器设置与同步
-- [ ] A6 调试/验收：dump 房间/RT60/taps；A/B 开关；矩形房间、材质、旋转、移动、5.1、4K/BSL、设备切换；A2c-R 直达单 FIR/反射 2048-tap FIR（材质/遮挡/空气/f_s 硬切）/flood-fill 补丁种子/多接收器 CPU，部分墙/柱子/开放空间/玻璃/屏幕/门洞
+- [ ] A6 调试/验收：dump 房间/RT60/taps/late 参数；A/B 开关；矩形房间、材质、旋转、移动、5.1、4K/BSL、设备切换；A2c-R 直达单 FIR/反射 2048-tap 全频带 FIR（材质/遮挡/空气）/flood-fill 补丁种子/多接收器 CPU，部分墙/柱子/开放空间/玻璃/屏幕/门洞；A3 FDN 已听感失败，默认降级后不再作为验收项（若保留实验路径，仅看稳定性/5.1 去相关/seek 清空/多接收器 CPU）
 - [ ] A7 后续：衍射/散射、测量 RIR/卷积、HRTF
 
 ## P2：可变声道布局 / 天空声道（规划）

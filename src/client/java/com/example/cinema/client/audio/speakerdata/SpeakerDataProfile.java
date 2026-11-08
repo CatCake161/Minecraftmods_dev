@@ -10,6 +10,7 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * One speaker data profile.
@@ -55,6 +56,8 @@ public final class SpeakerDataProfile {
 	private final double onAxisReferenceDb;
 	private final Row[] horizontal;
 	private final Row[] vertical;
+	private final ConcurrentHashMap<Integer, Double> powerIntegralCache =
+		new ConcurrentHashMap<>();
 
 	SpeakerDataProfile(String id, String name, SpeakerType type, Pattern pattern,
 							  String source, String license,
@@ -178,6 +181,40 @@ public final class SpeakerDataProfile {
 				yield clampDb(h + v);
 			}
 		};
+	}
+
+	/**
+	 * Integral {@code ∫ g(Ω)² dΩ} of the directivity amplitude over the sphere.
+	 * For an omni source this is {@code 4π}; the result is used to recover
+	 * total source power from the on-axis strength. H/V cuts are combined by
+	 * the same separable approximation as {@link #gainDb}.
+	 */
+	public double directivityPowerIntegral(double frequencyHz) {
+		if (pattern == Pattern.OMNI || pattern == Pattern.UNMEASURED) {
+			return 4.0 * Math.PI;
+		}
+		double frequency = clampFrequency(frequencyHz);
+		int key = (int) Math.round(frequency);
+		return powerIntegralCache.computeIfAbsent(key, ignored -> {
+			int horizontalSteps = 72;
+			int verticalSteps = 36;
+			double horizontalStep = 2.0 * Math.PI / horizontalSteps;
+			double verticalStep = Math.PI / verticalSteps;
+			double integral = 0.0;
+			for (int ih = 0; ih < horizontalSteps; ih++) {
+				double horizontal = -180.0 + (ih + 0.5) * 360.0 / horizontalSteps;
+				for (int iv = 0; iv < verticalSteps; iv++) {
+					double vertical = -90.0 + (iv + 0.5) * 180.0 / verticalSteps;
+					double amplitude = Math.pow(10.0,
+						gainDb(horizontal, vertical, frequency) / 20.0);
+					integral += amplitude * amplitude
+						* Math.cos(Math.toRadians(vertical))
+						* horizontalStep * verticalStep;
+				}
+			}
+			return Double.isFinite(integral) && integral > 1.0e-9
+				? integral : 4.0 * Math.PI;
+		});
 	}
 
 	public String patternLabel() {

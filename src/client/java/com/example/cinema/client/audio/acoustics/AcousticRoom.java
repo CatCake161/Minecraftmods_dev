@@ -236,7 +236,7 @@ public record AcousticRoom(boolean valid, String fallbackReason,
 							   AxisAbsorption z, Band band) {
 		double totalArea = x.area() + y.area() + z.area();
 		if (volume <= 0.0 || totalArea <= 0.0) {
-			// A3 will clamp the value when mapping it to EAXReverb.
+			// A3 clamps the value when mapping it to the FDN late reverb.
 			return Double.POSITIVE_INFINITY;
 		}
 		double sum = fitzroyTerm(x.area(), band.alpha(x))
