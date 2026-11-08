@@ -183,7 +183,7 @@ public final class ClientAcousticsCommand {
 					continue;
 				}
 				List<MirrorPlane> planes = MirrorPlaneDiscovery.INSTANCE.discover(level,
-					speaker.position(), snapshot.version(), room.reflectionSurfaces());
+					speaker.position(), room.reflectionKey(), room.reflectionSurfaces());
 				int channel = speaker.role().ordinal() - 1;
 				List<ReflectionTap> taps = ImageSourceSolver.solve(planes, channel,
 					pointOf(speaker.position()), pointOf(snapshot.listener().eye()),

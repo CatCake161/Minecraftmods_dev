@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * First-order image-source geometry and validation.
@@ -24,12 +25,10 @@ public final class ImageSourceSolver {
 	public static final int MAX_TAPS_PER_RECEIVER = 36;
 
 	private static final double EPSILON = 1.0e-6;
-	private static final double BOUNDS_MARGIN = 0.01;
+	private static final double BOUNDS_MARGIN = 0.10;
 	private static final double PATH_INSET = 0.05;
-	private static final Comparator<ReflectionTap> TAP_ORDER =
-		Comparator.comparingDouble(ReflectionTap::gain).reversed()
-			.thenComparing(ReflectionTap::planeKey)
-			.thenComparingInt(ReflectionTap::channel);
+	/** Keep an existing tap unless a new one is about 1 dB stronger. */
+	private static final double TAP_HYSTERESIS_GAIN = 1.122018;
 
 	private ImageSourceSolver() {
 	}
@@ -97,6 +96,13 @@ public final class ImageSourceSolver {
 	public static List<ReflectionTap> solve(List<MirrorPlane> planes, int channel,
 											Point3 source, Point3 listener,
 											boolean lfe, World world) {
+		return solve(planes, channel, source, listener, lfe, world, Set.of());
+	}
+
+	public static List<ReflectionTap> solve(List<MirrorPlane> planes, int channel,
+											Point3 source, Point3 listener,
+											boolean lfe, World world,
+											Set<String> previousKeys) {
 		if (lfe || planes == null || planes.isEmpty() || source == null
 			|| listener == null || world == null) {
 			return List.of();
@@ -125,18 +131,56 @@ public final class ImageSourceSolver {
 				reflectionGain(material, geometry.pathLength())
 					* occlusion.linearGain(), occlusion));
 		}
-		return strongest(taps, MAX_TAPS_PER_SPEAKER);
+		return strongest(taps, MAX_TAPS_PER_SPEAKER, previousKeys);
 	}
 
 	/** Keeps the strongest taps across all speakers of one receiver. */
 	public static List<ReflectionTap> strongest(List<ReflectionTap> taps, int max) {
+		return strongest(taps, max, Set.of());
+	}
+
+	/**
+	 * Keeps the strongest taps with a small stickiness bonus for keys that were
+	 * already active. A new tap must be about 1 dB stronger to displace an
+	 * existing one, which prevents taps near the per-speaker or receiver cap
+	 * from flickering as the listener moves.
+	 */
+	public static List<ReflectionTap> strongest(List<ReflectionTap> taps, int max,
+												Set<String> previousKeys) {
 		if (taps == null || taps.isEmpty() || max <= 0) {
 			return List.of();
 		}
+		Set<String> previous = previousKeys == null ? Set.of() : previousKeys;
+		Comparator<ReflectionTap> order = (first, second) -> {
+			int byEffective = Double.compare(effectiveGain(second, previous),
+				effectiveGain(first, previous));
+			if (byEffective != 0) {
+				return byEffective;
+			}
+			int byGain = Double.compare(second.gain(), first.gain());
+			if (byGain != 0) {
+				return byGain;
+			}
+			int byPlane = first.planeKey().compareTo(second.planeKey());
+			if (byPlane != 0) {
+				return byPlane;
+			}
+			return Integer.compare(first.channel(), second.channel());
+		};
 		List<ReflectionTap> sorted = new ArrayList<>(taps);
-		sorted.sort(TAP_ORDER);
+		sorted.sort(order);
 		int limit = Math.min(max, sorted.size());
 		return List.copyOf(sorted.subList(0, limit));
+	}
+
+	public static String tapKey(ReflectionTap tap) {
+		return tap.channel() + ":" + tap.planeKey();
+	}
+
+	private static double effectiveGain(ReflectionTap tap, Set<String> previousKeys) {
+		double gain = tap.gain();
+		return previousKeys.contains(tapKey(tap))
+			? gain * TAP_HYSTERESIS_GAIN : gain;
 	}
 
 	/**

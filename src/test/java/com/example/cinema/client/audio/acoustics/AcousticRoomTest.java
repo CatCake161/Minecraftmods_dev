@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -90,6 +91,19 @@ class AcousticRoomTest {
 		assertSame(xAxis, room.xAxis());
 		assertSame(yAxis, room.yAxis());
 		assertSame(zAxis, room.zAxis());
+	}
+
+	@Test
+	void reflectionKeyIsStableForTheSameGeometryAndChangesWithBounds() {
+		AcousticRoom first = AcousticRoom.box(Vec3.ZERO, new Vec3(10.0, 6.0, 4.0),
+			boxSurfaces(10.0, 6.0, 4.0, UNIFORM), true, "");
+		AcousticRoom second = AcousticRoom.box(Vec3.ZERO, new Vec3(10.0, 6.0, 4.0),
+			boxSurfaces(10.0, 6.0, 4.0, UNIFORM), true, "");
+		AcousticRoom larger = AcousticRoom.box(Vec3.ZERO, new Vec3(11.0, 6.0, 4.0),
+			boxSurfaces(11.0, 6.0, 4.0, UNIFORM), true, "");
+
+		assertEquals(first.reflectionKey(), second.reflectionKey());
+		assertNotEquals(first.reflectionKey(), larger.reflectionKey());
 	}
 
 	@Test

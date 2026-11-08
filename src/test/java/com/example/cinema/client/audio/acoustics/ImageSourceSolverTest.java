@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -168,6 +169,23 @@ class ImageSourceSolverTest {
 		assertEquals(1, result.size());
 		assertEquals("strong", result.get(0).planeKey());
 		assertFalse(result.contains(weak));
+	}
+
+	@Test
+	void strongestKeepsPreviousTapAgainstSlightlyStrongerNewTap() {
+		ReflectionTap previous = new ReflectionTap(0, "previous", Point3.ZERO,
+			Point3.ZERO, 2.0, 0.01, STONE, 0.90);
+		ReflectionTap newcomer = new ReflectionTap(0, "new", Point3.ZERO,
+			Point3.ZERO, 1.0, 0.01, STONE, 0.95);
+
+		List<ReflectionTap> sticky = ImageSourceSolver.strongest(
+			List.of(previous, newcomer), 1,
+			Set.of(ImageSourceSolver.tapKey(previous)));
+		List<ReflectionTap> plain = ImageSourceSolver.strongest(
+			List.of(previous, newcomer), 1);
+
+		assertEquals("previous", sticky.get(0).planeKey());
+		assertEquals("new", plain.get(0).planeKey());
 	}
 
 	private static List<ReflectionTap> solveSinglePlane(FakeWorld world, boolean lfe) {

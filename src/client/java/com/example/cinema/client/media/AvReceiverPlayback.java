@@ -513,7 +513,8 @@ public final class AvReceiverPlayback {
 		long now = System.currentTimeMillis();
 		RoomAcousticSnapshot snapshot = AcousticScene.snapshot();
 		AcousticRoom room = snapshot == null ? null : snapshot.room();
-		long roomVersion = snapshot == null ? 0L : snapshot.version();
+		long snapshotVersion = snapshot == null ? 0L : snapshot.version();
+		long roomVersion = room == null ? 0L : room.reflectionKey();
 		boolean moved = lastReflectionListener == null
 			|| listener.distanceToSqr(lastReflectionListener)
 				> REFLECTION_MOVE_THRESHOLD_SQR;
@@ -524,6 +525,7 @@ public final class AvReceiverPlayback {
 		lastReflectionUpdateMillis = now;
 		lastReflectionRoomVersion = roomVersion;
 		lastReflectionListener = listener;
+		Set<String> previousKeys = new HashSet<>(reflectionFilters.keySet());
 
 		List<AcousticSurface> seeds = room == null
 			? List.of() : room.reflectionSurfaces();
@@ -544,10 +546,10 @@ public final class AvReceiverPlayback {
 			List<MirrorPlane> planes = MirrorPlaneDiscovery.INSTANCE.discover(
 				level, center, roomVersion, seeds);
 			taps.addAll(ImageSourceSolver.solve(planes, channel, pointOf(center),
-				pointOf(listener), false, probe));
+				pointOf(listener), false, probe, previousKeys));
 		}
 		List<ReflectionTap> limited = ImageSourceSolver.strongest(taps,
-			MAX_ACTIVE_REFLECTIONS);
+			MAX_ACTIVE_REFLECTIONS, previousKeys);
 		Set<String> currentKeys = new HashSet<>();
 		List<ReflectionSource> sources = new ArrayList<>(limited.size());
 		for (ReflectionTap tap : limited) {
@@ -556,7 +558,7 @@ public final class AvReceiverPlayback {
 			if (speaker == null) {
 				continue;
 			}
-			String key = channel + ":" + tap.planeKey();
+			String key = ImageSourceSolver.tapKey(tap);
 			currentKeys.add(key);
 			Vec3 imageRelative = new Vec3(
 				tap.imageSource().x() - listener.x,
@@ -598,7 +600,7 @@ public final class AvReceiverPlayback {
 				"cinema receiver {}: {} early reflection taps (candidates={}, surfaces={}, fs={} Hz, room={})",
 				receiverPos.toShortString(), sources.size(), taps.size(),
 				seeds.size(), String.format("%.0f", schroederHz),
-				snapshot == null ? "none" : snapshot.version());
+				snapshot == null ? "none" : Long.toString(snapshotVersion));
 		}
 	}
 

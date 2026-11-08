@@ -405,7 +405,9 @@ A2b **不把 `room.valid()` 当作声学开关**。`room.valid()` 只表示 A1 �
    只有切向范围重叠时才合并并取并集。这样墙面与前方 10 cm 内的屏幕/框架不会生成两个
    近共面 tap。`ReflectionProbe.wallAt` 的探针范围同步覆盖该容差，代表面与实际墙面相差
    不超过 0.10 m 时仍能取到真实材质。
-5. 候选可按 `(扬声器位置, 房间版本, 方向集合版本)` 缓存；听者移动不需要重新发射发现射线。
+5. 候选按 `(扬声器位置, 稳定房间几何 key, 方向集合版本)` 缓存；听者移动不需要重新发射发现射线。
+   `AcousticRoom.reflectionKey()` 只包含边界/材质/fill 补丁，不随每 5 Hz 的 snapshot version 变化，
+   避免房间没变时也重新发现平面、导致 planeKey 抖动。
 
 **逐 tap 的第一阶验证**
 
@@ -415,7 +417,7 @@ A2b **不把 `room.valid()` 当作声学开关**。`room.valid()` 只表示 A1 �
    即扬声器和听者在镜面同一侧。听者在墙外时不会生成穿墙反射。
 2. 镜像源 `s' = s - 2·dS·n`；`t = dS / (dS + dL)`；
    反射点 `r = s' + t·(listener - s')`。
-   若 `p` 来自房间快照且有切向边界，要求 `r` 落在边界内（带小 margin）；
+   若 `p` 来自房间快照且有切向边界，要求 `r` 落在边界内（带 0.10 m margin）；
    射线发现的镜面没有可靠边界，必须依赖下一步的墙面验证。
 3. 路径长度 `L = |s' - listener|`；直达距离 `d = |s - listener|`；
    延迟 `Δt = (L - d) / c`，`c ≈ 343 m/s`；过小（< 1 ms）或过大（> 80 ms）跳过。
@@ -456,6 +458,8 @@ R_p(f) = sqrt(1 - α_p(f))
    source 位置只提供反射到达方向。**不再按 5.1 布局做 VBAP/最近声道路由，也不把 tap 混入直达声道。**
 9. 每个扬声器最多保留若干最强 taps；A2b 全局上限为 24 个活动 tap/接收器（固定 32 source 池，留 8 个淡变余量）；每个 tap 一个 source，
    需要独立的 source/buffer 池，受 OpenAL source 数量、延迟线和 CPU 限制。
+   选择 strongest 时，已存在的 tap 获得约 **1 dB 迟滞加成**，新 tap 需要明显更强才替换；
+   per-speaker/receiver cap 边界不会因为微小增益变化来回抖动。
    tap 的稳定 key 用 `(speakerChannel, planeKey)`；新增淡入、消失淡出。
 
 补充：

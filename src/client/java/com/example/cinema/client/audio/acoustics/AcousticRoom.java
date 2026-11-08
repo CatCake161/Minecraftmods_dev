@@ -174,6 +174,38 @@ public record AcousticRoom(boolean valid, String fallbackReason,
 	}
 
 	/**
+	 * Stable geometry/material key for mirror discovery and reflection taps.
+	 * The snapshot version advances at the room-detection rate even when the
+	 * room did not change; using it as a discovery cache key would re-run plane
+	 * discovery on every update and make tap keys churn.
+	 */
+	public long reflectionKey() {
+		long hash = 17L;
+		hash = 31L * hash + Double.doubleToLongBits(min.x);
+		hash = 31L * hash + Double.doubleToLongBits(min.y);
+		hash = 31L * hash + Double.doubleToLongBits(min.z);
+		hash = 31L * hash + Double.doubleToLongBits(max.x);
+		hash = 31L * hash + Double.doubleToLongBits(max.y);
+		hash = 31L * hash + Double.doubleToLongBits(max.z);
+		hash = 31L * hash + surfaces.size();
+		long surfaceHash = 0L;
+		for (AcousticSurface surface : surfaces) {
+			surfaceHash += surface.hashCode();
+		}
+		hash = 31L * hash + surfaceHash;
+		if (fill != null) {
+			List<AcousticSurface> patches = fill.reflectionSurfaces();
+			hash = 31L * hash + patches.size();
+			long patchHash = 0L;
+			for (AcousticSurface patch : patches) {
+				patchHash += patch.hashCode();
+			}
+			hash = 31L * hash + patchHash;
+		}
+		return hash;
+	}
+
+	/**
 	 * Schroeder frequency from the mid-band Fitzroy RT60 and connected air
 	 * volume: {@code f_s = 2000 * sqrt(RT60_mid / V_eff)}. Returns the 1000 Hz
 	 * fallback when either value is invalid, and clamps to [50, 2000] Hz.
