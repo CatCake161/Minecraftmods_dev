@@ -33,8 +33,18 @@ import java.util.Map;
  * not migrated.
  */
 public final class SpeakerDataRegistry {
-	public static final String SUB_OMNI_ID = "sub-omni";
-	public static final String SUB_CARDIOID_ID = "sub-cardioid";
+	public static final String SUB_SEALED_OMNI_ID = "sub-sealed-omni";
+	public static final String SUB_SEALED_CARDIOID_ID = "sub-sealed-cardioid";
+	public static final String SUB_PORTED_OMNI_ID = "sub-ported-omni";
+	public static final String SUB_PORTED_CARDIOID_ID = "sub-ported-cardioid";
+	/** Legacy built-in ids kept for settings/assignment migration. */
+	public static final String LEGACY_SUB_OMNI_ID = "sub-omni";
+	public static final String LEGACY_SUB_CARDIOID_ID = "sub-cardioid";
+	public static final String LEGACY_SUB_REFLEX_OMNI_ID = "sub-reflex-omni";
+	public static final String LEGACY_SUB_REFLEX_CARDIOID_ID = "sub-reflex-cardioid";
+	/** Manual subwoofer bass-management band. */
+	public static final double SUBWOOFER_MIN_HZ = SubwooferBand.MIN_HZ;
+	public static final double SUBWOOFER_MAX_HZ = SubwooferBand.MAX_HZ;
 
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 	private static final long MAX_IMPORT_BYTES = 1_000_000L;
@@ -141,12 +151,30 @@ public final class SpeakerDataRegistry {
 		if (type == null || id == null || id.isBlank()) {
 			return null;
 		}
+		String canonicalId = canonicalProfileId(type, id);
 		for (SpeakerDataProfile profile : profilesByType.getOrDefault(type, List.of())) {
-			if (profile.id().equals(id)) {
+			if (profile.id().equals(canonicalId)) {
 				return profile;
 			}
 		}
 		return null;
+	}
+
+	/**
+	 * Maps legacy built-in ids to the current profile ids. Only subwoofers had
+	 * renamed built-ins; all other ids are returned unchanged.
+	 */
+	public static String canonicalProfileId(SpeakerType type, String profileId) {
+		if (type != SpeakerType.SUBWOOFER || profileId == null) {
+			return profileId;
+		}
+		return switch (profileId) {
+			case LEGACY_SUB_OMNI_ID -> SUB_SEALED_OMNI_ID;
+			case LEGACY_SUB_CARDIOID_ID -> SUB_SEALED_CARDIOID_ID;
+			case LEGACY_SUB_REFLEX_OMNI_ID -> SUB_PORTED_OMNI_ID;
+			case LEGACY_SUB_REFLEX_CARDIOID_ID -> SUB_PORTED_CARDIOID_ID;
+			default -> profileId;
+		};
 	}
 
 	/** Settings for the currently selected profile of this type. */
@@ -158,21 +186,24 @@ public final class SpeakerDataRegistry {
 
 	/**
 	 * Saved settings for one profile, or the profile defaults if this profile
-	 * has never been edited. Measured profiles always use the profile's -10 dB
-	 * frequency range; only their gain trim can be edited.
+	 * has never been edited. Non-subwoofer measured profiles use the profile's
+	 * -3 dB frequency range and only expose the gain trim; subwoofers keep a
+	 * manually editable 10-1000 Hz bass-management band.
 	 */
 	public static synchronized SpeakerSettings profileSettings(SpeakerType type, String profileId) {
-		SpeakerDataProfile profile = find(type, profileId);
+		String canonicalId = canonicalProfileId(type, profileId);
+		SpeakerDataProfile profile = find(type, canonicalId);
 		if (profile == null) {
 			return defaultSettings(type);
 		}
-		SpeakerSettings saved = settingsOverrides.get(key(type, profileId));
+		SpeakerSettings saved = settingsOverrides.get(key(type, canonicalId));
 		return normalizeSettings(type, saved != null ? saved : defaultForProfile(profile));
 	}
 
 	/**
-	 * Clamps editable settings and forces measured profiles to their measured
-	 * frequency range. Gain remains a per-profile level trim.
+	 * Clamps editable settings. Subwoofers always keep manual low/high Hz;
+	 * other measured profiles are forced to their measured -3 dB range. Gain
+	 * remains a per-profile level trim.
 	 */
 	public static synchronized SpeakerSettings normalizeSettings(SpeakerType type,
 																 SpeakerSettings settings) {
@@ -183,7 +214,23 @@ public final class SpeakerDataRegistry {
 		if (profile == null) {
 			return settings;
 		}
+		return normalizeForProfile(type, profile, settings);
+	}
+
+	/**
+	 * Pure normalization helper, separated from the registry lookup so it can be
+	 * unit-tested without a Fabric game directory.
+	 */
+	static SpeakerSettings normalizeForProfile(SpeakerType type, SpeakerDataProfile profile,
+											   SpeakerSettings settings) {
 		double gain = clamp(settings.gainDb(), -60.0, 60.0);
+		if (type == SpeakerType.SUBWOOFER) {
+			double low = Math.round(clamp(settings.lowHz(),
+				SUBWOOFER_MIN_HZ, SUBWOOFER_MAX_HZ - 1.0));
+			double high = Math.round(clamp(settings.highHz(),
+				low + 1.0, SUBWOOFER_MAX_HZ));
+			return new SpeakerSettings(profile.id(), low, high, gain);
+		}
 		if (profile.isMeasured()) {
 			return new SpeakerSettings(profile.id(), profile.lowHz(), profile.highHz(), gain);
 		}
@@ -193,11 +240,15 @@ public final class SpeakerDataRegistry {
 	}
 
 	public static synchronized void applySettings(SpeakerType type, SpeakerSettings settings) {
-		if (type == null || settings == null || find(type, settings.profileId()) == null) {
+		if (type == null || settings == null) {
 			return;
 		}
-		putOverride(type, settings);
-		selectedByType.put(type, settings.profileId());
+		SpeakerSettings normalized = normalizeSettings(type, settings);
+		if (find(type, normalized.profileId()) == null) {
+			return;
+		}
+		putOverride(type, normalized);
+		selectedByType.put(type, normalized.profileId());
 	}
 
 	public static synchronized void saveSettings() {
@@ -233,7 +284,7 @@ public final class SpeakerDataRegistry {
 			value.addProperty("lowHz", settings.lowHz());
 			value.addProperty("highHz", settings.highHz());
 			value.addProperty("gainDb", settings.gainDb());
-			profiles.add(key, value);
+			profiles.add(key(type, settings.profileId()), value);
 		}
 		root.add("profiles", profiles);
 
@@ -299,21 +350,41 @@ public final class SpeakerDataRegistry {
 	}
 
 	private static void installBuiltins() {
-		addBuiltin(new SpeakerDataProfile(SUB_OMNI_ID, "Subwoofer Omni",
-			SpeakerType.SUBWOOFER, SpeakerDataProfile.Pattern.OMNI,
-			"built-in", "built-in", 20.0, 200.0, null, null, null, null));
-		addBuiltin(new SpeakerDataProfile(SUB_CARDIOID_ID, "Subwoofer Cardioid",
-			SpeakerType.SUBWOOFER, SpeakerDataProfile.Pattern.CARDIOID,
-			"built-in", "built-in", 20.0, 200.0, null, null, null, null));
+		// The sealed built-in models a compact alignment with a 30 Hz -3 dB
+		// point; the ported built-in extends to 20 Hz and rolls off more
+		// steeply below tuning. The enclosure response is applied by
+		// SubwooferAcoustics, not just displayed as metadata.
+		addBuiltin(subwoofer(SUB_SEALED_OMNI_ID, "Subwoofer Sealed Omni",
+			SpeakerDataProfile.Enclosure.SEALED, SpeakerDataProfile.Pattern.OMNI,
+			30.0));
+		addBuiltin(subwoofer(SUB_SEALED_CARDIOID_ID, "Subwoofer Sealed Cardioid",
+			SpeakerDataProfile.Enclosure.SEALED, SpeakerDataProfile.Pattern.CARDIOID,
+			30.0));
+		addBuiltin(subwoofer(SUB_PORTED_OMNI_ID, "Subwoofer Ported Omni",
+			SpeakerDataProfile.Enclosure.PORTED, SpeakerDataProfile.Pattern.OMNI,
+			20.0));
+		addBuiltin(subwoofer(SUB_PORTED_CARDIOID_ID, "Subwoofer Ported Cardioid",
+			SpeakerDataProfile.Enclosure.PORTED, SpeakerDataProfile.Pattern.CARDIOID,
+			20.0));
 		addBuiltin(unmeasured(SpeakerType.FLOORSTANDING, 40.0));
 		addBuiltin(unmeasured(SpeakerType.BOOKSHELF, 60.0));
 		addBuiltin(unmeasured(SpeakerType.CENTER, 80.0));
 	}
 
+	private static SpeakerDataProfile subwoofer(String id, String name,
+												SpeakerDataProfile.Enclosure enclosure,
+												SpeakerDataProfile.Pattern pattern,
+												double lowHz) {
+		return new SpeakerDataProfile(id, name, SpeakerType.SUBWOOFER, enclosure,
+			pattern, "built-in", "built-in", lowHz, 200.0,
+			null, null, null, null);
+	}
+
 	private static SpeakerDataProfile unmeasured(SpeakerType type, double lowHz) {
 		return new SpeakerDataProfile(type.id() + "-unmeasured",
 			capitalize(type.id()) + " (unmeasured)",
-			type, SpeakerDataProfile.Pattern.UNMEASURED,
+			type, SpeakerDataProfile.Enclosure.UNKNOWN,
+			SpeakerDataProfile.Pattern.UNMEASURED,
 			"built-in placeholder", "built-in",
 			lowHz, 20_000.0, null, null, null, null);
 	}
@@ -332,10 +403,12 @@ public final class SpeakerDataRegistry {
 
 	private static void ensureSettingsValid() {
 		for (SpeakerType type : SpeakerType.values()) {
-			String selected = selectedByType.get(type);
+			String selected = canonicalProfileId(type, selectedByType.get(type));
 			if (selected == null || find(type, selected) == null) {
 				SpeakerDataProfile profile = defaultProfile(type);
 				selectedByType.put(type, profile == null ? "" : profile.id());
+			} else {
+				selectedByType.put(type, selected);
 			}
 		}
 	}
@@ -343,7 +416,8 @@ public final class SpeakerDataRegistry {
 	private static SpeakerSettings defaultSettings(SpeakerType type) {
 		SpeakerDataProfile profile = defaultProfile(type);
 		return profile == null
-			? new SpeakerSettings("", 20.0, 20_000.0, 0.0)
+			? new SpeakerSettings("", 20.0,
+				type == SpeakerType.SUBWOOFER ? 200.0 : 20_000.0, 0.0)
 			: defaultForProfile(profile);
 	}
 
@@ -353,7 +427,7 @@ public final class SpeakerDataRegistry {
 
 	private static SpeakerDataProfile defaultProfile(SpeakerType type) {
 		String preferred = type == SpeakerType.SUBWOOFER
-			? SUB_OMNI_ID
+			? SUB_SEALED_OMNI_ID
 			: type.id() + "-unmeasured";
 		SpeakerDataProfile profile = find(type, preferred);
 		if (profile != null) {
@@ -380,7 +454,7 @@ public final class SpeakerDataRegistry {
 				for (SpeakerType type : SpeakerType.values()) {
 					JsonElement value = selected.get(type.name());
 					if (value != null && value.isJsonPrimitive()) {
-						String id = value.getAsString();
+						String id = canonicalProfileId(type, value.getAsString());
 						if (find(type, id) != null) {
 							selectedByType.put(type, id);
 						}
@@ -405,13 +479,13 @@ public final class SpeakerDataRegistry {
 					} catch (IllegalArgumentException e) {
 						continue;
 					}
-					String profileId = key.substring(slash + 1);
+					String profileId = canonicalProfileId(type, key.substring(slash + 1));
 					SpeakerDataProfile profile = find(type, profileId);
 					if (profile == null) {
 						continue;
 					}
 					JsonObject value = entry.getValue().getAsJsonObject();
-					putOverride(type, new SpeakerSettings(profileId,
+					putOverride(type, new SpeakerSettings(profile.id(),
 						getDouble(value, "lowHz", profile.lowHz()),
 						getDouble(value, "highHz", profile.highHz()),
 						getDouble(value, "gainDb", 0.0)));
@@ -429,13 +503,14 @@ public final class SpeakerDataRegistry {
 				if (entry == null || !entry.has("profile")) {
 					continue;
 				}
-				String profileId = entry.get("profile").getAsString();
+				String profileId = canonicalProfileId(type,
+					entry.get("profile").getAsString());
 				SpeakerDataProfile profile = find(type, profileId);
 				if (profile == null) {
 					continue;
 				}
-				selectedByType.put(type, profileId);
-				putOverride(type, new SpeakerSettings(profileId,
+				selectedByType.put(type, profile.id());
+				putOverride(type, new SpeakerSettings(profile.id(),
 					getDouble(entry, "lowHz", profile.lowHz()),
 					getDouble(entry, "highHz", profile.highHz()),
 					getDouble(entry, "gainDb", 0.0)));

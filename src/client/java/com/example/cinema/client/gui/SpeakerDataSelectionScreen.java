@@ -89,7 +89,10 @@ public final class SpeakerDataSelectionScreen extends Screen {
 
 	private String label(SpeakerDataProfile profile) {
 		String marker = profile.id().equals(selectedId) ? "> " : "  ";
-		return marker + profile.name() + " · " + profile.patternLabel();
+		String detail = type == SpeakerType.SUBWOOFER
+			? profile.enclosureLabel() + " · " + profile.directivityLabel()
+			: profile.patternLabel();
+		return marker + profile.name() + " · " + detail;
 	}
 
 	private int pageOf(String profileId) {

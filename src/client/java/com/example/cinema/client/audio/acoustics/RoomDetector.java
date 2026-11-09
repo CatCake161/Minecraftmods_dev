@@ -4,6 +4,7 @@ import com.example.cinema.block.entity.SpeakerBlockEntity;
 import com.example.cinema.block.entity.SpeakerRole;
 import com.example.cinema.block.entity.SpeakerType;
 import com.example.cinema.client.audio.speakerdata.SpeakerDataAssignments;
+import com.example.cinema.client.audio.speakerdata.SpeakerDataRegistry;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.entity.player.Player;
@@ -544,7 +545,7 @@ public final class RoomDetector {
 					Vec3 position = speaker.acousticFrontPosition();
 					speakers.add(new AcousticSpeaker(pos, speaker.role(), type, position,
 						forward, speaker.acousticYawDegrees(), speaker.levelDb(),
-						profileId(speaker)));
+						profileId(speaker), settings(speaker)));
 				}
 			}
 		}
@@ -557,6 +558,15 @@ public final class RoomDetector {
 			return SpeakerDataAssignments.settingsFor(speaker).profileId();
 		} catch (Throwable t) {
 			return "";
+		}
+	}
+
+	private static SpeakerDataRegistry.SpeakerSettings settings(
+		SpeakerBlockEntity speaker) {
+		try {
+			return SpeakerDataAssignments.settingsFor(speaker);
+		} catch (Throwable t) {
+			return null;
 		}
 	}
 

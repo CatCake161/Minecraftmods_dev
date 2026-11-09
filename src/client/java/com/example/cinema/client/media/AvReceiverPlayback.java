@@ -14,6 +14,8 @@ import com.example.cinema.client.audio.acoustics.MirrorPlaneDiscovery;
 import com.example.cinema.client.audio.acoustics.OcclusionResult;
 import com.example.cinema.client.audio.acoustics.OcclusionScanner;
 import com.example.cinema.client.audio.acoustics.Point3;
+import com.example.cinema.client.audio.acoustics.ReflectionDelayBudget;
+import com.example.cinema.client.audio.acoustics.ReflectionDelayLimit;
 import com.example.cinema.client.audio.acoustics.ReflectionPathTap;
 import com.example.cinema.client.audio.acoustics.ReflectionProbe;
 import com.example.cinema.client.audio.acoustics.ReflectionTap;
@@ -27,9 +29,11 @@ import com.example.cinema.client.audio.fir.CommonAcousticFirService;
 import com.example.cinema.client.audio.reverb.LateReflectionBus;
 import com.example.cinema.client.audio.reverb.LateReverbSettings;
 import com.example.cinema.client.audio.reverb.LateReverbTarget;
+import com.example.cinema.client.audio.reverb.Vbap;
 import com.example.cinema.client.audio.speakerdata.SpeakerDataAssignments;
 import com.example.cinema.client.audio.speakerdata.SpeakerDataProfile;
 import com.example.cinema.client.audio.speakerdata.SpeakerDataRegistry;
+import com.example.cinema.client.audio.speakerdata.SubwooferBand;
 import com.example.cinema.client.config.CinemaClientConfig;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -108,6 +112,8 @@ public final class AvReceiverPlayback {
 	private double pendingSeekSeconds = Double.NaN;
 	private boolean missing;
 	private int physicalChannels;
+	private float[][] physicalSpeakerPositions =
+		new float[CinemaAudioEngine.CHANNELS][];
 	private final MinimumPhaseFir[] channelFilters =
 		new MinimumPhaseFir[CinemaAudioEngine.CHANNELS];
 	private final MinimumPhaseFir[] channelEnvironmentFilters =
@@ -140,6 +146,8 @@ public final class AvReceiverPlayback {
 	private long lastLatePathSampleMillis;
 	private long lastLatePathMoveMillis;
 	private long latePathRequestRoomVersion = Long.MIN_VALUE;
+	private ReflectionDelayLimit latePathDelayLimit =
+		ImageSourcePathSolver.DEFAULT_DELAY_LIMIT;
 	private boolean latePathBuildActive;
 	private boolean latePathFastApplied;
 	private boolean latePathDeepApplied;
@@ -147,7 +155,11 @@ public final class AvReceiverPlayback {
 	private long latePathBuildNanos;
 	private long latePathDeepStartMillis;
 	private long latePathDeepNanos;
+	private int latePathFastDelayRejected;
+	private int latePathDeepDelayRejected;
 	private double latePathMoveEma;
+	private boolean lastLateReverbEnabled;
+	private long lastSpeakerSettingsHash = Long.MIN_VALUE;
 
 	private record LatePathRequest(SpeakerBlockEntity speaker, int channel,
 								   List<MirrorPlane> planes, Vec3 source) {
@@ -364,6 +376,9 @@ public final class AvReceiverPlayback {
 		latePathBuildNanos = 0L;
 		latePathDeepStartMillis = 0L;
 		latePathDeepNanos = 0L;
+		latePathFastDelayRejected = 0;
+		latePathDeepDelayRejected = 0;
+		lastLateReverbEnabled = false;
 		if (audio != null) {
 			audio.setLateReflectionTaps(List.of());
 		}
@@ -548,23 +563,23 @@ public final class AvReceiverPlayback {
 			double distance = Math.sqrt(distanceSqr);
 			OcclusionResult occlusion = OcclusionScanner.scan(level, center, listener);
 			SpeakerDataProfile profile = speakerProfile(speaker);
+			SubwooferBand subwooferBand = subwooferBand(speaker, profile);
 			CommonAcousticFirProfile firProfile = CommonAcousticFirProfile.direct(
 				profile, angles.horizontal(), angles.vertical(),
 				distance, airAbsorption, temperatureC, humidityPercent, pressureKpa,
-				occlusion);
+				occlusion, subwooferBand);
 			MinimumPhaseFir filter = commonFilter(channel, firProfile);
 			filters[channel] = filter;
 			double directSourceGain = Math.min(MAX_CHANNEL_GAIN,
 				Math.max(0.0, speakerGain(speaker) * overallGain(firProfile)));
 			gains[channel] = (float) directSourceGain;
 			occlusionGains[channel] = (float) occlusion.linearGain();
+			double referenceHz = CommonAcousticFirDesigner.referenceHz(firProfile);
 			double relativeDirectivity = profile == null ? 1.0
 				: Math.pow(10.0, profile.gainDb(angles.horizontal(),
-					angles.vertical(), CommonAcousticFirDesigner.REFERENCE_HZ)
-					/ 20.0);
+					angles.vertical(), referenceHz) / 20.0);
 			double powerIntegral = profile == null ? 4.0 * Math.PI
-				: profile.directivityPowerIntegral(
-					CommonAcousticFirDesigner.REFERENCE_HZ);
+				: profile.directivityPowerIntegral(referenceHz);
 			double lateSendGain = directSourceGain
 				/ Math.max(1.0e-4, relativeDirectivity)
 				* Math.sqrt(powerIntegral);
@@ -592,6 +607,7 @@ public final class AvReceiverPlayback {
 			}
 		}
 		physicalChannels = routed;
+		physicalSpeakerPositions = positions;
 		System.arraycopy(filters, 0, channelFilters, 0, filters.length);
 		engine.setChannelLayout(positions, gains, filters, occlusionGains,
 			lateSendGains);
@@ -671,11 +687,23 @@ public final class AvReceiverPlayback {
 	}
 
 	/**
+	 * Room/order-aware geometric-delay budget. The path bound is
+	 * {@code (order + 1) * roomDiagonal / c}; it is clamped by the engine's
+	 * history capacity and hard ceiling. Without a usable room box, fall back
+	 * to that same hard/history cap instead of rejecting every path.
+	 */
+	private static ReflectionDelayLimit delayLimit(AcousticRoom room) {
+		return ReflectionDelayBudget.forRoom(room,
+			CinemaAudioEngine.maxReflectionDelaySeconds(),
+			CinemaAudioEngine.historySafeDelaySeconds());
+	}
+
+	/**
 	 * Recomputes first-order reflection taps at ~5 Hz from the receiver-linked
 	 * physical speakers. Flood-fill boundary patches are optional seeds;
 	 * speaker-centered rays work without a valid room box. The engine receives
 	 * listener-relative image-source positions (not reflection points) and one
-	 * 2048-tap FIR carrying the full reflection frequency shape.
+	 * 4096-tap FIR carrying the full reflection frequency shape.
 	 *
 	 * <p>The tap gain already carries {@code sqrt(1-alpha_mid)/max(L,1)} and the
 	 * combined broadband occlusion gain. Speaker trim and the FIR's
@@ -695,12 +723,34 @@ public final class AvReceiverPlayback {
 		AcousticRoom room = snapshot == null ? null : snapshot.room();
 		long snapshotVersion = snapshot == null ? 0L : snapshot.version();
 		long roomVersion = room == null ? 0L : room.reflectionKey();
+		ReflectionDelayLimit reflectionLimit = delayLimit(room);
 		boolean moved = lastReflectionListener == null
 			|| listener.distanceToSqr(lastReflectionListener)
 				> REFLECTION_MOVE_THRESHOLD_SQR;
+		boolean speakerSettingsChanged = updateSpeakerSettingsHash(speakers);
+		boolean lateReverbToggled = config.lateReverb() != lastLateReverbEnabled;
 		if (now - lastReflectionUpdateMillis < REFLECTION_UPDATE_MILLIS
-			&& roomVersion == lastReflectionRoomVersion && !moved) {
+			&& roomVersion == lastReflectionRoomVersion && !moved
+			&& !speakerSettingsChanged && !lateReverbToggled) {
 			return;
+		}
+		if (lateReverbToggled) {
+			// Rebuild immediately instead of waiting for the 5 Hz timer; this
+			// also forces the order-2 taps to republish and avoids a stale or
+			// empty late-bus state after the toggle.
+			lastLateReverbEnabled = config.lateReverb();
+			lastLatePathListener = null;
+			latePathRequestRoomVersion = Long.MIN_VALUE;
+		}
+		if (speakerSettingsChanged) {
+			// Speaker level/profile gain is baked into the premium sources and
+			// late-bus taps. Invalidate the steady-state order-2/3/4 build so
+			// the next update republishes them with the new gain and profile.
+			resetLatePathBuild();
+			premiumOrder2Sources = List.of();
+			premiumOrder3Sources = List.of();
+			latePathRequestRoomVersion = Long.MIN_VALUE;
+			lastLatePathListener = null;
 		}
 		lastReflectionUpdateMillis = now;
 		lastReflectionRoomVersion = roomVersion;
@@ -716,6 +766,7 @@ public final class AvReceiverPlayback {
 		double earlyGain = Math.pow(10.0, config.earlyGainDb() / 20.0);
 		List<ReflectionTap> taps = new ArrayList<>();
 		List<LatePathCandidate> order2Candidates = new ArrayList<>();
+		int order2DelayRejected = 0;
 		boolean lateOrder2Stable = config.lateReverb() && latePathFastApplied
 			&& lastLatePathListener != null
 			&& listener.distanceToSqr(lastLatePathListener)
@@ -724,7 +775,7 @@ public final class AvReceiverPlayback {
 		Arrays.fill(latePathRequests, null);
 		for (int channel = 0; channel < CinemaAudioEngine.CHANNELS; channel++) {
 			SpeakerBlockEntity speaker = speakers[channel];
-			if (speaker == null || channel == SpeakerRole.LFE.ordinal() - 1) {
+			if (speaker == null) {
 				continue;
 			}
 			Vec3 center = speaker.acousticFrontPosition();
@@ -735,15 +786,18 @@ public final class AvReceiverPlayback {
 					planes, center);
 			}
 			taps.addAll(ImageSourceSolver.solve(planes, channel, pointOf(center),
-				pointOf(listener), false, probe, previousKeys));
+				pointOf(listener), probe, previousKeys,
+				reflectionLimit.maxDelaySeconds(1)));
 			if (config.lateReverb() && !lateOrder2Stable) {
 				// Order-2 paths are published immediately. The order-3/4
 				// upgrades run incrementally and replace this set only after
 				// their phase completes.
-				List<ReflectionPathTap> paths = ImageSourcePathSolver.solve(planes,
-					channel, pointOf(center), pointOf(listener), false, probe, 2,
-					MAX_FAST_REFLECTION_PATHS);
-				for (ReflectionPathTap path : paths) {
+				ImageSourcePathSolver.SolveStats pathStats =
+					ImageSourcePathSolver.solveWithStats(planes, channel,
+						pointOf(center), pointOf(listener), probe, 2,
+						MAX_FAST_REFLECTION_PATHS, reflectionLimit);
+				order2DelayRejected += pathStats.delayRejected();
+				for (ReflectionPathTap path : pathStats.paths()) {
 					order2Candidates.add(new LatePathCandidate(path, speaker));
 				}
 			}
@@ -756,9 +810,11 @@ public final class AvReceiverPlayback {
 			premiumOrder2Sources = buildPremiumSources(premium2, listener, forward,
 				config, temperatureC, humidityPercent, pressureKpa, earlyGain);
 			order2BusTaps = busTaps(order2Candidates,
-				premium2Keys, config, temperatureC, humidityPercent, pressureKpa);
+				premium2Keys, config, temperatureC, humidityPercent, pressureKpa,
+				listener, forward, reflectionLimit);
 		}
-		updateLatePathBus(listener, config, order2BusTaps, roomVersion);
+		updateLatePathBus(listener, config, order2BusTaps, roomVersion,
+			reflectionLimit);
 		List<ReflectionTap> limited = ImageSourceSolver.strongest(taps,
 			MAX_FIRST_ORDER_REFLECTIONS, previousKeys);
 		Set<String> currentKeys = new HashSet<>();
@@ -781,10 +837,12 @@ public final class AvReceiverPlayback {
 			SpeakerDirectivityService.Angles angles = SpeakerDirectivityService.angles(
 				speaker.acousticFrontPosition(), speaker.acousticForward(),
 				reflectionPoint);
+			SpeakerDataProfile profile = speakerProfile(speaker);
 			CommonAcousticFirProfile firProfile = CommonAcousticFirProfile.reflection(
-				speakerProfile(speaker), angles.horizontal(), angles.vertical(),
+				profile, angles.horizontal(), angles.vertical(),
 				tap.pathLength(), config.airAbsorption(), temperatureC,
-				humidityPercent, pressureKpa, tap.material(), tap.occlusion());
+				humidityPercent, pressureKpa, tap.material(), tap.occlusion(),
+				subwooferBand(speaker, profile));
 			MinimumPhaseFir filter = reflectionFilters.get(key);
 			MinimumPhaseFir design = CommonAcousticFirService.get(firProfile);
 			if (design != null) {
@@ -814,11 +872,16 @@ public final class AvReceiverPlayback {
 			lastReflectionLogMillis = now;
 			Cinema.LOGGER.info(
 				"cinema receiver {}: {} reflection taps (first={}, premium2={}, "
-					+ "premium3={}, candidates={}, surfaces={}, room={})",
+					+ "premium3={}, candidates={}, surfaces={}, room={}, "
+					+ "size={}, maxDelay={} ms, order2Dropped={})",
 				receiverPos.toShortString(), allSources.size(), sources.size(),
 				premiumOrder2Sources.size(), premiumOrder3Sources.size(),
 				taps.size(), seeds.size(),
-				snapshot == null ? "none" : Long.toString(snapshotVersion));
+				snapshot == null ? "none" : Long.toString(snapshotVersion),
+				room == null ? "none" : room.sizeLabel(),
+				String.format(java.util.Locale.ROOT, "%.1f",
+					reflectionLimit.maxDelaySeconds(4) * 1_000.0),
+				order2DelayRejected);
 		}
 	}
 
@@ -827,7 +890,9 @@ public final class AvReceiverPlayback {
 												 CinemaClientConfig config,
 												 double temperatureC,
 												 double humidityPercent,
-												 double pressureKpa) {
+												 double pressureKpa,
+												 Vec3 listener,
+												 Vec3 forward) {
 		if (path == null || path.reflectionPoints().isEmpty()
 			|| path.materials().isEmpty()) {
 			return null;
@@ -838,15 +903,27 @@ public final class AvReceiverPlayback {
 		SpeakerDirectivityService.Angles angles =
 			SpeakerDirectivityService.angles(speaker.acousticFrontPosition(),
 				speaker.acousticForward(), firstReflection);
+		SpeakerDataProfile profile = speakerProfile(speaker);
 		CommonAcousticFirProfile firProfile =
-			CommonAcousticFirProfile.reflection(speakerProfile(speaker),
+			CommonAcousticFirProfile.reflection(profile,
 				angles.horizontal(), angles.vertical(), path.pathLength(),
 				config.airAbsorption(), temperatureC, humidityPercent,
-				pressureKpa, path.materials().get(0), path.occlusion());
+				pressureKpa, path.materials().get(0), path.occlusion(),
+				subwooferBand(speaker, profile));
 		// fromPath() already applies path.gain(); pass only the speaker/FIR
 		// level so the total is path.gain * speakerGain * overallGain.
 		double gain = speakerGain(speaker) * overallGain(firProfile);
-		return LateReflectionBus.Tap.fromPath(path, gain);
+		Point3 lastPoint = path.reflectionPoints()
+			.get(path.reflectionPoints().size() - 1);
+		// VBAP needs the direction from the listener to the virtual source.
+		// The propagation direction (last reflection point -> listener) is the
+		// negative of this vector and would mirror left/right and front/back.
+		Vec3 arrival = new Vec3(lastPoint.x() - listener.x,
+			lastPoint.y() - listener.y, lastPoint.z() - listener.z);
+		float[] direction = toListenerSpace(arrival, forward);
+		Vbap.Weights weights = Vbap.pan(direction, physicalSpeakerPositions);
+		return LateReflectionBus.Tap.fromPath(path, gain, direction,
+			weights.channels(), weights.weights());
 	}
 
 	private static List<LatePathCandidate> selectPremium(
@@ -877,15 +954,18 @@ public final class AvReceiverPlayback {
 	private List<LateReflectionBus.Tap> busTaps(
 		List<LatePathCandidate> candidates, Set<String> excluded,
 		CinemaClientConfig config, double temperatureC, double humidityPercent,
-		double pressureKpa) {
+		double pressureKpa, Vec3 listener, Vec3 forward,
+		ReflectionDelayLimit delayLimit) {
 		List<LateReflectionBus.Tap> taps = new ArrayList<>();
 		for (LatePathCandidate candidate : candidates) {
-			if (excluded.contains(candidate.path().pathKey())) {
+			if (excluded.contains(candidate.path().pathKey())
+				|| candidate.path().delaySeconds()
+					> delayLimit.maxDelaySeconds(candidate.path().order())) {
 				continue;
 			}
 			LateReflectionBus.Tap tap = lateTapFromPath(candidate.path(),
 				candidate.speaker(), config, temperatureC, humidityPercent,
-				pressureKpa);
+				pressureKpa, listener, forward);
 			if (tap != null) {
 				taps.add(tap);
 			}
@@ -938,11 +1018,13 @@ public final class AvReceiverPlayback {
 		SpeakerDirectivityService.Angles angles =
 			SpeakerDirectivityService.angles(speaker.acousticFrontPosition(),
 				speaker.acousticForward(), firstReflection);
+		SpeakerDataProfile profile = speakerProfile(speaker);
 		CommonAcousticFirProfile firProfile =
-			CommonAcousticFirProfile.reflection(speakerProfile(speaker),
+			CommonAcousticFirProfile.reflection(profile,
 				angles.horizontal(), angles.vertical(), path.pathLength(),
 				config.airAbsorption(), temperatureC, humidityPercent,
-				pressureKpa, path.materials().get(0), path.occlusion());
+				pressureKpa, path.materials().get(0), path.occlusion(),
+				subwooferBand(speaker, profile));
 		String key = path.pathKey();
 		MinimumPhaseFir filter = premiumReflectionFilters.get(key);
 		MinimumPhaseFir design = CommonAcousticFirService.get(firProfile);
@@ -971,7 +1053,8 @@ public final class AvReceiverPlayback {
 	 */
 	private void updateLatePathBus(Vec3 listener, CinemaClientConfig config,
 								   List<LateReflectionBus.Tap> order2Taps,
-								   long roomVersion) {
+								   long roomVersion,
+								   ReflectionDelayLimit reflectionLimit) {
 		if (audio == null) {
 			return;
 		}
@@ -991,6 +1074,7 @@ public final class AvReceiverPlayback {
 			lastLatePathListener = listener;
 			lastLatePathMoveMillis = now;
 			latePathRequestRoomVersion = roomVersion;
+			latePathDelayLimit = reflectionLimit;
 			resetLatePathBuild();
 			currentLateTaps = List.copyOf(order2Taps);
 			engineTaps(currentLateTaps);
@@ -1034,7 +1118,7 @@ public final class AvReceiverPlayback {
 		if (!latePathFastApplied) {
 			stepFastPhase(level, listener, forward, config, now);
 		} else {
-			stepDeepPhase(level, listener, config);
+			stepDeepPhase(level, listener, forward, config);
 		}
 	}
 
@@ -1060,7 +1144,7 @@ public final class AvReceiverPlayback {
 				request.planes(), request.channel(), pointOf(request.source()),
 				pointOf(listener), ReflectionProbe.of(level),
 				LATE_PATH_FAST_ORDER, MAX_FAST_REFLECTION_PATHS, 2,
-				ImageSourcePathSolver.MAX_VISITS);
+				ImageSourcePathSolver.MAX_VISITS, latePathDelayLimit);
 		}
 		long stepStart = System.nanoTime();
 		boolean done = latePathFastSession.step(LATE_PATH_STEP_BUDGET_NANOS);
@@ -1069,6 +1153,7 @@ public final class AvReceiverPlayback {
 			return;
 		}
 		ImageSourcePathSolver.SolveStats stats = latePathFastSession.stats();
+		latePathFastDelayRejected += stats.delayRejected();
 		LatePathRequest request = latePathFastRequest;
 		for (ReflectionPathTap path : stats.paths()) {
 			latePathCandidates.add(new LatePathCandidate(path,
@@ -1093,6 +1178,13 @@ public final class AvReceiverPlayback {
 
 	private void finishFastPhase(Vec3 listener, Vec3 forward,
 								 CinemaClientConfig config, long now) {
+		if (!latePathBuildActive && latePathCandidates.isEmpty()) {
+			// lateReverb can be toggled on between reflection updates. Until the
+			// next update publishes latePathRequests there is nothing to solve;
+			// finishing here would publish an empty "steady" state and compute
+			// upgrade against the zero epoch sentinel.
+			return;
+		}
 		double temperatureC = config.airTemperatureC();
 		double humidityPercent = config.airHumidityPercent();
 		double pressureKpa = AirAbsorption.REFERENCE_PRESSURE_KPA;
@@ -1124,7 +1216,8 @@ public final class AvReceiverPlayback {
 		premiumOrder2Sources = List.copyOf(order2Sources);
 		premiumOrder3Sources = List.copyOf(order3Sources);
 		latePathFastTaps = List.copyOf(busTaps(latePathCandidates, excluded,
-			config, temperatureC, humidityPercent, pressureKpa));
+			config, temperatureC, humidityPercent, pressureKpa, listener,
+			forward, latePathDelayLimit));
 		currentLateTaps = latePathFastTaps;
 		engineTaps(currentLateTaps);
 		latePathBuildActive = false;
@@ -1134,6 +1227,7 @@ public final class AvReceiverPlayback {
 		latePathDeepTaps.clear();
 		latePathDeepStartMillis = now;
 		latePathDeepNanos = 0L;
+		latePathDeepDelayRejected = 0;
 		int order2Paths = 0;
 		int order3Paths = 0;
 		for (LatePathCandidate candidate : latePathCandidates) {
@@ -1145,17 +1239,22 @@ public final class AvReceiverPlayback {
 		}
 		Cinema.LOGGER.info(
 			"cinema receiver {}: geometric late bus steady fast order=3 "
-				+ "busTaps={} premium2={} premium3={} paths={} "
-				+ "(order2={}, order3={}), stable={} ms, upgrade={} ms, "
-				+ "solve={} ms",
-			receiverPos.toShortString(), currentLateTaps.size(),
-			premium2.size(), premium3.size(), latePathCandidates.size(),
-			order2Paths, order3Paths, now - lastLatePathMoveMillis,
-			now - latePathBuildStartMillis, latePathBuildNanos / 1.0e6);
+				+ "busTaps={} requested={} premium2={} premium3={} paths={} "
+				+ "(order2={}, order3={}), maxDelay={} ms, dropped={}, "
+				+ "stable={} ms, upgrade={} ms, solve={} ms",
+			receiverPos.toShortString(), effectiveBusTaps(currentLateTaps),
+			currentLateTaps.size(), premium2.size(), premium3.size(),
+			latePathCandidates.size(), order2Paths, order3Paths,
+			String.format(java.util.Locale.ROOT, "%.1f",
+				latePathDelayLimit.maxDelaySeconds(3) * 1_000.0),
+			latePathFastDelayRejected,
+			now - lastLatePathMoveMillis,
+			latePathBuildStartMillis > 0L ? now - latePathBuildStartMillis : 0L,
+			latePathBuildNanos / 1.0e6);
 		latePathCandidates.clear();
 	}
 
-	private void stepDeepPhase(ClientLevel level, Vec3 listener,
+	private void stepDeepPhase(ClientLevel level, Vec3 listener, Vec3 forward,
 							   CinemaClientConfig config) {
 		if (audio == null || !config.lateReverb() || !latePathFastApplied
 			|| latePathDeepApplied) {
@@ -1173,7 +1272,8 @@ public final class AvReceiverPlayback {
 				request.planes(), request.channel(), pointOf(request.source()),
 				pointOf(listener), ReflectionProbe.of(level),
 				LATE_PATH_DEEP_ORDER, MAX_DEEP_REFLECTION_PATHS,
-				LATE_PATH_DEEP_ORDER, ImageSourcePathSolver.MAX_VISITS);
+				LATE_PATH_DEEP_ORDER, ImageSourcePathSolver.MAX_VISITS,
+				latePathDelayLimit);
 		}
 		long stepStart = System.nanoTime();
 		boolean done = latePathDeepSession.step(
@@ -1183,12 +1283,17 @@ public final class AvReceiverPlayback {
 			return;
 		}
 		ImageSourcePathSolver.SolveStats stats = latePathDeepSession.stats();
+		latePathDeepDelayRejected += stats.delayRejected();
 		LatePathRequest request = latePathDeepRequest;
 		for (ReflectionPathTap path : stats.paths()) {
+			if (path.delaySeconds()
+				> latePathDelayLimit.maxDelaySeconds(path.order())) {
+				continue;
+			}
 			LateReflectionBus.Tap tap = lateTapFromPath(path,
 				request.speaker(), config, config.airTemperatureC(),
 				config.airHumidityPercent(),
-				AirAbsorption.REFERENCE_PRESSURE_KPA);
+				AirAbsorption.REFERENCE_PRESSURE_KPA, listener, forward);
 			if (tap != null) {
 				latePathDeepTaps.add(tap);
 			}
@@ -1220,13 +1325,40 @@ public final class AvReceiverPlayback {
 		latePathDeepApplied = true;
 		Cinema.LOGGER.info(
 			"cinema receiver {}: geometric late bus steady deep order=4 "
-				+ "busTaps={} fastTaps={} deepTaps={}, stable={} ms, "
-				+ "deepUpgrade={} ms, solve={} ms",
-			receiverPos.toShortString(), currentLateTaps.size(),
-			latePathFastTaps.size(), latePathDeepTaps.size(),
-			now - lastLatePathMoveMillis, now - latePathDeepStartMillis,
+				+ "busTaps={} requested={} fastTaps={} deepTaps={}, "
+				+ "maxDelay={} ms, dropped={}, "
+				+ "stable={} ms, deepUpgrade={} ms, solve={} ms",
+			receiverPos.toShortString(), effectiveBusTaps(currentLateTaps),
+			currentLateTaps.size(), latePathFastTaps.size(),
+			latePathDeepTaps.size(),
+			String.format(java.util.Locale.ROOT, "%.1f",
+				latePathDelayLimit.maxDelaySeconds(4) * 1_000.0),
+			latePathDeepDelayRejected,
+			now - lastLatePathMoveMillis,
+			latePathDeepStartMillis > 0L
+				? now - latePathDeepStartMillis : 0L,
 			latePathDeepNanos / 1.0e6);
 		latePathDeepTaps.clear();
+	}
+
+	/**
+	 * Mirrors {@code LateReflectionBus.setTaps}: invalid taps are discarded and
+	 * the bus keeps only its strongest {@code LATE_BUS_MAX_TAPS}. Reporting the
+	 * published list size alone hides deep taps that never reach the bus.
+	 */
+	private static int effectiveBusTaps(List<LateReflectionBus.Tap> taps) {
+		if (taps == null || taps.isEmpty()) {
+			return 0;
+		}
+		double maxDelay = CinemaAudioEngine.lateBusMaxDelaySeconds();
+		int valid = 0;
+		for (LateReflectionBus.Tap tap : taps) {
+			if (tap != null && tap.gain() > 0.0
+				&& tap.delaySeconds() < maxDelay) {
+				valid++;
+			}
+		}
+		return Math.min(valid, CinemaAudioEngine.LATE_BUS_MAX_TAPS);
 	}
 
 	private void engineTaps(List<LateReflectionBus.Tap> taps) {
@@ -1277,11 +1409,63 @@ public final class AvReceiverPlayback {
 		return SpeakerDataRegistry.find(speaker.type(), settings.profileId());
 	}
 
+	private static SubwooferBand subwooferBand(SpeakerBlockEntity speaker,
+											   SpeakerDataProfile profile) {
+		if (speaker == null || profile == null || !profile.isSubwoofer()) {
+			return null;
+		}
+		SpeakerDataRegistry.SpeakerSettings settings =
+			SpeakerDataAssignments.settingsFor(speaker);
+		return new SubwooferBand(settings.lowHz(), settings.highHz());
+	}
+
 	private static float speakerGain(SpeakerBlockEntity speaker) {
 		double db = speaker.levelDb() + SpeakerDataAssignments.settingsFor(speaker).gainDb();
 		double linear = Math.pow(10.0, db / 20.0);
 		double max = Math.pow(10.0, SpeakerBlockEntity.MAX_LEVEL_DB / 20.0);
 		return (float) Math.max(0.0, Math.min(max, linear));
+	}
+
+	/**
+	 * Detects effective speaker level/profile changes. The late-bus and premium
+	 * sources bake this gain into their published taps, so a steady-state
+	 * listener would otherwise keep the old level until it moved.
+	 */
+	private boolean updateSpeakerSettingsHash(SpeakerBlockEntity[] speakers) {
+		long hash = 0x9E3779B97F4A7C15L;
+		for (int channel = 0; channel < speakers.length; channel++) {
+			SpeakerBlockEntity speaker = speakers[channel];
+			long part = channel + 1L;
+			if (speaker == null) {
+				part = part * 31L + 0x5DEECE66DL;
+			} else {
+				SpeakerDataRegistry.SpeakerSettings settings =
+					SpeakerDataAssignments.settingsFor(speaker);
+				SpeakerDataProfile profile = SpeakerDataRegistry.find(
+					speaker.type(), settings.profileId());
+				Vec3 position = speaker.acousticFrontPosition();
+				Vec3 forward = speaker.acousticForward();
+				part = part * 31L + Double.doubleToLongBits(speaker.levelDb());
+				part = part * 31L + settings.profileId().hashCode();
+				part = part * 31L + (profile == null ? 0
+					: System.identityHashCode(profile));
+				part = part * 31L + Double.doubleToLongBits(settings.gainDb());
+				part = part * 31L + Double.doubleToLongBits(settings.lowHz());
+				part = part * 31L + Double.doubleToLongBits(settings.highHz());
+				part = part * 31L + Double.doubleToLongBits(position.x);
+				part = part * 31L + Double.doubleToLongBits(position.y);
+				part = part * 31L + Double.doubleToLongBits(position.z);
+				part = part * 31L + Double.doubleToLongBits(forward.x);
+				part = part * 31L + Double.doubleToLongBits(forward.y);
+				part = part * 31L + Double.doubleToLongBits(forward.z);
+			}
+			hash = Long.rotateLeft(hash ^ part, 27) * 0x9E3779B97F4A7C15L;
+		}
+		if (hash == lastSpeakerSettingsHash) {
+			return false;
+		}
+		lastSpeakerSettingsHash = hash;
+		return true;
 	}
 
 	private static float overallGain(CommonAcousticFirProfile profile) {

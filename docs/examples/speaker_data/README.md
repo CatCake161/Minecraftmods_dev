@@ -30,6 +30,7 @@ These profiles are local data and are not packaged into the mod.
   "id": "my-sub-cardioid",
   "name": "My Sub Cardioid",
   "type": "subwoofer",
+  "enclosure": "sealed",
   "pattern": "cardioid",
   "frequencyRange": [20, 200],
   "source": "local test",
@@ -37,8 +38,21 @@ These profiles are local data and are not packaged into the mod.
 }
 ```
 
-`pattern` can be `omni`, `cardioid`, or `unmeasured`. The built-in subwoofer
-profiles already provide `sub-omni` and `sub-cardioid`.
+`pattern` can be `omni`, `cardioid`, or `unmeasured`. For subwoofers,
+`enclosure` can be `sealed` (alias `closed`) or `ported` (legacy aliases
+`bass-reflex`, `bass_reflex`, `reflex`); omit it if unknown. The built-in
+subwoofer profiles are `sub-sealed-omni`, `sub-sealed-cardioid`,
+`sub-ported-omni` and `sub-ported-cardioid`; legacy ids `sub-omni` and
+`sub-cardioid` map to the sealed variants, while `sub-reflex-omni` and
+`sub-reflex-cardioid` map to the ported variants. For built-in and other
+unmeasured subwoofers the enclosure now drives the analytic low-frequency
+response: sealed uses a second-order Butterworth high-pass at the profile's
+-3 dB low edge (30 Hz for the built-in), while ported uses a fourth-order
+high-pass at its low edge (20 Hz for the built-in). Measured subwoofer profiles
+keep their measured on-axis response and skip the analytic enclosure model.
+The manual Low/High range (10-1000 Hz) is applied as a second-order
+Butterworth high-pass/low-pass pair; it defaults to the profile range (sealed
+30-200 Hz, ported 20-200 Hz).
 
 > This importer expects the `speaker_data` schema below, not the raw Spinorama
 > Plotly JSON. The converter under this folder reads `SPL Horizontal.txt` and
@@ -94,12 +108,14 @@ Raw measurement grids are kept unchanged; the converter does not downsample to
   reference; positive horizontal is toward the listener's right when facing the
   speaker; positive vertical is up. The rear point is both +180° and -180°.
   The converter adds a `-180` row with the same SPL as `+180`.
-- `frequencyRange` is optional. When omitted for a measured profile, the parser
-  computes it from the low/high -10 dB crossings of `onAxis`, relative to the
-  full-band energy average `10*log10(mean(10^(SPL/10)))` over every measured
-  on-axis sample. The result is rounded to 1 Hz. The scan walks outward from
-  1 kHz so a narrow in-band dip does not truncate the range. A boundary with no
-  crossing uses the measured limit.
+- `frequencyRange` is the on-axis -3 dB band, rounded to 1 Hz. For measured
+  profiles it is recomputed from the lowest/highest `onAxis` samples within
+  -3 dB of the full-band energy average
+  `10*log10(mean(10^(SPL/10)))` over every measured on-axis sample; a stale
+  JSON value is ignored. Boundaries are interpolated to the neighbouring
+  below-threshold sample, and interior dips do not truncate the range. A
+  boundary at the measurement edge uses that edge. For analytic/unmeasured
+  profiles the JSON value is kept.
 - `onAxis` keeps absolute SPL and the raw shape. For future per-speaker EQ, the
   profile exposes `onAxisEqGainDb(f)` = measured on-axis SPL minus the same
   full-band energy average. This normalizes the overall on-axis loudness
@@ -110,9 +126,13 @@ Raw measurement grids are kept unchanged; the converter does not downsample to
   Horizontal and vertical tables are combined as a separable approximation
   (dB sum), not a full 3D balloon.
 - The GUI's `SPL gain dB` is a single per-speaker level trim; it is separate from
-  the measured on-axis response. For measured profiles the Low/High Hz fields
-  are read-only and always use `frequencyRange`; only `SPL gain dB` is editable.
-  Unmeasured/analytic profiles can still edit Low/High Hz.
+  the measured on-axis response. For non-subwoofer measured profiles the
+  Low/High Hz fields are read-only and always use the -3 dB `frequencyRange`;
+  only `SPL gain dB` is editable. Subwoofers always keep a manually editable
+  bass-management band (10–1000 Hz, default follows the profile: sealed
+  30–200 Hz, ported 20–200 Hz) while the profile's -3 dB range is shown
+  separately. Unmeasured/analytic profiles can still edit
+  Low/High Hz.
 - The converter does not package profiles into the mod. Generated profiles are
   local user/import data under `cinema/speaker_data/profiles/`.
 - `synthetic_floorstanding.json` is synthetic test data, not a real

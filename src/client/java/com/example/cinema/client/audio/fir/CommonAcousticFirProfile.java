@@ -5,6 +5,7 @@ import com.example.cinema.client.audio.acoustics.OcclusionResult;
 import com.example.cinema.client.audio.directivity.SpeakerDirectivityService;
 import com.example.cinema.client.audio.environment.AirAbsorption;
 import com.example.cinema.client.audio.speakerdata.SpeakerDataProfile;
+import com.example.cinema.client.audio.speakerdata.SubwooferBand;
 
 /**
  * One request for the common direct/reflection minimum-phase FIR.
@@ -32,6 +33,7 @@ public record CommonAcousticFirProfile(Role role,
 									   double pressureKpa,
 									   AcousticMaterial material,
 									   OcclusionResult occlusion,
+									   SubwooferBand subwooferBand,
 									   int taps,
 									   int fftSize) {
 	public enum Role {
@@ -41,7 +43,7 @@ public record CommonAcousticFirProfile(Role role,
 
 	public static final int DIRECT_TAPS = 4_096;
 	public static final int DIRECT_FFT_SIZE = 8_192;
-	public static final int REFLECTION_TAPS = 2_048;
+	public static final int REFLECTION_TAPS = 4_096;
 	public static final int REFLECTION_FFT_SIZE = 8_192;
 
 	public CommonAcousticFirProfile {
@@ -67,6 +69,9 @@ public record CommonAcousticFirProfile(Role role,
 		if (role == Role.DIRECT) {
 			material = null;
 		}
+		if (speaker == null || !speaker.isSubwoofer()) {
+			subwooferBand = null;
+		}
 		if (taps <= 0) {
 			taps = role == Role.DIRECT ? DIRECT_TAPS : REFLECTION_TAPS;
 		}
@@ -87,10 +92,25 @@ public record CommonAcousticFirProfile(Role role,
 												  double humidityPercent,
 												  double pressureKpa,
 												  OcclusionResult occlusion) {
+		return direct(speaker, horizontalDegrees, verticalDegrees, distanceMeters,
+			airAbsorption, temperatureC, humidityPercent, pressureKpa, occlusion,
+			null);
+	}
+
+	public static CommonAcousticFirProfile direct(SpeakerDataProfile speaker,
+												  double horizontalDegrees,
+												  double verticalDegrees,
+												  double distanceMeters,
+												  boolean airAbsorption,
+												  double temperatureC,
+												  double humidityPercent,
+												  double pressureKpa,
+												  OcclusionResult occlusion,
+												  SubwooferBand subwooferBand) {
 		return new CommonAcousticFirProfile(Role.DIRECT, speaker,
 			horizontalDegrees, verticalDegrees, distanceMeters, airAbsorption,
 			temperatureC, humidityPercent, pressureKpa, null, occlusion,
-			DIRECT_TAPS, DIRECT_FFT_SIZE);
+			subwooferBand, DIRECT_TAPS, DIRECT_FFT_SIZE);
 	}
 
 	public static CommonAcousticFirProfile reflection(SpeakerDataProfile speaker,
@@ -103,10 +123,26 @@ public record CommonAcousticFirProfile(Role role,
 													 double pressureKpa,
 													 AcousticMaterial material,
 													 OcclusionResult occlusion) {
+		return reflection(speaker, horizontalDegrees, verticalDegrees,
+			pathLengthMeters, airAbsorption, temperatureC, humidityPercent,
+			pressureKpa, material, occlusion, null);
+	}
+
+	public static CommonAcousticFirProfile reflection(SpeakerDataProfile speaker,
+													 double horizontalDegrees,
+													 double verticalDegrees,
+													 double pathLengthMeters,
+													 boolean airAbsorption,
+													 double temperatureC,
+													 double humidityPercent,
+													 double pressureKpa,
+													 AcousticMaterial material,
+													 OcclusionResult occlusion,
+													 SubwooferBand subwooferBand) {
 		return new CommonAcousticFirProfile(Role.REFLECTION, speaker,
 			horizontalDegrees, verticalDegrees, pathLengthMeters, airAbsorption,
 			temperatureC, humidityPercent, pressureKpa, material, occlusion,
-			REFLECTION_TAPS, REFLECTION_FFT_SIZE);
+			subwooferBand, REFLECTION_TAPS, REFLECTION_FFT_SIZE);
 	}
 
 	public boolean isReflection() {
@@ -115,8 +151,13 @@ public record CommonAcousticFirProfile(Role role,
 
 	public String id() {
 		String speakerId = speaker == null ? "flat" : speaker.id();
-		return role == Role.REFLECTION ? "reflection:" + speakerId
+		String base = role == Role.REFLECTION ? "reflection:" + speakerId
 			: "direct:" + speakerId;
+		if (subwooferBand == null) {
+			return base;
+		}
+		return base + "@" + Math.round(subwooferBand.lowHz()) + "-"
+			+ Math.round(subwooferBand.highHz());
 	}
 
 	private static double quantize(double value, double step, double min,

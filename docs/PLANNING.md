@@ -45,19 +45,20 @@ AV Receiver（权威媒体单元）
 
 ```text
 5.1 PCM → 直达声（单个 4096-tap FIR：on-axis/指向性 + ISO 空气 + 遮挡低通；Java 距离/遮挡宽带）
-        → 一阶早期反射（镜像源 + 单个 2048-tap 全频带 FIR：指向性/空气/材质/遮挡低通）  // A2b 已验收，A2c-R 已实现、A/B 待做
+        → 一阶早期反射（镜像源 + 单个 4096-tap 全频带 FIR：指向性/空气/材质/遮挡低通）  // A2b 已验收，A2c-R 已实现、A/B 待做
         → 晚期混响（64-line FDN 全频带尾音，20 Hz DC 高通）          // A3 已实现但听感验收失败；默认关闭（方案 B）
         → 6 个直达 OpenAL source + 56 个反射 source（24 一阶 + 16 二阶 premium + 8 三阶 premium）+ 启用时创建的 6 个 wet source
 ```
 
 - 直达声应用 Java `1/max(r,1)` 距离衰减、ISO 9613-1 空气吸收（1 m 为 0 dB 参考点）、遮挡和扬声器指向性；OpenAL 距离模型为 `AL_NONE`，source 位置只负责声像/HRTF。早期反射按房间几何、材质、距离、空气吸收和扬声器指向性计算。
 - 早期反射每个 tap 使用独立 OpenAL source，位置为镜像源；OpenAL 负责方向/声像，距离由 Java 按 `1/max(L,1)` 计算，不混入 5.1 直达声道。
-- 扬声器指向性使用 **Spinorama 实测水平/垂直指向性 + 轴上响应**，不手写猜测曲线；直达声使用单个 4096-tap FIR（含空气 + 遮挡低通）；反射路径使用共享 `CommonAcousticFirDesigner` 的 2048-tap 全频带 FIR，角度为扬声器→反射点，加入材质和遮挡低通（A2c-R）。
+- 扬声器指向性使用 **Spinorama 实测水平/垂直指向性 + 轴上响应**，不手写猜测曲线；直达声使用单个 4096-tap FIR（含空气 + 遮挡低通）；反射路径使用共享 `CommonAcousticFirDesigner` 的 4096-tap 全频带 FIR，角度为扬声器→反射点，加入材质和遮挡低通（A2c-R）。
 - 反射增益按物理链路计算，不设置“反射默认比直达声低 6–12 dB”的固定值。
 - 空气吸收开关/温湿度、早反调试 gain 放 Mod Menu（客户端）；直达声和反射声共用同一套 on-axis/指向性/`overallGain` 语义；反射 FIR 已合并空气、材质和遮挡低通，一阶反射保持全频带，不再使用反射 biquad 或 Schroeder 滤波。
 - 只做扬声器箱体指向性，不做原始声源指向性；5.1 bus 已混合，无法从混音恢复每个原始声源方向。
 - **2026-11-08 A3 验收结论：不通过。** 高频“沙沙”、低频不足、整体音色不平衡；继续调 FDN 参数收益低，当前方案基本失败。已执行方案 B：`DEFAULT_LATE_REVERB=false`，默认只保留直达 + 一阶反射；`CinemaAudioEngine` 仅在启用时创建 wet source，禁用时释放并跳过 FDN 处理。以下 A3 描述仅作为保留的实验路径。低频模态/SBIR 仍归 A5。
-- 晚期尾音由 Java 64-line FDN 生成：4 级输入扩散、轻量慢速调制、高频阻尼输出 + 120 Hz 低频支撑 + 7 kHz 输出低通、20 Hz DC 高通、RT60 low/mid/high 衰减、20–50 ms pre-delay、6 路 Hadamard 去相关；发送使用 source power，`R = S·α/(1-α)`/`r_c` 和实测指向性推导 wet/direct 与 `sourceGainDb = 20log10(2/√R)`，FDN 输出按 mid-band 环路增益归一化（高频阻尼降低总 wet 能量）；LFE 也送入 FDN，低频模态仍由 A5 处理。EAXReverb 仅保留为可选 fallback。
+- 晚期尾音当前由 geometric `LateReflectionBus` 生成：order-2/3/4 几何路径、6 路 wet source、每 tap delay/gain/damping；最强路径作为 premium 使用独立 `ReflectionSource` 和 4096-tap FIR，其余进入 bus 并按真实扬声器布局做 VBAP（方向 listener → 最后反射点，能量归一化权重，精确 3D → 水平 → 最近扬声器 → 扩散回退，LFE 不作为普通输出目标）。LFE 与其他 5 声道一样参与完整反射计算。Java 64-line FDN 保留为实验 fallback 但 inactive；EAXReverb 仅保留为可选 fallback；低频模态仍由 A5 处理。
+- 低音炮声学（2026-11-09）：内置/未测量低音炮按 enclosure 生成解析响应（sealed 二阶 30 Hz / ported 四阶 20 Hz Butterworth 高通；measured profile 跳过解析模型，避免重复计算），手动 Low/High（10–1000 Hz）用二阶 Butterworth 高通/低通实际带限；低音炮 FIR/源增益参考 `sqrt(low*high)`。多低音炮路由/模态仍归 A5。
 - 声学计算是客户端本地行为，不改变接收器的媒体/播放权威，也不影响 A/V 时钟。
 
 关键组件：
@@ -67,7 +68,7 @@ AV Receiver（权威媒体单元）
 - `StreamingAudioDecoder`：外部 FFmpeg → 5.1 `f32le`；音频块 PTS 由采样数计算。
 - `CinemaPlayer`：每接收器播放代理持有的播放器实例；不再有全局播放器。
 - `CinemaVideoTexture`：接收器视频输出 → RGBA 上传/对焦 LOD → 投影仪。
-- `CinemaAudioEngine`：每接收器独立的音频引擎与 OpenAL context，共享 Minecraft OpenAL device；当前六路 source，未来按目标布局动态 source；A2 起在音频线程做 Java 距离/遮挡增益和单个 4096-tap 直达 FIR；A2b 起另含 56 个反射 source、延迟环；A2c-R 起反射使用共享 `CommonAcousticFirDesigner` 的 2048-tap FIR，不再串 biquad；A3 起另含 6 个 late-reverb wet source 和 geometric `LateReflectionBus`（FDN 保留但 inactive）。
+- `CinemaAudioEngine`：每接收器独立的音频引擎与 OpenAL context，共享 Minecraft OpenAL device；当前六路 source，未来按目标布局动态 source；A2 起在音频线程做 Java 距离/遮挡增益和单个 4096-tap 直达 FIR；A2b 起另含 56 个反射 source、延迟环；A2c-R 起反射使用共享 `CommonAcousticFirDesigner` 的 4096-tap FIR，不再串 biquad；A3 起另含 6 个 late-reverb wet source 和 geometric `LateReflectionBus`（FDN 保留但 inactive）。
 - `CinemaPrewarm`：启动时检查外部 FFmpeg 版本。
 
 职责边界：

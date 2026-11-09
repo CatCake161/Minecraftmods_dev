@@ -24,17 +24,29 @@ import java.util.Optional;
 public final class ImageSourcePathSolver {
 	public static final double SPEED_OF_SOUND = 343.0;
 	public static final double MIN_DELAY_SECONDS = 0.001;
-	/** The spike allows late paths up to 300 ms; the audio engine still clamps at 80 ms. */
+	/**
+	 * Default late-path cap. Playback normally supplies a room-aware
+	 * {@link ReflectionDelayLimit}; this value keeps the diagnostic/solver
+	 * entry points usable without a room snapshot.
+	 */
 	public static final double MAX_DELAY_SECONDS = 0.300;
+	public static final ReflectionDelayLimit DEFAULT_DELAY_LIMIT =
+		ReflectionDelayLimit.constant(MAX_DELAY_SECONDS);
 	public static final int DEFAULT_MAX_ORDER = 3;
 	public static final int MAX_PATHS = 512;
 	/** Hard bound for deep plane sequences in a patch-heavy room. */
 	public static final int MAX_VISITS = 200_000;
 
 	public record SolveStats(List<ReflectionPathTap> paths, int visits,
-							 boolean truncated) {
+							 boolean truncated, int delayRejected) {
 		public SolveStats {
 			paths = paths == null ? List.of() : List.copyOf(paths);
+			delayRejected = Math.max(0, delayRejected);
+		}
+
+		public SolveStats(List<ReflectionPathTap> paths, int visits,
+						  boolean truncated) {
+			this(paths, visits, truncated, 0);
 		}
 	}
 
@@ -47,52 +59,80 @@ public final class ImageSourcePathSolver {
 	/** Solves all paths with order {@code 2..maxOrder}. */
 	public static List<ReflectionPathTap> solve(List<MirrorPlane> planes, int channel,
 												Point3 source, Point3 listener,
-												boolean lfe,
 												ImageSourceSolver.World world,
 												int maxOrder) {
-		return solve(planes, channel, source, listener, lfe, world, maxOrder,
+		return solve(planes, channel, source, listener, world, maxOrder,
 			MAX_PATHS);
 	}
 
 	public static List<ReflectionPathTap> solve(List<MirrorPlane> planes, int channel,
 												Point3 source, Point3 listener,
-												boolean lfe,
 												ImageSourceSolver.World world,
 												int maxOrder, int maxPaths) {
-		return solveWithStats(planes, channel, source, listener, lfe, world,
-			maxOrder, maxPaths).paths();
+		return solve(planes, channel, source, listener, world, maxOrder,
+			maxPaths, DEFAULT_DELAY_LIMIT);
+	}
+
+	public static List<ReflectionPathTap> solve(List<MirrorPlane> planes, int channel,
+												Point3 source, Point3 listener,
+												ImageSourceSolver.World world,
+												int maxOrder, int maxPaths,
+												ReflectionDelayLimit delayLimit) {
+		return solveWithStats(planes, channel, source, listener, world,
+			maxOrder, maxPaths, delayLimit).paths();
 	}
 
 	public static SolveStats solveWithStats(List<MirrorPlane> planes, int channel,
 											Point3 source, Point3 listener,
-											boolean lfe,
 											ImageSourceSolver.World world,
 											int maxOrder, int maxPaths) {
-		return solveWithStats(planes, channel, source, listener, lfe, world,
-			maxOrder, maxPaths, 2, MAX_VISITS);
+		return solveWithStats(planes, channel, source, listener, world,
+			maxOrder, maxPaths, DEFAULT_DELAY_LIMIT);
 	}
 
 	public static SolveStats solveWithStats(List<MirrorPlane> planes, int channel,
 											Point3 source, Point3 listener,
-											boolean lfe,
+											ImageSourceSolver.World world,
+											int maxOrder, int maxPaths,
+											ReflectionDelayLimit delayLimit) {
+		return solveWithStats(planes, channel, source, listener, world,
+			maxOrder, maxPaths, 2, MAX_VISITS, delayLimit);
+	}
+
+	public static SolveStats solveWithStats(List<MirrorPlane> planes, int channel,
+											Point3 source, Point3 listener,
 											ImageSourceSolver.World world,
 											int maxOrder, int maxPaths,
 											int minOrder, int maxVisits) {
+		return solveWithStats(planes, channel, source, listener, world,
+			maxOrder, maxPaths, minOrder, maxVisits, DEFAULT_DELAY_LIMIT);
+	}
+
+	public static SolveStats solveWithStats(List<MirrorPlane> planes, int channel,
+											Point3 source, Point3 listener,
+											ImageSourceSolver.World world,
+											int maxOrder, int maxPaths,
+											int minOrder, int maxVisits,
+											ReflectionDelayLimit delayLimit) {
 		int firstOrder = Math.max(2, minOrder);
-		if (lfe || planes == null || planes.isEmpty() || source == null
+		if (planes == null || planes.isEmpty() || source == null
 			|| listener == null || world == null || maxOrder < firstOrder
 			|| maxPaths <= 0 || maxVisits <= 0) {
-			return new SolveStats(List.of(), 0, false);
+			return new SolveStats(List.of(), 0, false, 0);
 		}
+		ReflectionDelayLimit limit = delayLimit == null
+			? DEFAULT_DELAY_LIMIT : delayLimit;
 		List<ReflectionPathTap> taps = new ArrayList<>();
 		List<MirrorPlane> pathPlanes = new ArrayList<>(maxOrder);
 		List<Point3> imageChain = new ArrayList<>(maxOrder + 1);
 		imageChain.add(source);
 		int[] visits = {0};
+		int[] delayRejected = {0};
 		boolean[] truncated = {false};
 		search(planes, channel, listener, world, maxOrder, maxPaths, firstOrder,
-			maxVisits, source, pathPlanes, imageChain, taps, visits, truncated);
-		return new SolveStats(taps, visits[0], truncated[0]);
+			maxVisits, source, pathPlanes, imageChain, taps, visits, truncated,
+			delayRejected, limit);
+		return new SolveStats(taps, visits[0], truncated[0], delayRejected[0]);
 	}
 
 	private static void search(List<MirrorPlane> planes, int channel,
@@ -102,7 +142,9 @@ public final class ImageSourcePathSolver {
 							   List<MirrorPlane> pathPlanes,
 							   List<Point3> imageChain,
 							   List<ReflectionPathTap> taps,
-							   int[] visits, boolean[] truncated) {
+							   int[] visits, boolean[] truncated,
+							   int[] delayRejected,
+							   ReflectionDelayLimit delayLimit) {
 		if (pathPlanes.size() >= maxOrder) {
 			return;
 		}
@@ -133,7 +175,7 @@ public final class ImageSourcePathSolver {
 			imageChain.add(nextImage);
 			if (pathPlanes.size() >= minOrder) {
 				ReflectionPathTap tap = buildTap(channel, pathPlanes, imageChain,
-					listener, world);
+					listener, world, delayRejected, delayLimit);
 				if (tap != null) {
 					taps.add(tap);
 					if (taps.size() >= maxPaths) {
@@ -146,7 +188,7 @@ public final class ImageSourcePathSolver {
 			}
 			search(planes, channel, listener, world, maxOrder, maxPaths, minOrder,
 				maxVisits, nextImage, pathPlanes, imageChain, taps, visits,
-				truncated);
+				truncated, delayRejected, delayLimit);
 			imageChain.remove(imageChain.size() - 1);
 			pathPlanes.remove(pathPlanes.size() - 1);
 		}
@@ -179,17 +221,27 @@ public final class ImageSourcePathSolver {
 		private final int maxPaths;
 		private final int minOrder;
 		private final int maxVisits;
+		private final ReflectionDelayLimit delayLimit;
 		private final List<ReflectionPathTap> taps = new ArrayList<>();
 		private final ArrayDeque<Frame> stack = new ArrayDeque<>();
 		private final MirrorPlane[] pathPlanes;
 		private final Point3[] imageChain;
 		private int visits;
+		private final int[] delayRejected = {0};
 		private boolean truncated;
 		private boolean done;
 
 		public Session(List<MirrorPlane> planes, int channel, Point3 source,
 					   Point3 listener, ImageSourceSolver.World world,
 					   int maxOrder, int maxPaths, int minOrder, int maxVisits) {
+			this(planes, channel, source, listener, world, maxOrder, maxPaths,
+				minOrder, maxVisits, DEFAULT_DELAY_LIMIT);
+		}
+
+		public Session(List<MirrorPlane> planes, int channel, Point3 source,
+					   Point3 listener, ImageSourceSolver.World world,
+					   int maxOrder, int maxPaths, int minOrder, int maxVisits,
+					   ReflectionDelayLimit delayLimit) {
 			this.planes = planes == null ? List.of() : planes;
 			this.channel = channel;
 			this.listener = listener;
@@ -198,6 +250,7 @@ public final class ImageSourcePathSolver {
 			this.maxPaths = Math.max(1, maxPaths);
 			this.minOrder = Math.max(2, minOrder);
 			this.maxVisits = Math.max(1, maxVisits);
+			this.delayLimit = delayLimit == null ? DEFAULT_DELAY_LIMIT : delayLimit;
 			this.pathPlanes = new MirrorPlane[Math.max(2, maxOrder)];
 			this.imageChain = new Point3[Math.max(2, maxOrder) + 1];
 			if (source == null || listener == null || world == null
@@ -248,7 +301,7 @@ public final class ImageSourcePathSolver {
 					List<Point3> images = Arrays.asList(imageChain)
 						.subList(0, frame.depth + 2);
 					ReflectionPathTap tap = buildTap(channel, path, images,
-						listener, world);
+						listener, world, delayRejected, delayLimit);
 					if (tap != null) {
 						taps.add(tap);
 					}
@@ -264,7 +317,7 @@ public final class ImageSourcePathSolver {
 		}
 
 		public SolveStats stats() {
-			return new SolveStats(taps, visits, truncated);
+			return new SolveStats(taps, visits, truncated, delayRejected[0]);
 		}
 	}
 
@@ -272,7 +325,9 @@ public final class ImageSourcePathSolver {
 											  List<MirrorPlane> planes,
 											  List<Point3> imageChain,
 											  Point3 listener,
-											  ImageSourceSolver.World world) {
+											  ImageSourceSolver.World world,
+											  int[] delayRejected,
+											  ReflectionDelayLimit delayLimit) {
 		int order = planes.size();
 		Point3 finalImage = imageChain.get(order);
 		Point3 source = imageChain.get(0);
@@ -283,8 +338,15 @@ public final class ImageSourcePathSolver {
 			return null;
 		}
 		double delaySeconds = (pathLength - directDistance) / SPEED_OF_SOUND;
-		if (delaySeconds < MIN_DELAY_SECONDS
-			|| delaySeconds > MAX_DELAY_SECONDS) {
+		if (delaySeconds < MIN_DELAY_SECONDS) {
+			return null;
+		}
+		double maxDelay = delayLimit == null
+			? MAX_DELAY_SECONDS : delayLimit.maxDelaySeconds(order);
+		if (!Double.isFinite(maxDelay) || delaySeconds > maxDelay) {
+			if (delayRejected != null) {
+				delayRejected[0]++;
+			}
 			return null;
 		}
 

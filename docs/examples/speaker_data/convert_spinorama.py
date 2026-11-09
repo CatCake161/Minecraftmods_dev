@@ -18,8 +18,10 @@ Angle convention (ANSI/CTA-2034-A Figure 1):
 The source files use On-Axis, +-10 ... +-170, and +180. A -180 row is added
 with the same SPL as +180 so the stored table covers -180 ... +180.
 
-The stored ``frequencyRange`` is the low/high -10 dB crossing of the on-axis
-response relative to its full-band energy average, rounded to 1 Hz.
+The stored ``frequencyRange`` is the lowest/highest on-axis sample within -3 dB
+of the full-band energy average, with the boundary interpolated to its
+below-threshold neighbour and rounded to 1 Hz. Interior dips do not truncate
+the range.
 """
 
 from __future__ import annotations
@@ -66,7 +68,7 @@ CATEGORY_TYPES = {
     "Floorstanding speakers": "floorstanding",
 }
 
-RANGE_THRESHOLD_DB = -10.0
+RANGE_THRESHOLD_DB = -3.0
 SOURCE = "Audio Science Review (ASR) / Spinorama"
 LICENSE = "CC BY-NC-SA 4.0"
 
@@ -128,19 +130,24 @@ def round_hz(value: float) -> int:
 def frequency_range(frequencies: list[float], on_axis: list[float]) -> list[int]:
     reference = energy_average_db(on_axis)
     threshold = reference + RANGE_THRESHOLD_DB
-    start = min(range(len(frequencies)), key=lambda i: abs(frequencies[i] - 1000.0))
-    low = frequencies[0]
-    for index in range(start, 0, -1):
-        if on_axis[index] >= threshold > on_axis[index - 1]:
-            low = crossing_hz(frequencies[index - 1], frequencies[index],
-                              on_axis[index - 1], on_axis[index], threshold)
+    low_index = -1
+    for index, spl in enumerate(on_axis):
+        if spl >= threshold:
+            low_index = index
             break
-    high = frequencies[-1]
-    for index in range(start, len(frequencies) - 1):
-        if on_axis[index] >= threshold > on_axis[index + 1]:
-            high = crossing_hz(frequencies[index], frequencies[index + 1],
-                               on_axis[index], on_axis[index + 1], threshold)
+    high_index = -1
+    for index in range(len(on_axis) - 1, -1, -1):
+        if on_axis[index] >= threshold:
+            high_index = index
             break
+    if low_index < 0 or high_index <= low_index:
+        return [round_hz(frequencies[0]), round_hz(frequencies[-1])]
+    low = frequencies[0] if low_index == 0 else crossing_hz(
+        frequencies[low_index - 1], frequencies[low_index],
+        on_axis[low_index - 1], on_axis[low_index], threshold)
+    high = frequencies[-1] if high_index == len(frequencies) - 1 else crossing_hz(
+        frequencies[high_index], frequencies[high_index + 1],
+        on_axis[high_index], on_axis[high_index + 1], threshold)
     if not math.isfinite(low) or not math.isfinite(high) or high <= low:
         low = frequencies[0]
         high = frequencies[-1]

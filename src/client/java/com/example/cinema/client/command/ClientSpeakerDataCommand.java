@@ -4,6 +4,8 @@ import com.example.cinema.block.entity.SpeakerType;
 import com.example.cinema.client.audio.fir.CommonAcousticFirService;
 import com.example.cinema.client.audio.speakerdata.SpeakerDataProfile;
 import com.example.cinema.client.audio.speakerdata.SpeakerDataRegistry;
+import com.example.cinema.client.audio.speakerdata.SubwooferAcoustics;
+import com.example.cinema.client.audio.speakerdata.SubwooferBand;
 import com.example.cinema.client.gui.SpeakerDataConfigScreen;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.DoubleArgumentType;
@@ -52,12 +54,16 @@ public final class ClientSpeakerDataCommand {
 						if (profile == null) {
 							continue;
 						}
+						double referenceHz = type == SpeakerType.SUBWOOFER ? 80.0 : 1000.0;
+						String referenceLabel = type == SpeakerType.SUBWOOFER ? "80 Hz" : "1 kHz";
 						context.getSource().sendFeedback(Component.literal(String.format(Locale.ROOT,
-							"%s: %s | 1 kHz 0° %+.1f / 90° %+.1f / 180° %+.1f dB | range %.0f-%.0f Hz | SPL gain %+.1f dB | on-axis ref %+.1f dB",
-							type.id(), profile.name(),
-							profile.gainDb(0, 0, 1000),
-							profile.gainDb(90, 0, 1000),
-							profile.gainDb(180, 0, 1000),
+							"%s: %s | %s | %s 0° %+.1f / 90° %+.1f / 180° %+.1f dB | profile -3 dB %.0f-%.0f Hz | effective %.0f-%.0f Hz | SPL gain %+.1f dB | on-axis ref %+.1f dB",
+							type.id(), profile.name(), profile.summaryLabel(),
+							referenceLabel,
+							profile.gainDb(0, 0, referenceHz),
+							profile.gainDb(90, 0, referenceHz),
+							profile.gainDb(180, 0, referenceHz),
+							profile.lowHz(), profile.highHz(),
 							settings.lowHz(), settings.highHz(), settings.gainDb(),
 							profile.onAxisReferenceDb())));
 					}
@@ -94,11 +100,20 @@ public final class ClientSpeakerDataCommand {
 									double horizontal = DoubleArgumentType.getDouble(context, "horizontal");
 									double vertical = DoubleArgumentType.getDouble(context, "vertical");
 									double hz = DoubleArgumentType.getDouble(context, "hz");
+									String subwoofer = "";
+									if (profile.isSubwoofer()) {
+										SubwooferBand band = new SubwooferBand(
+											settings.lowHz(), settings.highHz());
+										subwoofer = String.format(Locale.ROOT,
+											" enclosure %+.2f dB band %+.2f dB",
+											SubwooferAcoustics.enclosureGainDb(profile, hz),
+											band.gainDb(hz));
+									}
 									context.getSource().sendFeedback(Component.literal(String.format(Locale.ROOT,
-										"%s / %s: h=%.1f° v=%.1f° f=%.1f Hz -> %+.2f dB (on-axis EQ %+.2f dB)",
+										"%s / %s: h=%.1f° v=%.1f° f=%.1f Hz -> %+.2f dB (on-axis EQ %+.2f dB)%s",
 										type.id(), profile.name(), horizontal, vertical, hz,
 										profile.gainDb(horizontal, vertical, hz),
-										profile.onAxisEqGainDb(hz))));
+										profile.onAxisEqGainDb(hz), subwoofer)));
 									return 1;
 								}))))))
 		);

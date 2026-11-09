@@ -3,7 +3,7 @@
   "name": "Synthetic Floorstanding (test only)",
   "type": "floorstanding",
   "pattern": "measured",
-  "frequencyRange": [40, 20000],
+  "frequencyRange": [125, 16000],
   "source": "synthetic test data",
   "license": "CC0 (synthetic)",
   "frequencies": [125, 250, 500, 1000, 2000, 4000, 8000, 16000],

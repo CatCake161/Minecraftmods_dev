@@ -260,18 +260,21 @@ public final class SpeakerDataConfigScreen extends Screen {
 	}
 
 	/**
-	 * Measured profiles have a fixed -10 dB frequency range. Only the level trim
-	 * remains editable; unmeasured/analytic profiles can still edit low/high Hz.
+	 * Non-subwoofer measured profiles have a fixed -3 dB frequency range. Only
+	 * the level trim remains editable; subwoofers always keep a manually
+	 * editable bass-management band, and unmeasured/analytic profiles can still
+	 * edit low/high Hz.
 	 */
 	private void updateRangeEditing() {
 		SpeakerDataProfile profile = selectedProfile();
+		boolean subwoofer = selectedType == SpeakerType.SUBWOOFER;
 		boolean measured = profile != null && profile.isMeasured();
-		boolean editable = profile != null && !measured;
+		boolean editable = profile != null && (subwoofer || !measured);
 		lowBox.setEditable(editable);
 		highBox.setEditable(editable);
 		lowBox.setTextColor(editable ? 0xE0E0E0 : 0x707070);
 		highBox.setTextColor(editable ? 0xE0E0E0 : 0x707070);
-		if (measured) {
+		if (measured && !subwoofer) {
 			draftLowHz = profile.lowHz();
 			draftHighHz = profile.highHz();
 			lowBox.setValue(format(draftLowHz, 0));
@@ -443,7 +446,8 @@ public final class SpeakerDataConfigScreen extends Screen {
 			if (!Double.isFinite(gain)) {
 				throw new NumberFormatException("not finite");
 			}
-			if (profile.isMeasured()) {
+			boolean subwoofer = selectedType == SpeakerType.SUBWOOFER;
+			if (profile.isMeasured() && !subwoofer) {
 				draftLowHz = profile.lowHz();
 				draftHighHz = profile.highHz();
 			} else {
@@ -454,7 +458,18 @@ public final class SpeakerDataConfigScreen extends Screen {
 				}
 				long roundedLow = Math.round(low);
 				long roundedHigh = Math.round(high);
-				if (roundedLow < 1L || roundedHigh > 24_000L || roundedHigh <= roundedLow) {
+				if (subwoofer) {
+					long minHz = (long) SpeakerDataRegistry.SUBWOOFER_MIN_HZ;
+					long maxHz = (long) SpeakerDataRegistry.SUBWOOFER_MAX_HZ;
+					if (roundedLow < minHz || roundedHigh > maxHz
+						|| roundedHigh <= roundedLow) {
+						if (!quiet) {
+							setStatus("Subwoofer range must satisfy 10 <= low < high <= 1000 (1 Hz)");
+						}
+						return false;
+					}
+				} else if (roundedLow < 1L || roundedHigh > 24_000L
+					|| roundedHigh <= roundedLow) {
 					if (!quiet) {
 						setStatus("Frequency range must satisfy 1 <= low < high <= 24000 (1 Hz)");
 					}
@@ -540,7 +555,10 @@ public final class SpeakerDataConfigScreen extends Screen {
 			graphics.drawString(font, "No profile selected", contentLeft, sourceY, 0xFF7070, false);
 		} else {
 			if (!compact) {
-				String sourceLine = profile.patternLabel() + " · " + profile.source()
+				String kind = selectedType == SpeakerType.SUBWOOFER
+					? profile.enclosureLabel() + " · " + profile.directivityLabel()
+					: profile.patternLabel();
+				String sourceLine = kind + " · " + profile.source()
 					+ " · " + profile.license();
 				if (profile.hasOnAxisResponse()) {
 					sourceLine += String.format(Locale.ROOT,
@@ -554,8 +572,15 @@ public final class SpeakerDataConfigScreen extends Screen {
 			graphics.drawString(font, truncate(preview, contentWidth), contentLeft, sourceY + 12,
 				0x9A9A9A, false);
 			if (!compact) {
-				String range = String.format(Locale.ROOT, "Range %.0f–%.0f Hz · SPL gain %+.1f dB",
+				String range = String.format(Locale.ROOT,
+					"Profile -3 dB %.0f–%.0f Hz · SPL gain %+.1f dB",
 					profile.lowHz(), profile.highHz(), draftGainDb);
+				if (selectedType == SpeakerType.SUBWOOFER
+					&& (Math.round(draftLowHz) != Math.round(profile.lowHz())
+					|| Math.round(draftHighHz) != Math.round(profile.highHz()))) {
+					range += String.format(Locale.ROOT, " · manual %.0f–%.0f Hz",
+						draftLowHz, draftHighHz);
+				}
 				graphics.drawString(font, truncate(range, contentWidth), contentLeft, sourceY + 24,
 					0x9A9A9A, false);
 			}
@@ -606,9 +631,16 @@ public final class SpeakerDataConfigScreen extends Screen {
 			|| inBox(mouseX, mouseY, highBox.getX(), highBox.getY(),
 			highBox.getWidth(), highBox.getHeight()))) {
 			SpeakerDataProfile profile = selectedProfile();
+			if (profile != null && selectedType == SpeakerType.SUBWOOFER) {
+				renderWrappedTooltip(graphics,
+					"Subwoofer: Low/High Hz are the manual bass-management band "
+						+ "(10-1000 Hz). The profile -3 dB range is shown below.",
+					mouseX, mouseY);
+				return;
+			}
 			if (profile != null && profile.isMeasured()) {
 				renderWrappedTooltip(graphics,
-					"Measured profile: Low/High Hz are fixed by the on-axis -10 dB "
+					"Measured profile: Low/High Hz are fixed by the on-axis -3 dB "
 						+ "frequency range. Only SPL gain dB can be edited.",
 					mouseX, mouseY);
 				return;
@@ -620,7 +652,7 @@ public final class SpeakerDataConfigScreen extends Screen {
 			if (profile != null) {
 				renderWrappedTooltip(graphics,
 					"Click to choose any profile for this cabinet type.\n"
-						+ profile.name() + "\n" + profile.patternLabel() + " · " + profile.source()
+						+ profile.name() + "\n" + profile.summaryLabel() + " · " + profile.source()
 						+ "\nLicense: " + profile.license(),
 					mouseX, mouseY);
 			}
@@ -653,13 +685,16 @@ public final class SpeakerDataConfigScreen extends Screen {
 	}
 
 	private String previewLine(SpeakerDataProfile profile) {
+		double frequency = selectedType == SpeakerType.SUBWOOFER ? 80.0 : 1_000.0;
+		frequency = Math.max(profile.lowHz(), Math.min(profile.highHz(), frequency));
 		return String.format(Locale.ROOT,
-			"1 kHz: 0° %+.1f · 45° %+.1f · 90° %+.1f · 135° %+.1f · 180° %+.1f dB",
-			profile.gainDb(0, 0, 1000),
-			profile.gainDb(45, 0, 1000),
-			profile.gainDb(90, 0, 1000),
-			profile.gainDb(135, 0, 1000),
-			profile.gainDb(180, 0, 1000));
+			"%.0f Hz: 0° %+.1f · 45° %+.1f · 90° %+.1f · 135° %+.1f · 180° %+.1f dB",
+			frequency,
+			profile.gainDb(0, 0, frequency),
+			profile.gainDb(45, 0, frequency),
+			profile.gainDb(90, 0, frequency),
+			profile.gainDb(135, 0, frequency),
+			profile.gainDb(180, 0, frequency));
 	}
 
 	private Component titleLabel() {

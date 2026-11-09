@@ -43,6 +43,14 @@ public record AcousticRoom(boolean valid, String fallbackReason,
 		return max.z - min.z;
 	}
 
+	/** Box diagonal in metres; an upper bound for any straight room segment. */
+	public double diagonal() {
+		double dx = width();
+		double dy = height();
+		double dz = depth();
+		return Math.sqrt(dx * dx + dy * dy + dz * dz);
+	}
+
 	public String sizeLabel() {
 		return String.format(java.util.Locale.ROOT, "%.2f x %.2f x %.2f m",
 			width(), height(), depth());

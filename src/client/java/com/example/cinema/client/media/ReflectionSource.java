@@ -31,7 +31,9 @@ public record ReflectionSource(String key, int channel,
 		z = Float.isFinite(z) ? z : 0.0f;
 		gain = Float.isFinite(gain) ? Math.max(0.0f, gain) : 0.0f;
 		delaySeconds = Double.isFinite(delaySeconds)
-			? Math.max(0.0, Math.min(0.160, delaySeconds)) : 0.0;
+			? Math.max(0.0, Math.min(
+				CinemaAudioEngine.maxReflectionDelaySeconds(), delaySeconds))
+			: 0.0;
 		filter = filter == null ? MinimumPhaseFir.FLAT : filter;
 	}
 }

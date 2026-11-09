@@ -16,17 +16,30 @@ import java.util.concurrent.ConcurrentHashMap;
  * One speaker data profile.
  *
  * <p>This is the data model for the speaker data spike. It supports two analytic
- * patterns used by subwoofers (omni and cardioid) and a measured table with
- * horizontal/vertical SPL cuts. Directivity is normalized to the on-axis
- * response at evaluation time.
+ * patterns used by subwoofers (omni and cardioid), a measured table with
+ * horizontal/vertical SPL cuts, and an enclosure label for subwoofers (sealed or
+ * ported). Directivity is normalized to the on-axis response at evaluation
+ * time.
  *
  * <p>Measured profiles retain the raw measurement frequency grid and the raw
  * on-axis absolute SPL. {@link #onAxisEqGainDb(double)} exposes the on-axis
  * response normalized to its full-band energy average for future per-speaker
  * EQ. This keeps the overall on-axis loudness comparable between models. The
  * current playback path still applies only the per-speaker SPL gain.
+ *
+ * <p>The profile's low/high frequency range is the on-axis -3 dB band. It is
+ * metadata for display, bass management and future crossovers; it is not used
+ * as the response-evaluation clamp. Measured profiles keep evaluating over the
+ * full measured grid so the FIR can reproduce the measured roll-off outside
+ * the -3 dB band.
  */
 public final class SpeakerDataProfile {
+	public enum Enclosure {
+		SEALED,
+		PORTED,
+		UNKNOWN
+	}
+
 	public enum Pattern {
 		OMNI,
 		CARDIOID,
@@ -41,11 +54,15 @@ public final class SpeakerDataProfile {
 	private static final double MAX_DB = 12.0;
 	private static final int MAX_FREQUENCIES = 256;
 	private static final int MAX_ANGLES = 181;
-	private static final double RANGE_THRESHOLD_DB = -10.0;
+	private static final double RANGE_THRESHOLD_DB = -3.0;
+	private static final double DEFAULT_LOW_HZ = 20.0;
+	private static final double DEFAULT_HIGH_HZ = 20_000.0;
+	private static final double DEFAULT_SUBWOOFER_HIGH_HZ = 200.0;
 
 	private final String id;
 	private final String name;
 	private final SpeakerType type;
+	private final Enclosure enclosure;
 	private final Pattern pattern;
 	private final String source;
 	private final String license;
@@ -59,13 +76,14 @@ public final class SpeakerDataProfile {
 	private final ConcurrentHashMap<Integer, Double> powerIntegralCache =
 		new ConcurrentHashMap<>();
 
-	SpeakerDataProfile(String id, String name, SpeakerType type, Pattern pattern,
-							  String source, String license,
+	SpeakerDataProfile(String id, String name, SpeakerType type, Enclosure enclosure,
+							  Pattern pattern, String source, String license,
 							  double lowHz, double highHz, double[] frequencies,
 							  double[] onAxisSpl, Row[] horizontal, Row[] vertical) {
 		this.id = id;
 		this.name = name;
 		this.type = type;
+		this.enclosure = enclosure == null ? Enclosure.UNKNOWN : enclosure;
 		this.pattern = pattern;
 		this.source = source;
 		this.license = license;
@@ -90,8 +108,16 @@ public final class SpeakerDataProfile {
 		return type;
 	}
 
+	public Enclosure enclosure() {
+		return enclosure;
+	}
+
 	public Pattern pattern() {
 		return pattern;
+	}
+
+	public boolean isSubwoofer() {
+		return type == SpeakerType.SUBWOOFER;
 	}
 
 	public String source() {
@@ -122,7 +148,7 @@ public final class SpeakerDataProfile {
 	 * Full-band energy average of the on-axis response:
 	 * {@code 10 * log10(mean(10^(SPL/10)))} over every measured on-axis sample.
 	 * Returns 0 when no on-axis data is present. This is the loudness anchor
-	 * used by {@link #onAxisEqGainDb(double)} and by the -10 dB frequency-range
+	 * used by {@link #onAxisEqGainDb(double)} and by the -3 dB frequency-range
 	 * calculation.
 	 */
 	public double onAxisReferenceDb() {
@@ -226,15 +252,48 @@ public final class SpeakerDataProfile {
 		};
 	}
 
+	public String directivityLabel() {
+		return switch (pattern) {
+			case OMNI -> "omni";
+			case CARDIOID -> "cardioid";
+			case MEASURED -> "measured";
+			case UNMEASURED -> "unmeasured";
+		};
+	}
+
+	public String enclosureLabel() {
+		return switch (enclosure) {
+			case SEALED -> "sealed";
+			case PORTED -> "ported";
+			case UNKNOWN -> "unknown";
+		};
+	}
+
+	/** Short profile summary used by the picker and debug output. */
+	public String summaryLabel() {
+		if (isSubwoofer()) {
+			return enclosureLabel() + " · " + directivityLabel();
+		}
+		return patternLabel();
+	}
+
+	/**
+	 * Clamps a frequency to the response-evaluation range. Measured profiles use
+	 * the full measured grid so the FIR can reproduce roll-off outside the -3 dB
+	 * band; analytic/unmeasured profiles fall back to their nominal band.
+	 */
 	private double clampFrequency(double value) {
 		if (!Double.isFinite(value)) {
 			value = 1000.0;
 		}
-		double min = lowHz;
-		double max = highHz;
+		double min;
+		double max;
 		if (frequencies.length > 0) {
-			min = Math.max(min, frequencies[0]);
-			max = Math.min(max, frequencies[frequencies.length - 1]);
+			min = frequencies[0];
+			max = frequencies[frequencies.length - 1];
+		} else {
+			min = lowHz;
+			max = highHz;
 		}
 		if (max < min) {
 			return min;
@@ -347,11 +406,11 @@ public final class SpeakerDataProfile {
 	}
 
 	/**
-	 * Frequency range between the low and high -10 dB crossings of the on-axis
-	 * response, relative to its full-band energy average. The scan starts at
-	 * 1 kHz and walks outward, so a narrow dip inside the passband does not
-	 * truncate the range. The result is rounded to 1 Hz. Returns {@code null}
-	 * when a valid range cannot be found.
+	 * Frequency range between the lowest and highest on-axis samples within
+	 * -3 dB of the full-band energy average. Interior dips do not truncate the
+	 * range; the boundaries are interpolated between the outermost
+	 * above-threshold sample and its below-threshold neighbour. The result is
+	 * rounded to 1 Hz. Returns {@code null} when a valid range cannot be found.
 	 */
 	static double[] computeFrequencyRange(double[] frequencies, double[] onAxis) {
 		if (frequencies == null || onAxis == null
@@ -360,31 +419,31 @@ public final class SpeakerDataProfile {
 		}
 		int count = Math.min(frequencies.length, onAxis.length);
 		double threshold = energyAverageDb(onAxis) + RANGE_THRESHOLD_DB;
-		int start = 0;
-		double bestDistance = Double.MAX_VALUE;
+		int lowIndex = -1;
 		for (int i = 0; i < count; i++) {
-			double distance = Math.abs(frequencies[i] - 1_000.0);
-			if (distance < bestDistance) {
-				bestDistance = distance;
-				start = i;
-			}
-		}
-		double low = frequencies[0];
-		for (int i = start; i > 0; i--) {
-			if (onAxis[i] >= threshold && onAxis[i - 1] < threshold) {
-				low = crossingHz(frequencies[i - 1], frequencies[i],
-					onAxis[i - 1], onAxis[i], threshold);
+			if (onAxis[i] >= threshold) {
+				lowIndex = i;
 				break;
 			}
 		}
-		double high = frequencies[count - 1];
-		for (int i = start; i < count - 1; i++) {
-			if (onAxis[i] >= threshold && onAxis[i + 1] < threshold) {
-				high = crossingHz(frequencies[i], frequencies[i + 1],
-					onAxis[i], onAxis[i + 1], threshold);
+		int highIndex = -1;
+		for (int i = count - 1; i >= 0; i--) {
+			if (onAxis[i] >= threshold) {
+				highIndex = i;
 				break;
 			}
 		}
+		if (lowIndex < 0 || highIndex <= lowIndex) {
+			return null;
+		}
+		double low = lowIndex == 0
+			? frequencies[0]
+			: crossingHz(frequencies[lowIndex - 1], frequencies[lowIndex],
+				onAxis[lowIndex - 1], onAxis[lowIndex], threshold);
+		double high = highIndex == count - 1
+			? frequencies[count - 1]
+			: crossingHz(frequencies[highIndex], frequencies[highIndex + 1],
+				onAxis[highIndex], onAxis[highIndex + 1], threshold);
 		if (!Double.isFinite(low) || !Double.isFinite(high) || high <= low) {
 			return null;
 		}
@@ -427,6 +486,7 @@ public final class SpeakerDataProfile {
 		}
 		String name = optionalString(json, "name", id);
 		SpeakerType type = parseType(requiredString(json, "type"));
+		Enclosure enclosure = parseEnclosure(json);
 		String source = optionalString(json, "source", "local");
 		String license = optionalString(json, "license", "unknown");
 
@@ -436,26 +496,27 @@ public final class SpeakerDataProfile {
 		Row[] vertical = parseRows(json, "vertical", frequencies);
 		Pattern pattern = parsePattern(json, horizontal.length > 0 || vertical.length > 0);
 
-		double lowHz = 20.0;
-		double highHz = 20_000.0;
+		double lowHz = DEFAULT_LOW_HZ;
+		double highHz = type == SpeakerType.SUBWOOFER
+			? DEFAULT_SUBWOOFER_HIGH_HZ : DEFAULT_HIGH_HZ;
 		JsonElement range = json.get("frequencyRange");
-		if (range != null && range.isJsonArray()) {
+		double[] computed = pattern == Pattern.MEASURED
+			? computeFrequencyRange(frequencies, onAxisSpl) : null;
+		if (computed != null) {
+			// The measured -3 dB band is authoritative. The JSON range is only a
+			// fallback for measured profiles without a usable on-axis curve, so
+			// old -10 dB profiles migrate automatically.
+			lowHz = computed[0];
+			highHz = computed[1];
+		} else if (range != null && range.isJsonArray()) {
 			JsonArray array = range.getAsJsonArray();
 			if (array.size() >= 2) {
 				lowHz = array.get(0).getAsDouble();
 				highHz = array.get(1).getAsDouble();
 			}
-		} else {
-			double[] computed = pattern == Pattern.MEASURED
-				? computeFrequencyRange(frequencies, onAxisSpl)
-				: null;
-			if (computed != null) {
-				lowHz = computed[0];
-				highHz = computed[1];
-			} else if (frequencies.length >= 2) {
-				lowHz = frequencies[0];
-				highHz = frequencies[frequencies.length - 1];
-			}
+		} else if (frequencies.length >= 2) {
+			lowHz = frequencies[0];
+			highHz = frequencies[frequencies.length - 1];
 		}
 		if (!Double.isFinite(lowHz) || !Double.isFinite(highHz) || highHz <= lowHz) {
 			throw new IllegalArgumentException("frequencyRange must be [low, high] with low < high");
@@ -477,8 +538,20 @@ public final class SpeakerDataProfile {
 		if (pattern == Pattern.MEASURED && horizontal.length == 0 && vertical.length == 0) {
 			throw new IllegalArgumentException("measured profile needs horizontal or vertical SPL rows");
 		}
-		return new SpeakerDataProfile(id, name, type, pattern, source, license,
+		return new SpeakerDataProfile(id, name, type, enclosure, pattern, source, license,
 			lowHz, highHz, frequencies, onAxisSpl, horizontal, vertical);
+	}
+
+	private static Enclosure parseEnclosure(JsonObject json) {
+		String value = optionalString(json, "enclosure", "unknown");
+		return switch (value.toLowerCase(Locale.ROOT)) {
+			case "sealed", "closed" -> Enclosure.SEALED;
+			// "ported" is the canonical name; the bass-reflex spellings remain
+			// accepted so older local profiles keep loading.
+			case "ported", "bass-reflex", "bass_reflex", "reflex" -> Enclosure.PORTED;
+			case "unknown", "unspecified" -> Enclosure.UNKNOWN;
+			default -> throw new IllegalArgumentException("unknown enclosure: " + value);
+		};
 	}
 
 	private static Pattern parsePattern(JsonObject json, boolean hasTables) {

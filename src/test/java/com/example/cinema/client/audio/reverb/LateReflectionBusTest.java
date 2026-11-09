@@ -12,6 +12,7 @@ import java.util.Locale;
 import java.util.Random;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -176,6 +177,80 @@ class LateReflectionBusTest {
 	}
 
 	@Test
+	void multiOutputTapUsesEnergyNormalizedWeights() {
+		LateReflectionBus bus = new LateReflectionBus(SAMPLE_RATE, 1024, 4);
+		bus.setTaps(List.of(new LateReflectionBus.Tap(0, 0.010, 1.0,
+			48_000.0, new int[]{1, 2}, new float[]{0.6f, 0.8f})));
+		float[][] input = buffers(1024);
+		float[][] outputs = buffers(1024);
+		input[0][0] = 1.0f;
+
+		bus.process(input, 1024, outputs);
+
+		assertEquals(0.6, outputs[1][480], 1.0e-4);
+		assertEquals(0.8, outputs[2][480], 1.0e-4);
+		assertEquals(0.0f, outputs[0][480]);
+	}
+
+	@Test
+	void tapNormalizesWeightsAndDedupesChannels() {
+		LateReflectionBus.Tap tap = new LateReflectionBus.Tap(0, 0.0, 1.0,
+			7_000.0, new int[]{1, 1, 2}, new float[]{1.0f, 1.0f, 1.0f});
+
+		assertEquals(2, tap.outputChannels().length);
+		assertEquals(2.0 / Math.sqrt(5.0), tap.outputWeights()[0], 1.0e-5);
+		assertEquals(1.0 / Math.sqrt(5.0), tap.outputWeights()[1], 1.0e-5);
+	}
+
+	@Test
+	void tapFallsBackToInputChannelWithoutValidWeights() {
+		LateReflectionBus.Tap tap = new LateReflectionBus.Tap(2, 0.0, 1.0,
+			7_000.0, new int[0], new float[0]);
+
+		assertEquals(1, tap.outputChannels().length);
+		assertEquals(2, tap.outputChannels()[0]);
+		assertEquals(1.0f, tap.outputWeights()[0], 1.0e-6);
+	}
+
+	@Test
+	void tapEqualityIncludesVbapWeights() {
+		LateReflectionBus.Tap first = new LateReflectionBus.Tap(0, 0.010, 1.0,
+			7_000.0, new int[]{1, 2}, new float[]{0.6f, 0.8f});
+		LateReflectionBus.Tap second = new LateReflectionBus.Tap(0, 0.010, 1.0,
+			7_000.0, new int[]{1, 2}, new float[]{0.6f, 0.8f});
+		LateReflectionBus.Tap different = new LateReflectionBus.Tap(0, 0.010,
+			1.0, 7_000.0, new int[]{1, 2}, new float[]{0.8f, 0.6f});
+
+		assertEquals(first, second);
+		assertEquals(first.hashCode(), second.hashCode());
+		assertNotEquals(first, different);
+	}
+
+	@Test
+	void tapFromPathCarriesVbapOutput() {
+		AcousticMaterial material = new AcousticMaterial("wood", 0.1, 0.2, 0.3, 0.1);
+		ReflectionPathTap path = new ReflectionPathTap(2, "2:test", 2,
+			new Point3(0.0, 0.0, 0.0),
+			List.of(new Point3(1.0, 0.0, 0.0), new Point3(2.0, 0.0, 0.0)),
+			List.of(material, material), 8.0, 0.020, 0.5,
+			OcclusionResult.NONE);
+
+		LateReflectionBus.Tap tap = LateReflectionBus.Tap.fromPath(path, 0.25,
+			new float[]{0.0f, 0.0f, 2.0f}, new int[]{4, 5},
+			new float[]{0.7071f, 0.7071f});
+
+		assertEquals(2, tap.channel());
+		assertEquals(0.0f, tap.direction()[0], 1.0e-6);
+		assertEquals(0.0f, tap.direction()[1], 1.0e-6);
+		assertEquals(1.0f, tap.direction()[2], 1.0e-6);
+		assertEquals(2, tap.outputChannels().length);
+		assertEquals(4, tap.outputChannels()[0]);
+		assertEquals(5, tap.outputChannels()[1]);
+		assertEquals(0.7071f, tap.outputWeights()[0], 1.0e-4);
+		assertEquals(0.7071f, tap.outputWeights()[1], 1.0e-4);
+	}
+
+	@Test
 	void constructorRejectsNonPowerOfTwoHistory() {
 		assertThrows(IllegalArgumentException.class,
 			() -> new LateReflectionBus(SAMPLE_RATE, 1_000, 4));
@@ -189,6 +264,18 @@ class LateReflectionBusTest {
 			new LateReflectionBus.Tap(1, 0.030, 1.0, 7_000.0),
 			new LateReflectionBus.Tap(2, 1024.0 / SAMPLE_RATE, 1.0, 7_000.0)));
 		assertEquals(1, bus.tapCount());
+	}
+
+	@Test
+	void longDelayInsideLargeHistoryIsAccepted() {
+		LateReflectionBus bus = new LateReflectionBus(SAMPLE_RATE, 65_536, 4);
+		bus.setTaps(List.of(
+			new LateReflectionBus.Tap(0, 1.20, 1.0, 7_000.0)));
+		assertEquals(1, bus.tapCount());
+
+		bus.setTaps(List.of(
+			new LateReflectionBus.Tap(0, 1.20, 1.0, 7_000.0)), 0.60);
+		assertEquals(0, bus.tapCount());
 	}
 
 	private static float[][] buffers(int frames) {

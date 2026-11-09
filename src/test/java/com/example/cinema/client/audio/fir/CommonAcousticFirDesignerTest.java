@@ -6,6 +6,7 @@ import com.example.cinema.client.audio.directivity.MinimumPhaseFir;
 import com.example.cinema.client.audio.directivity.MinimumPhaseFirDesigner;
 import com.example.cinema.client.audio.environment.AirAbsorption;
 import com.example.cinema.client.audio.speakerdata.SpeakerDataProfile;
+import com.example.cinema.client.audio.speakerdata.SubwooferBand;
 import com.google.gson.JsonParser;
 import org.junit.jupiter.api.Test;
 
@@ -48,7 +49,7 @@ class CommonAcousticFirDesignerTest {
 
 		MinimumPhaseFir fir = CommonAcousticFirDesigner.design(profile);
 
-		assertEquals(2_048, fir.length());
+		assertEquals(4_096, fir.length());
 		assertResponseMatchesTarget(profile, fir,
 			MaterialReflectionCurve.LOW_BAND_HZ, 0.7);
 		assertResponseMatchesTarget(profile, fir,
@@ -194,6 +195,57 @@ class CommonAcousticFirDesignerTest {
 			CommonAcousticFirDesigner.referenceHz(profile), 1.0e-9);
 	}
 
+	@Test
+	void subwooferUsesInBandReferenceAndBandLimitedTarget() {
+		SpeakerDataProfile sealed = subwooferProfile("sealed", 30.0);
+		SubwooferBand band = new SubwooferBand(30.0, 200.0);
+		CommonAcousticFirProfile profile = CommonAcousticFirProfile.direct(
+			sealed, 0.0, 0.0, 5.0, false, 20.0, 50.0, 101.325,
+			OcclusionResult.NONE, band);
+
+		assertEquals(Math.sqrt(30.0 * 200.0),
+			CommonAcousticFirDesigner.referenceHz(profile), 1.0e-9);
+		double passband = CommonAcousticFirDesigner.targetDb(profile, 60.0);
+		double deepBass = CommonAcousticFirDesigner.targetDb(profile, 15.0);
+		double aboveBand = CommonAcousticFirDesigner.targetDb(profile, 800.0);
+		assertTrue(deepBass < passband - 6.0,
+			"sealed rolloff should cut 15 Hz: " + deepBass + " vs " + passband);
+		assertTrue(aboveBand < passband - 20.0,
+			"manual high edge should cut 800 Hz: " + aboveBand + " vs " + passband);
+
+		MinimumPhaseFir fir = CommonAcousticFirDesigner.design(profile);
+		assertEquals(4_096, fir.length());
+		assertResponseMatchesTarget(profile, fir, 60.0, 2.0);
+	}
+
+	@Test
+	void subwooferWithoutBandFallsBackToTwiceTheLowEdge() {
+		SpeakerDataProfile sealed = subwooferProfile("sealed", 30.0);
+		CommonAcousticFirProfile profile = CommonAcousticFirProfile.direct(
+			sealed, 0.0, 0.0, 5.0, false, 20.0, 50.0, 101.325,
+			OcclusionResult.NONE);
+
+		assertEquals(60.0, CommonAcousticFirDesigner.referenceHz(profile),
+			1.0e-9);
+	}
+
+	@Test
+	void portedSubwooferKeepsMoreDeepBassThanSealed() {
+		SpeakerDataProfile sealed = subwooferProfile("sealed", 30.0);
+		SpeakerDataProfile ported = subwooferProfile("ported", 20.0);
+		SubwooferBand band = new SubwooferBand(20.0, 200.0);
+		CommonAcousticFirProfile sealedProfile = CommonAcousticFirProfile.direct(
+			sealed, 0.0, 0.0, 5.0, false, 20.0, 50.0, 101.325,
+			OcclusionResult.NONE, band);
+		CommonAcousticFirProfile portedProfile = CommonAcousticFirProfile.direct(
+			ported, 0.0, 0.0, 5.0, false, 20.0, 50.0, 101.325,
+			OcclusionResult.NONE, band);
+
+		assertTrue(CommonAcousticFirDesigner.targetDb(portedProfile, 20.0)
+				> CommonAcousticFirDesigner.targetDb(sealedProfile, 20.0) + 3.0,
+			"ported alignment should extend lower than sealed");
+	}
+
 	private static void assertResponseMatchesTarget(CommonAcousticFirProfile profile,
 													MinimumPhaseFir fir,
 													double frequencyHz,
@@ -225,6 +277,21 @@ class CommonAcousticFirDesignerTest {
 			  ]
 			}
 			""";
+		return SpeakerDataProfile.fromJson(
+			JsonParser.parseString(json).getAsJsonObject());
+	}
+
+	private static SpeakerDataProfile subwooferProfile(String enclosure,
+													   double lowHz) {
+		String json = """
+			{
+			  "id": "test-sub-%s",
+			  "type": "subwoofer",
+			  "pattern": "omni",
+			  "enclosure": "%s",
+			  "frequencyRange": [%s, 200]
+			}
+			""".formatted(enclosure, enclosure, lowHz);
 		return SpeakerDataProfile.fromJson(
 			JsonParser.parseString(json).getAsJsonObject());
 	}

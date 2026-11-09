@@ -23,11 +23,18 @@ import java.util.concurrent.Executors;
  * worker can finish. A token bucket allows an initial burst, then limits new
  * direct designs to twenty per second; callers keep the previous FIR until the
  * next update. Reflection designs get a separate 30/s budget.
+ *
+ * <p>Design-error warnings are aggregated per profile id: the first one is
+ * logged immediately and later ones at most once per ten seconds, with the
+ * suppressed count and worst error. Reflection profiles at deep directivity
+ * nulls can legitimately exceed the direct threshold because a 4096-tap
+ * minimum-phase FIR cannot reproduce a -90 dB null.
  */
 public final class CommonAcousticFirService {
 	private static final int MAX_CACHE_ENTRIES = 2_048;
 	private static final int EVICT_BATCH = 256;
 	private static final double FIR_WARNING_DB = 2.0;
+	private static final long FIR_WARNING_WINDOW_NANOS = 10_000_000_000L;
 	private static final ExecutorService EXECUTOR = Executors.newSingleThreadExecutor(
 		runnable -> {
 			Thread thread = new Thread(runnable, "cinema-acoustic-fir");
@@ -36,6 +43,8 @@ public final class CommonAcousticFirService {
 		});
 	private static final ConcurrentHashMap<CommonAcousticFirProfile,
 		CompletableFuture<MinimumPhaseFir>> CACHE = new ConcurrentHashMap<>();
+	private static final ConcurrentHashMap<String, FirWarningAggregate>
+		FIR_WARNINGS = new ConcurrentHashMap<>();
 	private static final TokenBucket DIRECT_BUDGET = new TokenBucket(12.0, 20.0);
 	private static final TokenBucket REFLECTION_BUDGET = new TokenBucket(24.0, 30.0);
 
@@ -109,6 +118,13 @@ public final class CommonAcousticFirService {
 		}
 	}
 
+	/** Per-profile warning window; only touched by the single design worker. */
+	private static final class FirWarningAggregate {
+		private long lastLogNanos;
+		private int suppressed;
+		private double worstErrorDb;
+	}
+
 	private static MinimumPhaseFir design(CommonAcousticFirProfile profile) {
 		long started = System.nanoTime();
 		MinimumPhaseFir fir = CommonAcousticFirDesigner.design(profile);
@@ -118,16 +134,43 @@ public final class CommonAcousticFirService {
 				String.format(Locale.ROOT, "%.1f", elapsedMicros / 1_000.0), profile);
 		}
 		if (fir.maxErrorDb() > FIR_WARNING_DB) {
-			Cinema.LOGGER.warn("cinema fir: {} taps={} maxErr={} dB exceeds {} dB",
-				profile.id(), fir.length(),
-				String.format(Locale.ROOT, "%.2f", fir.maxErrorDb()),
-				String.format(Locale.ROOT, "%.1f", FIR_WARNING_DB));
+			warnIfDue(profile, fir);
 		}
 		return fir;
 	}
 
+	private static void warnIfDue(CommonAcousticFirProfile profile,
+								  MinimumPhaseFir fir) {
+		long now = System.nanoTime();
+		FirWarningAggregate aggregate = FIR_WARNINGS.computeIfAbsent(
+			profile.id(), ignored -> new FirWarningAggregate());
+		synchronized (aggregate) {
+			aggregate.suppressed++;
+			aggregate.worstErrorDb = Math.max(aggregate.worstErrorDb,
+				fir.maxErrorDb());
+			if (aggregate.lastLogNanos != 0L
+				&& now - aggregate.lastLogNanos < FIR_WARNING_WINDOW_NANOS) {
+				return;
+			}
+			Cinema.LOGGER.warn(
+				"cinema fir: {} taps={} maxErr={} dB exceeds {} dB "
+					+ "({} design(s), worst {} dB)",
+				profile.id(), fir.length(), formatDb(fir.maxErrorDb()),
+				formatDb(FIR_WARNING_DB), aggregate.suppressed,
+				formatDb(aggregate.worstErrorDb));
+			aggregate.lastLogNanos = now;
+			aggregate.suppressed = 0;
+			aggregate.worstErrorDb = 0.0;
+		}
+	}
+
+	private static String formatDb(double value) {
+		return String.format(Locale.ROOT, "%.2f", value);
+	}
+
 	public static void clearCache() {
 		CACHE.clear();
+		FIR_WARNINGS.clear();
 		MaterialReflectionCurve.clearCache();
 	}
 

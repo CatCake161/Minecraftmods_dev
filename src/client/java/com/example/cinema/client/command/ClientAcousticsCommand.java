@@ -14,6 +14,8 @@ import com.example.cinema.client.audio.acoustics.MirrorPlaneDiscovery;
 import com.example.cinema.client.audio.acoustics.OcclusionResult;
 import com.example.cinema.client.audio.acoustics.OcclusionScanner;
 import com.example.cinema.client.audio.acoustics.Point3;
+import com.example.cinema.client.audio.acoustics.ReflectionDelayBudget;
+import com.example.cinema.client.audio.acoustics.ReflectionDelayLimit;
 import com.example.cinema.client.audio.acoustics.ReflectionPathTap;
 import com.example.cinema.client.audio.acoustics.ReflectionProbe;
 import com.example.cinema.client.audio.acoustics.ReflectionTap;
@@ -29,7 +31,9 @@ import com.example.cinema.client.audio.reverb.LateReverbSettings;
 import com.example.cinema.client.audio.reverb.LateReverbTarget;
 import com.example.cinema.client.audio.speakerdata.SpeakerDataProfile;
 import com.example.cinema.client.audio.speakerdata.SpeakerDataRegistry;
+import com.example.cinema.client.audio.speakerdata.SubwooferBand;
 import com.example.cinema.client.config.CinemaClientConfig;
+import com.example.cinema.client.media.CinemaAudioEngine;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
@@ -82,6 +86,9 @@ public final class ClientAcousticsCommand {
 			config.airHumidityPercent(), AirAbsorption.REFERENCE_PRESSURE_KPA,
 			config.earlyGainDb())));
 		AcousticRoom room = snapshot.room();
+		ReflectionDelayLimit delayLimit = ReflectionDelayBudget.forRoom(room,
+			CinemaAudioEngine.maxReflectionDelaySeconds(),
+			CinemaAudioEngine.historySafeDelaySeconds());
 		LateReverbSettings late = lateSettings(snapshot, config);
 		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
 			"acoustics: late reverb=%s target=%+.1f dB sourceGain=%+.1f dB "
@@ -107,6 +114,14 @@ public final class ClientAcousticsCommand {
 		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
 			"acoustics: size=%s boxVolume=%.1f m3 boxSurface=%.1f m2",
 			room.sizeLabel(), room.volume(), room.surfaceArea())));
+		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
+			"acoustics: reflection delay limit order1/2/3/4=%.1f/%.1f/%.1f/%.1f ms "
+				+ "historySafe=%.1f ms",
+			delayLimit.maxDelaySeconds(1) * 1_000.0,
+			delayLimit.maxDelaySeconds(2) * 1_000.0,
+			delayLimit.maxDelaySeconds(3) * 1_000.0,
+			delayLimit.maxDelaySeconds(4) * 1_000.0,
+			CinemaAudioEngine.historySafeDelaySeconds() * 1_000.0)));
 		if (fill == null) {
 			source.sendFeedback(Component.literal("acoustics: fill=none"));
 		} else {
@@ -180,7 +195,7 @@ public final class ClientAcousticsCommand {
 				profile, angles.horizontal(), angles.vertical(), distance,
 				config.airAbsorption(), config.airTemperatureC(),
 				config.airHumidityPercent(), AirAbsorption.REFERENCE_PRESSURE_KPA,
-				occlusion);
+				occlusion, subwooferBand(speaker, profile));
 			MinimumPhaseFir filter = CommonAcousticFirService.get(firProfile);
 			String state = filter == null ? "pending"
 				: filter.isFlat() ? "flat" : "ready";
@@ -209,8 +224,7 @@ public final class ClientAcousticsCommand {
 			ReflectionProbe probe = new ReflectionProbe(level);
 			List<ReflectionTap> allTaps = new ArrayList<>();
 			for (AcousticSpeaker speaker : snapshot.speakers()) {
-				if (speaker.role() == SpeakerRole.NONE
-					|| speaker.role() == SpeakerRole.LFE) {
+				if (speaker.role() == SpeakerRole.NONE) {
 					continue;
 				}
 				List<MirrorPlane> planes = MirrorPlaneDiscovery.INSTANCE.discover(level,
@@ -218,7 +232,7 @@ public final class ClientAcousticsCommand {
 				int channel = speaker.role().ordinal() - 1;
 				List<ReflectionTap> taps = ImageSourceSolver.solve(planes, channel,
 					pointOf(speaker.position()), pointOf(snapshot.listener().eye()),
-					false, probe);
+					probe, delayLimit.maxDelaySeconds(1));
 				allTaps.addAll(taps);
 				source.sendFeedback(Component.literal(String.format(Locale.ROOT,
 					"acoustics: reflection %s planes=%d taps=%d",
@@ -247,7 +261,8 @@ public final class ClientAcousticsCommand {
 							config.airAbsorption(), config.airTemperatureC(),
 							config.airHumidityPercent(),
 							AirAbsorption.REFERENCE_PRESSURE_KPA,
-							tap.material(), tap.occlusion());
+							tap.material(), tap.occlusion(),
+							subwooferBand(speaker, profile));
 					MinimumPhaseFir fir = CommonAcousticFirService.get(firProfile);
 					String firState = fir == null ? "pending"
 						: fir.isFlat() ? "flat" : "ready";
@@ -289,9 +304,13 @@ public final class ClientAcousticsCommand {
 			return 0;
 		}
 		AcousticRoom room = snapshot.room();
+		ReflectionDelayLimit delayLimit = ReflectionDelayBudget.forRoom(room,
+			CinemaAudioEngine.maxReflectionDelaySeconds(),
+			CinemaAudioEngine.historySafeDelaySeconds());
 		ReflectionProbe probe = new ReflectionProbe(level);
 		Point3 listener = pointOf(snapshot.listener().eye());
 		int total = 0;
+		int totalDelayRejected = 0;
 		long totalNanos = 0L;
 		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
 			"acoustics: higher-order paths maxOrder=%d capPerSpeaker=%d "
@@ -299,8 +318,7 @@ public final class ClientAcousticsCommand {
 			maxOrder, PATH_STAT_MAX, ImageSourcePathSolver.MAX_VISITS)));
 		List<AcousticSpeaker> speakers = nearestSpeakers(snapshot);
 		for (AcousticSpeaker speaker : speakers) {
-			if (speaker.role() == SpeakerRole.NONE
-				|| speaker.role() == SpeakerRole.LFE) {
+			if (speaker.role() == SpeakerRole.NONE) {
 				continue;
 			}
 			int channel = speaker.role().ordinal() - 1;
@@ -309,12 +327,13 @@ public final class ClientAcousticsCommand {
 				level, speaker.position(), room.reflectionKey(),
 				room.reflectionSurfaces());
 			ImageSourcePathSolver.SolveStats stats = ImageSourcePathSolver.solveWithStats(
-				planes, channel, pointOf(speaker.position()), listener, false,
-				probe, maxOrder, PATH_STAT_MAX);
+				planes, channel, pointOf(speaker.position()), listener,
+				probe, maxOrder, PATH_STAT_MAX, delayLimit);
 			List<ReflectionPathTap> paths = stats.paths();
 			long elapsed = System.nanoTime() - start;
 			totalNanos += elapsed;
 			total += paths.size();
+			totalDelayRejected += stats.delayRejected();
 
 			int[] orderCounts = new int[maxOrder + 1];
 			double maxDelayMs = 0.0;
@@ -336,14 +355,19 @@ public final class ClientAcousticsCommand {
 			String capped = stats.truncated() ? " (truncated)" : "";
 			source.sendFeedback(Component.literal(String.format(Locale.ROOT,
 				"acoustics: paths %s planes=%d orders(2..%d)=%s total=%d "
-					+ "maxDelay=%.1f ms strongest=%.4f visits=%d time=%.1f ms%s",
+					+ "maxDelay=%.1f ms limit(order)=%.1f ms dropped=%d "
+					+ "strongest=%.4f visits=%d time=%.1f ms%s",
 				speaker.role().label(), planes.size(), maxOrder, breakdown,
-				paths.size(), maxDelayMs, strongest, stats.visits(),
+				paths.size(), maxDelayMs,
+				delayLimit.maxDelaySeconds(maxOrder) * 1_000.0,
+				stats.delayRejected(), strongest, stats.visits(),
 				elapsed / 1.0e6, capped)));
 		}
 		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
-			"acoustics: paths total=%d speakers=%d capPerSpeaker=%d time=%.1f ms",
-			total, speakers.size(), PATH_STAT_MAX, totalNanos / 1.0e6)));
+			"acoustics: paths total=%d speakers=%d capPerSpeaker=%d "
+				+ "delayDropped=%d time=%.1f ms",
+			total, speakers.size(), PATH_STAT_MAX, totalDelayRejected,
+			totalNanos / 1.0e6)));
 		return 1;
 	}
 
@@ -351,8 +375,7 @@ public final class ClientAcousticsCommand {
 		Map<SpeakerRole, AcousticSpeaker> nearest = new EnumMap<>(SpeakerRole.class);
 		Vec3 eye = snapshot.listener().eye();
 		for (AcousticSpeaker speaker : snapshot.speakers()) {
-			if (speaker.role() == SpeakerRole.NONE
-				|| speaker.role() == SpeakerRole.LFE) {
+			if (speaker.role() == SpeakerRole.NONE) {
 				continue;
 			}
 			AcousticSpeaker current = nearest.get(speaker.role());
@@ -420,5 +443,15 @@ public final class ClientAcousticsCommand {
 			return OcclusionResult.NONE;
 		}
 		return OcclusionScanner.scan(level, speaker.position(), listener);
+	}
+
+	private static SubwooferBand subwooferBand(AcousticSpeaker speaker,
+											   SpeakerDataProfile profile) {
+		if (speaker.settings() == null || profile == null
+			|| !profile.isSubwoofer()) {
+			return null;
+		}
+		return new SubwooferBand(speaker.settings().lowHz(),
+			speaker.settings().highHz());
 	}
 }

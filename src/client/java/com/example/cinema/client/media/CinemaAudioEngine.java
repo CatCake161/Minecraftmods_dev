@@ -78,12 +78,21 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	 * generated wet samples.
 	 */
 	private static final float MAX_WET_SOURCE_GAIN = 1.0f;
-	/** 160 ms maximum geometric delay plus one processing block. */
-	private static final int RAW_HISTORY_FRAMES = 16384;
+	/**
+	 * Hard geometric-delay ceiling. The room-aware budget can be smaller; this
+	 * keeps the raw history and late bus within their allocated capacity.
+	 */
+	public static final double MAX_GEOMETRIC_DELAY_SECONDS = 1.30;
+	/**
+	 * Raw per-channel history for per-tap reflections. 65536 frames is
+	 * ~1.365 s; the block-sized guard leaves ~1.323 s of safe delay.
+	 */
+	private static final int RAW_HISTORY_FRAMES = 65_536;
 	private static final int RAW_HISTORY_MASK = RAW_HISTORY_FRAMES - 1;
-	/** Order-2/3/4 geometric late bus: ~341 ms history and 512 taps. */
-	private static final int LATE_BUS_HISTORY_FRAMES = 16_384;
-	private static final int LATE_BUS_MAX_TAPS = 512;
+	/** Order-2/3/4 geometric late bus: ~1.365 s history and 512 taps. */
+	private static final int LATE_BUS_HISTORY_FRAMES = 65_536;
+	/** Maximum taps the geometric late bus renders. */
+	public static final int LATE_BUS_MAX_TAPS = 512;
 	/** 30 ms fade-in/out for reflection tap appearance and disappearance. */
 	private static final int REFLECTION_FADE_FRAMES = 1_440;
 	/** Delay changes glide instead of jumping when the listener moves. */
@@ -499,6 +508,30 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		lateReflectionVersion.incrementAndGet();
 	}
 
+	/** Maximum geometric delay accepted by the late bus, in seconds. */
+	public static double lateBusMaxDelaySeconds() {
+		return LATE_BUS_HISTORY_FRAMES / (double) SAMPLE_RATE;
+	}
+
+	/**
+	 * Safe delay for the per-tap raw history. One processing block is reserved
+	 * because the current block is written before the delayed read starts.
+	 */
+	public static double rawHistoryMaxDelaySeconds() {
+		return (RAW_HISTORY_FRAMES - BLOCK_FRAMES) / (double) SAMPLE_RATE;
+	}
+
+	/** Shared capacity limit for paths that may use either reflection path. */
+	public static double historySafeDelaySeconds() {
+		return Math.min(rawHistoryMaxDelaySeconds(), lateBusMaxDelaySeconds());
+	}
+
+	/** Hard playback cap; the room-aware budget is normally lower. */
+	public static double maxReflectionDelaySeconds() {
+		return Math.min(MAX_GEOMETRIC_DELAY_SECONDS,
+			historySafeDelaySeconds());
+	}
+
 	private static boolean sameReflections(ReflectionSource[] first,
 										   ReflectionSource[] second) {
 		if (first.length != second.length) {
@@ -621,7 +654,8 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	}
 
 	private static double reflectionDelayFrames(double seconds) {
-		return Math.max(0.0, Math.min(0.160, seconds)) * SAMPLE_RATE;
+		return Math.max(0.0,
+			Math.min(maxReflectionDelaySeconds(), seconds)) * SAMPLE_RATE;
 	}
 
 	private static float[][] copyDefaultPositions() {

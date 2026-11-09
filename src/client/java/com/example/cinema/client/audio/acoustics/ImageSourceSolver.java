@@ -20,6 +20,10 @@ import java.util.Set;
 public final class ImageSourceSolver {
 	public static final double SPEED_OF_SOUND = 343.0;
 	public static final double MIN_DELAY_SECONDS = 0.001;
+	/**
+	 * Default first-order cap. Playback supplies a room/order budget so a
+	 * large room can retain first-order paths that arrive later than 80 ms.
+	 */
 	public static final double MAX_DELAY_SECONDS = 0.080;
 	public static final int MAX_TAPS_PER_SPEAKER = 6;
 	public static final int MAX_TAPS_PER_RECEIVER = 36;
@@ -90,23 +94,41 @@ public final class ImageSourceSolver {
 	}
 
 	/**
-	 * Validates every candidate plane for one physical speaker. LFE sources are
-	 * excluded. Returns at most {@link #MAX_TAPS_PER_SPEAKER} strongest taps.
+	 * Validates every candidate plane for one physical speaker, including LFE.
+	 * Returns at most {@link #MAX_TAPS_PER_SPEAKER} strongest taps.
 	 */
 	public static List<ReflectionTap> solve(List<MirrorPlane> planes, int channel,
 											Point3 source, Point3 listener,
-											boolean lfe, World world) {
-		return solve(planes, channel, source, listener, lfe, world, Set.of());
+											World world) {
+		return solve(planes, channel, source, listener, world, Set.of());
 	}
 
 	public static List<ReflectionTap> solve(List<MirrorPlane> planes, int channel,
 											Point3 source, Point3 listener,
-											boolean lfe, World world,
+											World world,
 											Set<String> previousKeys) {
-		if (lfe || planes == null || planes.isEmpty() || source == null
+		return solve(planes, channel, source, listener, world, previousKeys,
+			MAX_DELAY_SECONDS);
+	}
+
+	public static List<ReflectionTap> solve(List<MirrorPlane> planes, int channel,
+											Point3 source, Point3 listener,
+											World world, double maxDelaySeconds) {
+		return solve(planes, channel, source, listener, world, Set.of(),
+			maxDelaySeconds);
+	}
+
+	public static List<ReflectionTap> solve(List<MirrorPlane> planes, int channel,
+											Point3 source, Point3 listener,
+											World world,
+											Set<String> previousKeys,
+											double maxDelaySeconds) {
+		if (planes == null || planes.isEmpty() || source == null
 			|| listener == null || world == null) {
 			return List.of();
 		}
+		double maxDelay = Double.isFinite(maxDelaySeconds)
+			? Math.max(0.0, maxDelaySeconds) : MAX_DELAY_SECONDS;
 		List<ReflectionTap> taps = new ArrayList<>();
 		for (MirrorPlane plane : planes) {
 			Optional<Geometry> result = geometry(plane, source, listener);
@@ -115,7 +137,7 @@ public final class ImageSourceSolver {
 			}
 			Geometry geometry = result.get();
 			if (geometry.delaySeconds() < MIN_DELAY_SECONDS
-				|| geometry.delaySeconds() > MAX_DELAY_SECONDS) {
+				|| geometry.delaySeconds() > maxDelay) {
 				continue;
 			}
 			AcousticMaterial material = world.wallAt(plane, geometry.reflectionPoint());

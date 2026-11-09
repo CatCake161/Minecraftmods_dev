@@ -2,6 +2,7 @@
   "id": "my-sub-cardioid",
   "name": "My Sub Cardioid",
   "type": "subwoofer",
+  "enclosure": "sealed",
   "pattern": "cardioid",
   "frequencyRange": [20, 200],
   "source": "local test",

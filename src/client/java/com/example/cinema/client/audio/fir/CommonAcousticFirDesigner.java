@@ -5,6 +5,7 @@ import com.example.cinema.client.audio.directivity.MinimumPhaseFir;
 import com.example.cinema.client.audio.directivity.MinimumPhaseFirDesigner;
 import com.example.cinema.client.audio.environment.AirAbsorption;
 import com.example.cinema.client.audio.speakerdata.SpeakerDataProfile;
+import com.example.cinema.client.audio.speakerdata.SubwooferAcoustics;
 
 /**
  * Builds the common minimum-phase FIR target for direct and reflected sound.
@@ -126,21 +127,36 @@ public final class CommonAcousticFirDesigner {
 		return curve[index] + (curve[index + 1] - curve[index]) * fraction;
 	}
 
-	/** On-axis plus directivity level at 1 kHz; excludes all other terms. */
+	/**
+	 * On-axis plus directivity level at the profile reference; excludes all
+	 * other terms. Normal speakers use 1 kHz. Subwoofers use an in-band
+	 * reference so the enclosure/band response does not collapse the source
+	 * gain at 1 kHz.
+	 */
 	public static double overallDb(CommonAcousticFirProfile profile) {
 		if (profile == null || profile.speaker() == null) {
 			return 0.0;
 		}
-		double db = onAxisDirectivityDb(profile, REFERENCE_HZ);
+		double db = onAxisDirectivityDb(profile, referenceHz(profile));
 		return Math.max(MIN_OVERALL_DB, Math.min(MAX_OVERALL_DB, db));
 	}
 
 	/**
-	 * FIR normalization reference. Both direct and full-band reflection
-	 * designs use 1 kHz.
+	 * FIR normalization reference. Normal speakers and full-band reflections
+	 * use 1 kHz; subwoofers use the manual band's geometric mean (or twice the
+	 * profile's -3 dB low edge when no band is supplied).
 	 */
 	public static double referenceHz(CommonAcousticFirProfile profile) {
-		return REFERENCE_HZ;
+		if (profile == null || profile.speaker() == null
+			|| !profile.speaker().isSubwoofer()) {
+			return REFERENCE_HZ;
+		}
+		if (profile.subwooferBand() != null) {
+			return Math.max(MIN_HZ, Math.min(MAX_HZ,
+				profile.subwooferBand().referenceHz()));
+		}
+		return Math.max(MIN_HZ, Math.min(MAX_HZ,
+			profile.speaker().lowHz() * 2.0));
 	}
 
 	private static double onAxisDirectivityDb(CommonAcousticFirProfile profile,
@@ -149,9 +165,16 @@ public final class CommonAcousticFirDesigner {
 		if (speaker == null) {
 			return 0.0;
 		}
-		return speaker.onAxisEqGainDb(frequencyHz)
+		double db = speaker.onAxisEqGainDb(frequencyHz)
 			+ speaker.gainDb(profile.horizontalDegrees(),
 			profile.verticalDegrees(), frequencyHz);
+		if (speaker.isSubwoofer()) {
+			db += SubwooferAcoustics.enclosureGainDb(speaker, frequencyHz);
+			if (profile.subwooferBand() != null) {
+				db += profile.subwooferBand().gainDb(frequencyHz);
+			}
+		}
+		return db;
 	}
 
 	private static double airAbsorptionDb(CommonAcousticFirProfile profile,

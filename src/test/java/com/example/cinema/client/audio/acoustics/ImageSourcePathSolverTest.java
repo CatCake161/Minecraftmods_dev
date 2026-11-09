@@ -30,7 +30,7 @@ class ImageSourcePathSolverTest {
 		Point3 listener = new Point3(3.0, 1.6, 4.0);
 		List<ReflectionPathTap> taps = ImageSourcePathSolver.solve(
 			boxPlanes(0.0, 0.0, 0.0, 6.0, 4.0, 8.0), 0, source, listener,
-			false, WORLD, 2);
+			WORLD, 2);
 		ReflectionPathTap tap = find(taps, "0:Z-8000>X-6000");
 
 		assertEquals(2, tap.order());
@@ -56,7 +56,7 @@ class ImageSourcePathSolverTest {
 		List<ReflectionPathTap> taps = ImageSourcePathSolver.solve(
 			boxPlanes(0.0, 0.0, 0.0, 6.0, 4.0, 8.0), 0,
 			new Point3(2.0, 1.5, 3.0), new Point3(3.0, 1.6, 4.0),
-			false, WORLD, 2);
+			WORLD, 2);
 		ReflectionPathTap zThenX = find(taps, "0:Z-8000>X-6000");
 
 		assertEquals(2, zThenX.order());
@@ -70,7 +70,7 @@ class ImageSourcePathSolverTest {
 		List<ReflectionPathTap> taps = ImageSourcePathSolver.solve(
 			boxPlanes(0.0, 0.0, 0.0, 6.0, 4.0, 8.0), 0,
 			new Point3(2.0, 1.5, 3.0), new Point3(3.0, 1.6, 4.0),
-			false, WORLD, 3);
+			WORLD, 3);
 		ReflectionPathTap deep = taps.stream()
 			.filter(tap -> tap.order() == 3)
 			.findFirst()
@@ -94,7 +94,7 @@ class ImageSourcePathSolverTest {
 
 		List<ReflectionPathTap> taps = ImageSourcePathSolver.solve(
 			planes, 0, new Point3(2.0, 1.5, 3.0),
-			new Point3(3.0, 1.6, 4.0), false, WORLD, 2);
+			new Point3(3.0, 1.6, 4.0), WORLD, 2);
 
 		assertTrue(taps.stream().noneMatch(
 			tap -> "0:Z-8000>X-6000".equals(tap.pathKey())));
@@ -105,7 +105,7 @@ class ImageSourcePathSolverTest {
 		List<ReflectionPathTap> taps = ImageSourcePathSolver.solve(
 			boxPlanes(0.0, 0.0, 0.0, 6.0, 4.0, 8.0), 0,
 			new Point3(2.0, 1.5, 3.0), new Point3(3.0, 1.6, 4.0),
-			false, WORLD, 3, 10);
+			WORLD, 3, 10);
 
 		assertTrue(taps.size() <= 10);
 	}
@@ -117,7 +117,7 @@ class ImageSourcePathSolverTest {
 			List<ReflectionPathTap> taps = ImageSourcePathSolver.solve(
 				boxPlanes(0.0, 0.0, 0.0, 6.0, 4.0, 8.0), 0,
 				new Point3(2.0, 1.5, 3.0), new Point3(3.0, 1.6, 4.0),
-				false, WORLD, order, ImageSourcePathSolver.MAX_PATHS);
+				WORLD, order, ImageSourcePathSolver.MAX_PATHS);
 			assertTrue(taps.size() > previous,
 				"order " + order + " should add paths");
 			assertTrue(taps.size() <= ImageSourcePathSolver.MAX_PATHS);
@@ -130,14 +130,14 @@ class ImageSourcePathSolverTest {
 		ImageSourcePathSolver.SolveStats full = ImageSourcePathSolver.solveWithStats(
 			boxPlanes(0.0, 0.0, 0.0, 6.0, 4.0, 8.0), 0,
 			new Point3(2.0, 1.5, 3.0), new Point3(3.0, 1.6, 4.0),
-			false, WORLD, 2, ImageSourcePathSolver.MAX_PATHS);
+			WORLD, 2, ImageSourcePathSolver.MAX_PATHS);
 		assertTrue(full.visits() > 0);
 		assertFalse(full.truncated());
 
 		ImageSourcePathSolver.SolveStats capped = ImageSourcePathSolver.solveWithStats(
 			boxPlanes(0.0, 0.0, 0.0, 6.0, 4.0, 8.0), 0,
 			new Point3(2.0, 1.5, 3.0), new Point3(3.0, 1.6, 4.0),
-			false, WORLD, 2, 1);
+			WORLD, 2, 1);
 		assertEquals(1, capped.paths().size());
 		assertTrue(capped.truncated());
 	}
@@ -148,7 +148,7 @@ class ImageSourcePathSolverTest {
 		Point3 source = new Point3(2.0, 1.5, 3.0);
 		Point3 listener = new Point3(3.0, 1.6, 4.0);
 		List<ReflectionPathTap> expected = ImageSourcePathSolver.solve(
-			planes, 0, source, listener, false, WORLD, 2, 512);
+			planes, 0, source, listener, WORLD, 2, 512);
 		ImageSourcePathSolver.Session session =
 			new ImageSourcePathSolver.Session(planes, 0, source, listener,
 				WORLD, 2, 512, 2, 200_000);
@@ -165,13 +165,27 @@ class ImageSourcePathSolverTest {
 	}
 
 	@Test
-	void lfeIsExcluded() {
+	void customDelayLimitIsAppliedPerOrder() {
+		ImageSourcePathSolver.SolveStats stats =
+			ImageSourcePathSolver.solveWithStats(
+				boxPlanes(0.0, 0.0, 0.0, 6.0, 4.0, 8.0), 0,
+				new Point3(2.0, 1.5, 3.0), new Point3(3.0, 1.6, 4.0),
+				WORLD, 3, 512, order -> order == 2 ? 1.0 : 0.0);
+
+		assertFalse(stats.paths().isEmpty());
+		assertTrue(stats.paths().stream().allMatch(tap -> tap.order() == 2));
+		assertTrue(stats.delayRejected() > 0);
+	}
+
+	@Test
+	void lfeIsIncluded() {
 		List<ReflectionPathTap> taps = ImageSourcePathSolver.solve(
 			boxPlanes(0.0, 0.0, 0.0, 6.0, 4.0, 8.0), 3,
 			new Point3(2.0, 1.5, 3.0), new Point3(3.0, 1.6, 4.0),
-			true, WORLD, 2);
+			WORLD, 2);
 
-		assertTrue(taps.isEmpty());
+		assertFalse(taps.isEmpty());
+		assertTrue(taps.stream().allMatch(tap -> tap.channel() == 3));
 	}
 
 	private static ReflectionPathTap find(List<ReflectionPathTap> taps,
