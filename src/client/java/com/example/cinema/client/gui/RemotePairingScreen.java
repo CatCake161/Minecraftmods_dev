@@ -293,7 +293,7 @@ public final class RemotePairingScreen extends Screen {
 		};
 		String name = entry.name().isBlank() ? kind : entry.name();
 		return name + " · " + entry.pos().toShortString() + " · "
-			+ String.format(Locale.ROOT, "%.0f m", entry.distance());
+			+ String.format(Locale.ROOT, "%.0f blocks", entry.distance());
 	}
 
 	private String truncate(String text, int maxWidth) {

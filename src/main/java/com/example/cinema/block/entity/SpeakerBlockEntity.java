@@ -24,9 +24,9 @@ import java.util.Objects;
 
 /** One physical speaker; the receiver assigns its channel role and level. */
 public class SpeakerBlockEntity extends BlockEntity {
-	/** Receiver channel trim range. The receiver output is capped at +6 dB. */
+	/** Receiver channel trim range. The output limiter caps the final mix. */
 	public static final double MIN_LEVEL_DB = -60.0;
-	public static final double MAX_LEVEL_DB = 6.0;
+	public static final double MAX_LEVEL_DB = 12.0;
 	public static final int MAX_NAME_LENGTH = CinemaNames.MAX_LENGTH;
 	public static final int ACOUSTIC_YAW_STEPS = 36;
 	public static final float ACOUSTIC_YAW_STEP_DEGREES = 10.0f;

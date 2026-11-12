@@ -1,17 +1,20 @@
 package com.example.cinema.client.gui;
 
-import com.example.cinema.Cinema;
 import com.example.cinema.block.entity.AvReceiverBlockEntity;
 import com.example.cinema.block.entity.ProjectorBlockEntity;
 import com.example.cinema.block.entity.SpeakerBlockEntity;
 import com.example.cinema.block.entity.SpeakerRole;
 import com.example.cinema.block.entity.SpeakerType;
+import com.example.cinema.Cinema;
+import com.example.cinema.CinemaLog;
 import com.example.cinema.client.config.CinemaClientConfig;
 import com.example.cinema.client.media.AvReceiverPlayback;
 import com.example.cinema.client.media.AvReceiverPlaybackManager;
 import com.example.cinema.client.media.CinemaPlayer;
+import com.example.cinema.client.media.audio.playback.OutputLimiter;
 import com.example.cinema.client.media.LibraryRegistry;
 import com.example.cinema.client.media.MediaLibrary;
+import com.example.cinema.client.media.MediaLibraryCache;
 import com.example.cinema.client.network.AvReceiverControlClient;
 import com.example.cinema.client.network.DeviceNameClient;
 import com.example.cinema.client.network.SpeakerLevelClient;
@@ -20,24 +23,25 @@ import com.example.cinema.item.RemoteBinding;
 import com.example.cinema.item.RemoteControlAccess;
 import com.example.cinema.network.AvReceiverControlPayload;
 import com.example.cinema.util.CinemaNames;
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
-import net.minecraft.sounds.SoundEvents;
-import net.minecraft.sounds.SoundSource;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.FormattedCharSequence;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.level.ChunkPos;
-import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 import org.lwjgl.glfw.GLFW;
 
@@ -46,11 +50,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * M2 AV receiver front panel: media library, transport, outputs, diagnostics
@@ -73,18 +77,16 @@ public final class AvReceiverConfigScreen extends Screen {
 	/** Unity detent half-width; kept below one step so 0.5 dB stays reachable. */
 	private static final double ZERO_SNAP_DB = 0.4;
 
-	private static String rememberedLibraryId = LibraryRegistry.DEFAULT_ID;
-	private static String rememberedFolder = "";
-	private static String rememberedSearch = "";
 	/**
-	 * Session cache of scanned folders. The first open probes up to
-	 * {@link #PROBE_LIMIT} files; later opens reuse the result until Refresh.
+	 * Per-receiver media browser state. Library, folder and search are kept
+	 * separate for every receiver so opening one panel does not overwrite what
+	 * another receiver was browsing.
 	 */
-	private static final Map<FolderCacheKey, List<EntryView>> folderCache =
-		new ConcurrentHashMap<>();
+	private static final Map<ReceiverKey, MediaState> rememberedMedia = new HashMap<>();
 
 	private final AvReceiverBlockEntity receiver;
 	private final Screen parent;
+	private final MediaState mediaState;
 	private Tab tab = Tab.MEDIA;
 	private final List<EntryView> entries = new ArrayList<>();
 	private final List<String> speakerLines = new ArrayList<>();
@@ -107,12 +109,12 @@ public final class AvReceiverConfigScreen extends Screen {
 	private int tabY;
 	private int tabWidth;
 
-	private String libraryId = rememberedLibraryId;
-	private String folder = rememberedFolder;
-	private String search = "";
+	private String libraryId;
+	private String folder;
+	private String search;
 	private String selectedKey = "";
 	private String libraryPathDraft = "";
-	private String selectedLibraryId = rememberedLibraryId;
+	private String selectedLibraryId;
 	private int scroll;
 	private int libraryScroll;
 	private int speakerScroll;
@@ -161,12 +163,25 @@ public final class AvReceiverConfigScreen extends Screen {
 		super(Component.literal("Cinema AV Receiver"));
 		this.receiver = receiver;
 		this.parent = parent;
+		this.mediaState = rememberedState(receiver);
+		libraryId = mediaState.libraryId;
+		folder = mediaState.folder;
+		search = mediaState.search;
 		if (LibraryRegistry.findById(libraryId) == null) {
 			libraryId = LibraryRegistry.DEFAULT_ID;
 			folder = "";
+			search = "";
+			mediaState.libraryId = libraryId;
+			mediaState.folder = folder;
+			mediaState.search = search;
 		}
 		selectedLibraryId = libraryId;
-		Cinema.LOGGER.info("cinema receiver gui: opened {}", receiver.getBlockPos().toShortString());
+		CinemaLog.info(CinemaLog.RECEIVER_GUI, "opened {}", receiver.getBlockPos().toShortString());
+	}
+
+	private static MediaState rememberedState(AvReceiverBlockEntity receiver) {
+		return rememberedMedia.computeIfAbsent(ReceiverKey.of(receiver),
+			key -> new MediaState());
 	}
 
 	@Override
@@ -242,6 +257,7 @@ public final class AvReceiverConfigScreen extends Screen {
 			searchBox.setMaxLength(80);
 			searchBox.setResponder(value -> {
 				search = value;
+				mediaState.search = value;
 				scroll = 0;
 			});
 			searchBox.setValue(search);
@@ -257,14 +273,8 @@ public final class AvReceiverConfigScreen extends Screen {
 				.bounds(contentLeft + 48, contentBottom - 18, 64, 16).build();
 			addRenderableWidget(playSelectedButton);
 			if (!folderLoaded && !scanning) {
-				loadFolder(libraryId, folder, false);
-			}
-			// loadFolder() clears the filter for a fresh scan. Restore the
-			// previous search after it so closing and reopening the screen
-			// keeps the last query.
-			if (!rememberedSearch.isEmpty()) {
-				search = rememberedSearch;
-				searchBox.setValue(rememberedSearch);
+				// Restoring this receiver's last folder keeps its search text.
+				loadFolder(libraryId, folder, false, true);
 			}
 		} else if (tab == Tab.SPEAKERS) {
 			refreshSpeakers();
@@ -438,9 +448,12 @@ public final class AvReceiverConfigScreen extends Screen {
 		if (searchBox != null) {
 			search = searchBox.getValue();
 		}
-		rememberedSearch = search;
+		mediaState.libraryId = libraryId;
+		mediaState.folder = folder;
+		mediaState.search = search;
+		MediaLibraryCache.flush();
 		scanGeneration++;
-		Cinema.LOGGER.info("cinema receiver gui: closed {}", receiver.getBlockPos().toShortString());
+		CinemaLog.info(CinemaLog.RECEIVER_GUI, "closed {}", receiver.getBlockPos().toShortString());
 		if (parent != null && minecraft != null) {
 			Minecraft client = minecraft;
 			Screen target = parent;
@@ -542,15 +555,17 @@ public final class AvReceiverConfigScreen extends Screen {
 		}
 		String removedId = selectedLibraryId;
 		if (LibraryRegistry.remove(removedId)) {
-			invalidateLibraryCache(removedId);
+			MediaLibraryCache.invalidateLibrary(removedId);
 			if (libraryId.equals(removedId)) {
 				libraryId = LibraryRegistry.DEFAULT_ID;
 				folder = "";
 				folderLoaded = false;
 			}
-			if (rememberedLibraryId.equals(removedId)) {
-				rememberedLibraryId = LibraryRegistry.DEFAULT_ID;
-				rememberedFolder = "";
+			for (MediaState state : rememberedMedia.values()) {
+				if (removedId.equals(state.libraryId)) {
+					state.libraryId = LibraryRegistry.DEFAULT_ID;
+					state.folder = "";
+				}
 			}
 			selectedLibraryId = LibraryRegistry.DEFAULT_ID;
 			libraryScroll = 0;
@@ -676,14 +691,15 @@ public final class AvReceiverConfigScreen extends Screen {
 		String line1 = state + "  |  " + media + "  |  " + time;
 		graphics.drawString(font, truncate(line1, contentWidth), contentLeft, y, 0xE8E8E8, false);
 
+		AvReceiverPlayback playback = AvReceiverPlaybackManager.playbackAt(receiver.getBlockPos());
 		String line2;
+		int line2Color = mediaMissing ? 0xFF7070 : 0x9A9A9A;
 		if (System.currentTimeMillis() < statusUntil && !statusMessage.isEmpty()) {
 			line2 = statusMessage;
 		} else if (mediaMissing) {
 			line2 = "Media file missing from its library";
 		} else {
 			String video = videoTargetLabel();
-			AvReceiverPlayback playback = AvReceiverPlaybackManager.playbackAt(receiver.getBlockPos());
 			if (playback != null && playback.player() != null && playback.player().isAudioOnly()) {
 				video = "Video: audio only";
 			}
@@ -691,14 +707,26 @@ public final class AvReceiverConfigScreen extends Screen {
 			if (playback == null || playback.player() == null) {
 				audio = "Audio: idle";
 			} else if (playback.physicalChannels() > 0) {
-				audio = "Audio: 5.1 physical " + playback.physicalChannels() + "/6";
+				audio = "Audio: 5.1 physical " + playback.physicalChannels() + "/6"
+					+ "  (" + playback.physicalSpeakers() + " spk)";
 			} else {
-				audio = "Audio: virtual 5.1";
+				audio = "Audio: no physical speakers";
 			}
 			line2 = video + "  |  " + audio;
 		}
-		graphics.drawString(font, truncate(line2, contentWidth), contentLeft, y + 10,
-			mediaMissing ? 0xFF7070 : 0x9A9A9A, false);
+		float reduction = playback == null ? 0.0f : playback.limiterReductionDb();
+		String limiter = reduction > 0.05f
+			? String.format(Locale.ROOT, "Limiter -%.1f dB", reduction) : "";
+		int limiterWidth = limiter.isEmpty() ? 0 : font.width(limiter);
+		int line2Width = Math.max(0, contentWidth
+			- (limiterWidth == 0 ? 0 : limiterWidth + 8));
+		graphics.drawString(font, truncate(line2, line2Width), contentLeft, y + 10,
+			line2Color, false);
+		if (!limiter.isEmpty()) {
+			graphics.drawString(font, limiter,
+				contentLeft + contentWidth - limiterWidth, y + 10,
+				0xFFD54F, false);
+		}
 	}
 
 	private void drawTabAccent(GuiGraphics graphics) {
@@ -779,9 +807,11 @@ public final class AvReceiverConfigScreen extends Screen {
 		int y = contentTop;
 		AvReceiverPlayback playback = AvReceiverPlaybackManager.playbackAt(receiver.getBlockPos());
 		int physical = playback == null ? 0 : playback.physicalChannels();
+		int physicalSpeakers = playback == null ? 0 : playback.physicalSpeakers();
 		graphics.drawString(font, "Speaker levels", contentLeft, y, 0xE8E8E8, false);
 		graphics.drawString(font, "Linked " + receiver.speakerTargets().size()
-			+ "  ·  routing " + (playback == null ? "idle" : "physical " + physical + "/6")
+			+ "  ·  routing " + (playback == null ? "idle"
+				: "physical " + physical + "/6 (" + physicalSpeakers + " spk)")
 			+ "  ·  detected " + speakerLines.size(),
 			contentLeft, y + 11, 0x9A9A9A, false);
 		graphics.drawString(font, truncate("Channel trim "
@@ -842,6 +872,9 @@ public final class AvReceiverConfigScreen extends Screen {
 				+ " / " + String.format(Locale.ROOT, "%.1f", receiver.durationSeconds()) + " s",
 			"Volume: " + formatSignedDb(receiver.volumeDb()) + " dBFS"
 				+ (receiver.isMuted() ? " (muted)" : ""),
+			"Limiter: " + limiterLine(playback),
+			"Sources: direct " + (playback == null ? 0 : playback.directSources())
+				+ ", reflection " + (playback == null ? 0 : playback.reflectionSources()),
 			"Projector: " + (receiver.videoTarget() == null ? "none"
 				: receiver.videoTarget().toShortString() + (projectorOnline() ? " online" : " offline")),
 			"Sync: receiver block entity, client poll every 10 ticks"
@@ -861,6 +894,16 @@ public final class AvReceiverConfigScreen extends Screen {
 		}
 		return player.width() + "x" + player.height() + "  presented=" + player.presentedFrames()
 			+ "  dropped=" + player.droppedFrames();
+	}
+
+	private static String limiterLine(AvReceiverPlayback playback) {
+		float reduction = playback == null ? 0.0f : playback.limiterReductionDb();
+		if (reduction > 0.05f) {
+			return String.format(Locale.ROOT, "-%.1f dB  (ceiling %.1f dBFS)",
+				reduction, OutputLimiter.CEILING_DB);
+		}
+		return String.format(Locale.ROOT, "idle  (ceiling %.1f dBFS)",
+			OutputLimiter.CEILING_DB);
 	}
 
 	private void drawSettingsTab(GuiGraphics graphics) {
@@ -930,7 +973,8 @@ public final class AvReceiverConfigScreen extends Screen {
 			renderWrappedTooltip(graphics,
 				title + "\nRole: " + row.role().label() + " · " + speakerTypeLabel(row.type())
 					+ "\nBlock: " + row.pos().toShortString()
-					+ "\nDistance from receiver: " + String.format(Locale.ROOT, "%.1f m", distance)
+					+ "\nDistance from receiver: "
+					+ String.format(Locale.ROOT, "%.1f blocks", distance)
 					+ "\nLevel: " + formatSignedDb(row.levelDb()) + " dB"
 					+ "\nPing plays a sound and a particle marker at this block.",
 				mouseX, mouseY);
@@ -982,6 +1026,11 @@ public final class AvReceiverConfigScreen extends Screen {
 	}
 
 	private void loadFolder(String newLibraryId, String newFolder, boolean force) {
+		loadFolder(newLibraryId, newFolder, force, false);
+	}
+
+	private void loadFolder(String newLibraryId, String newFolder, boolean force,
+							boolean keepSearch) {
 		if (scanning && !force) {
 			return;
 		}
@@ -998,33 +1047,23 @@ public final class AvReceiverConfigScreen extends Screen {
 		}
 		libraryId = targetLibrary;
 		folder = newFolder == null ? "" : newFolder;
-		rememberedLibraryId = libraryId;
-		rememberedFolder = folder;
+		mediaState.libraryId = libraryId;
+		mediaState.folder = folder;
 		folderLoaded = false;
 		scanning = true;
 		scroll = 0;
 		selectedKey = "";
-		search = "";
-		if (searchBox != null) {
-			searchBox.setValue("");
+		if (!keepSearch) {
+			search = "";
+			mediaState.search = "";
+			if (searchBox != null) {
+				searchBox.setValue("");
+			}
 		}
 		int generation = ++scanGeneration;
 		String targetFolder = folder;
-		LibraryRegistry.Library cachedLibrary = library;
-
-		if (!force) {
-			List<EntryView> cached = cachedFolder(cachedLibrary, targetFolder);
-			if (cached != null) {
-				entries.clear();
-				entries.addAll(cached);
-				scanning = false;
-				folderLoaded = true;
-				syncWidgets();
-				return;
-			}
-		}
-
 		String finalLibrary = targetLibrary;
+
 		Thread thread = new Thread(() -> {
 			List<EntryView> loaded = new ArrayList<>();
 			String error = null;
@@ -1034,25 +1073,43 @@ public final class AvReceiverConfigScreen extends Screen {
 				for (MediaLibrary.Entry entry : listed) {
 					if (entry.directory()) {
 						loaded.add(new EntryView(entry, null, null));
-					} else if (probed++ < PROBE_LIMIT) {
-						try {
-							loaded.add(new EntryView(entry, MediaLibrary.probe(MediaLibrary.resolve(entry.key())), null));
-						} catch (Exception e) {
-							loaded.add(new EntryView(entry, null, e.getMessage()));
-						}
-					} else {
+						continue;
+					}
+					Path file;
+					long modifiedMillis;
+					try {
+						file = MediaLibrary.resolve(entry.key());
+						modifiedMillis = Files.getLastModifiedTime(file).toMillis();
+					} catch (Exception e) {
+						loaded.add(new EntryView(entry, null, e.getMessage()));
+						continue;
+					}
+					MediaLibrary.Probe cached = force ? null
+						: MediaLibraryCache.lookup(entry.key(), entry.size(), modifiedMillis);
+					if (cached != null) {
+						loaded.add(new EntryView(entry, cached, null));
+						continue;
+					}
+					if (probed++ >= PROBE_LIMIT) {
 						loaded.add(new EntryView(entry, null, null));
+						continue;
+					}
+					try {
+						MediaLibrary.Probe probe = MediaLibrary.probe(file);
+						MediaLibraryCache.store(entry.key(), finalLibrary, entry.size(),
+							modifiedMillis, probe);
+						loaded.add(new EntryView(entry, probe, null));
+					} catch (Exception e) {
+						loaded.add(new EntryView(entry, null, e.getMessage()));
 					}
 				}
 			} catch (Exception e) {
 				error = e.getMessage();
 			}
 			String finalError = error;
-			if (finalError == null) {
-				// Cache even when the screen closed during the scan, so reopening
-				// does not start the same probe work again.
-				cacheFolder(cachedLibrary, targetFolder, loaded);
-			}
+			// Persist successful probes even when the screen closed during the
+			// scan, so the next session does not repeat the FFmpeg work.
+			MediaLibraryCache.flush();
 			Minecraft.getInstance().execute(() -> {
 				if (generation != scanGeneration) {
 					return;
@@ -1069,20 +1126,6 @@ public final class AvReceiverConfigScreen extends Screen {
 		}, "cinema-media-scan");
 		thread.setDaemon(true);
 		thread.start();
-	}
-
-	private static List<EntryView> cachedFolder(LibraryRegistry.Library library, String folder) {
-		return folderCache.get(new FolderCacheKey(library.id(), library.root(), folder));
-	}
-
-	private static void cacheFolder(LibraryRegistry.Library library, String folder,
-									List<EntryView> entries) {
-		folderCache.put(new FolderCacheKey(library.id(), library.root(), folder),
-			List.copyOf(entries));
-	}
-
-	private static void invalidateLibraryCache(String libraryId) {
-		folderCache.keySet().removeIf(key -> key.libraryId().equals(libraryId));
 	}
 
 	private void playSelected() {
@@ -1636,7 +1679,18 @@ public final class AvReceiverConfigScreen extends Screen {
 							  double levelDb) {
 	}
 
-	private record FolderCacheKey(String libraryId, Path root, String folder) {
+	private record ReceiverKey(ResourceKey<Level> dimension, BlockPos pos) {
+		static ReceiverKey of(AvReceiverBlockEntity receiver) {
+			Level level = receiver.getLevel();
+			return new ReceiverKey(level == null ? Level.OVERWORLD : level.dimension(),
+				receiver.getBlockPos().immutable());
+		}
+	}
+
+	private static final class MediaState {
+		private String libraryId = LibraryRegistry.DEFAULT_ID;
+		private String folder = "";
+		private String search = "";
 	}
 
 	private record EntryView(MediaLibrary.Entry entry, MediaLibrary.Probe probe, String error) {

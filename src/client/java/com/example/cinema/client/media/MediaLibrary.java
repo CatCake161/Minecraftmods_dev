@@ -1,11 +1,12 @@
 package com.example.cinema.client.media;
 
-import com.example.cinema.Cinema;
+import com.example.cinema.CinemaLog;
+import com.example.cinema.client.media.ffmpeg.Ffmpeg;
 import com.example.cinema.media.MediaKey;
 import net.minecraft.client.Minecraft;
 
-import java.io.IOException;
 import java.io.InputStream;
+import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
@@ -205,7 +206,7 @@ public final class MediaLibrary {
 		try {
 			duration = Ffmpeg.probeDuration(file);
 		} catch (IOException e) {
-			Cinema.LOGGER.warn("cinema media: could not probe duration for {}", displayKey(key));
+			CinemaLog.warn(CinemaLog.MEDIA, "could not probe duration for {}", displayKey(key));
 		}
 		return new Metadata(key, size, sha256, duration);
 	}

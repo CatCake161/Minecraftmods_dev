@@ -1,17 +1,17 @@
 package com.example.cinema.client.gui;
 
 import com.example.cinema.block.entity.SpeakerType;
-import com.example.cinema.client.audio.speakerdata.SpeakerDataProfile;
-import com.example.cinema.client.audio.speakerdata.SpeakerDataRegistry;
 import com.example.cinema.client.config.CinemaClientConfig;
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
+import com.example.cinema.client.media.audio.speaker.SpeakerDataProfile;
+import com.example.cinema.client.media.audio.speaker.SpeakerDataRegistry;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 
-import java.util.List;
 import java.util.function.Consumer;
+import java.util.List;
 
 /**
  * Paged profile picker for one cabinet type. The old config screen cycled one

@@ -1,6 +1,7 @@
 package com.example.cinema.client.media;
 
-import com.example.cinema.Cinema;
+import com.example.cinema.CinemaLog;
+import com.example.cinema.client.media.ffmpeg.Ffmpeg;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -31,7 +32,7 @@ public final class CinemaPrewarm {
 			loaded.get(30, TimeUnit.SECONDS);
 			return true;
 		} catch (Exception e) {
-			Cinema.LOGGER.warn("cinema prewarm did not finish", e);
+			CinemaLog.warn(CinemaLog.PREWARM, "did not finish", e);
 			return false;
 		}
 	}
@@ -41,12 +42,12 @@ public final class CinemaPrewarm {
 		try {
 			String version = Ffmpeg.version();
 			loaded.complete(null);
-			Cinema.LOGGER.info("cinema prewarm: external FFmpeg ready in {} ms: {}",
+			CinemaLog.info(CinemaLog.PREWARM, "external FFmpeg ready in {} ms: {}",
 				String.format("%.0f", (System.nanoTime() - started) / 1e6), version);
 		} catch (Throwable t) {
 			loaded.completeExceptionally(t);
-			Cinema.LOGGER.error("cinema prewarm failed: {}", t.getMessage());
-			Cinema.LOGGER.error(Ffmpeg.INSTALL_HINT);
+			CinemaLog.error(CinemaLog.PREWARM, "failed: {}", t.getMessage());
+			CinemaLog.error(CinemaLog.PREWARM, "{}", Ffmpeg.INSTALL_HINT);
 		}
 	}
 }

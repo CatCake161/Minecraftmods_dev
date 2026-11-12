@@ -1,15 +1,16 @@
 package com.example.cinema.client.render;
 
 import com.example.cinema.block.entity.ScreenBlockEntity;
+import com.example.cinema.CinemaLog;
 import com.example.cinema.client.media.AvReceiverPlayback;
 import com.example.cinema.client.media.AvReceiverPlaybackManager;
 import com.example.cinema.client.media.CinemaPlayer;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
-import net.minecraft.client.renderer.MultiBufferSource;
-import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.blockentity.BlockEntityRenderer;
 import net.minecraft.client.renderer.blockentity.BlockEntityRendererProvider;
+import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceLocation;
@@ -97,8 +98,7 @@ public final class ScreenBlockEntityRenderer implements BlockEntityRenderer<Scre
 			long now = System.nanoTime();
 			if (now - lastDebugLog > 1_000_000_000L) {
 				lastDebugLog = now;
-				com.example.cinema.Cinema.LOGGER.info(
-					"cinema projector debug: screen={} aspect={} throw={} focus={} error={} blur={} wash={} lamp={}",
+				CinemaLog.info(CinemaLog.PROJECTOR_DEBUG, "screen={} aspect={} throw={} focus={} error={} blur={} wash={} lamp={}",
 					geometry.master(), player.aspect(), optics.throwRatio(), optics.focusDistance(),
 					optics.focusError(), optics.blurLod(), optics.ambientWash(), optics.brightness());
 			}

@@ -1,24 +1,24 @@
 package com.example.cinema.client.gui;
 
+import com.example.cinema.block.entity.AvReceiverBlockEntity;
 import com.example.cinema.block.entity.SpeakerBlockEntity;
 import com.example.cinema.block.entity.SpeakerRole;
 import com.example.cinema.block.entity.SpeakerType;
-import com.example.cinema.client.audio.fir.CommonAcousticFirService;
-import com.example.cinema.client.audio.speakerdata.SpeakerDataAssignments;
-import com.example.cinema.client.audio.speakerdata.SpeakerDataProfile;
-import com.example.cinema.client.audio.speakerdata.SpeakerDataRegistry;
 import com.example.cinema.client.config.CinemaClientConfig;
+import com.example.cinema.client.media.audio.acousticfir.CommonAcousticFirService;
+import com.example.cinema.client.media.audio.speaker.SpeakerDataAssignments;
+import com.example.cinema.client.media.audio.speaker.SpeakerDataProfile;
+import com.example.cinema.client.media.audio.speaker.SpeakerDataRegistry;
 import com.example.cinema.client.network.SpeakerNameClient;
 import com.example.cinema.client.network.SpeakerRoleClient;
-import com.example.cinema.block.entity.AvReceiverBlockEntity;
-import net.minecraft.Util;
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.Util;
 import net.minecraft.util.FormattedCharSequence;
 
 import java.io.IOException;

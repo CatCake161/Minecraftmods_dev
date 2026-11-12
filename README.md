@@ -66,6 +66,7 @@ $env:JAVA_HOME='<JDK-25+>'
 
 - [交接清单](docs/HANDOFF.md)
 - [项目规划与架构](docs/PLANNING.md)
+- [客户端架构与目录边界](docs/design/ARCHITECTURE.md)
 - [待办列表](docs/TODO.md)
 - [游戏内指令说明](docs/COMMANDS.md)
 - [P0 技术验证报告（历史）](docs/design/P0-SPIKE-REPORT.md)

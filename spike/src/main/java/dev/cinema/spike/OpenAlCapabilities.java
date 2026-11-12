@@ -4,6 +4,7 @@ import org.lwjgl.openal.AL;
 import org.lwjgl.openal.AL10;
 import org.lwjgl.openal.ALC;
 import org.lwjgl.openal.ALC10;
+import org.lwjgl.openal.ALC11;
 import org.lwjgl.openal.ALCCapabilities;
 import org.lwjgl.openal.ALCapabilities;
 import org.lwjgl.openal.EXTEfx;
@@ -93,6 +94,9 @@ final class OpenAlCapabilities {
 		private boolean sourceSpatialize;
 		private boolean deviceClock;
 		private boolean sourceStartDelay;
+		private int monoSources;
+		private int stereoSources;
+		private int allocatedSources;
 		private long deviceClockNanos;
 		private long deviceLatencyNanos;
 		private long deviceClockAtLatencyQuery;
@@ -128,6 +132,9 @@ final class OpenAlCapabilities {
 			sourceSpatialize = alExtensions.contains("AL_SOFT_source_spatialize");
 			deviceClock = alcExtensions.contains("ALC_SOFT_device_clock");
 			sourceStartDelay = alExtensions.contains("AL_SOFT_source_start_delay");
+			monoSources = ALC10.alcGetInteger(device, ALC11.ALC_MONO_SOURCES);
+			stereoSources = ALC10.alcGetInteger(device, ALC11.ALC_STEREO_SOURCES);
+			allocatedSources = probeSourceAllocation(128);
 			if (deviceClock) {
 				deviceClockNanos = SOFTDeviceClock.alcGetInteger64vSOFT(device, SOFTDeviceClock.ALC_DEVICE_CLOCK_SOFT);
 				deviceLatencyNanos = SOFTDeviceClock.alcGetInteger64vSOFT(device, SOFTDeviceClock.ALC_DEVICE_LATENCY_SOFT);
@@ -136,6 +143,23 @@ final class OpenAlCapabilities {
 				deviceClockAtLatencyQuery = clockLatency.get(0);
 				deviceLatencyAtClockQuery = clockLatency.get(1);
 			}
+		}
+
+		private static int probeSourceAllocation(int wanted) {
+			int[] ids = new int[wanted];
+			int created = 0;
+			while (created < wanted) {
+				int source = AL10.alGenSources();
+				if (source == 0) {
+					break;
+				}
+				ids[created++] = source;
+			}
+			for (int i = 0; i < created; i++) {
+				AL10.alDeleteSources(ids[i]);
+			}
+			AL10.alGetError();
+			return created;
 		}
 
 		private void print() {
@@ -157,6 +181,9 @@ final class OpenAlCapabilities {
 			System.out.println("  double precision  : " + doublePrecision);
 			System.out.println("  B-format          : " + bformat);
 			System.out.println("  source spatialize : " + sourceSpatialize);
+			System.out.println("  source limit      : " + (monoSources + stereoSources)
+				+ " (" + monoSources + " mono + " + stereoSources + " stereo)"
+				+ ", allocated 128 probe=" + allocatedSources);
 			System.out.println("  AL extensions     : " + alExtensions);
 			System.out.println("  ALC extensions    : " + alcExtensions);
 		}

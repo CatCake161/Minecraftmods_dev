@@ -41,10 +41,11 @@ public class AvReceiverBlockEntity extends BlockEntity {
 
 	/**
 	 * Master volume is stored and displayed in dBFS. 0 dBFS is digital full
-	 * scale; the receiver intentionally allows up to +6 dB of output gain.
+	 * scale; the receiver allows up to +18 dB of output gain. The client output
+	 * limiter keeps the final mix below its ceiling instead of hard-clipping.
 	 */
 	public static final double MIN_VOLUME_DB = -60.0;
-	public static final double MAX_VOLUME_DB = 6.0;
+	public static final double MAX_VOLUME_DB = 18.0;
 	public static final double DEFAULT_VOLUME_DB = -2.0;
 
 	private String name = "";

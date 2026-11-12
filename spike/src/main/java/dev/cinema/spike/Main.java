@@ -27,6 +27,11 @@ public final class Main {
 			return;
 		}
 
+		if (args[0].equals("shared-sources")) {
+			SharedContextSourceProbe.run();
+			return;
+		}
+
 		if (args.length < 2) {
 			printUsage();
 			return;

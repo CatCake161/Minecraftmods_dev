@@ -1,13 +1,14 @@
 package com.example.cinema.pairing;
 
-import com.example.cinema.Cinema;
-import com.example.cinema.block.ProjectorBlock;
-import com.example.cinema.block.ScreenBlock;
-import com.example.cinema.block.SpeakerBlock;
 import com.example.cinema.block.entity.AvReceiverBlockEntity;
 import com.example.cinema.block.entity.ProjectorBlockEntity;
 import com.example.cinema.block.entity.ScreenBlockEntity;
 import com.example.cinema.block.entity.SpeakerBlockEntity;
+import com.example.cinema.block.ProjectorBlock;
+import com.example.cinema.block.ScreenBlock;
+import com.example.cinema.block.SpeakerBlock;
+import com.example.cinema.Cinema;
+import com.example.cinema.CinemaLog;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
@@ -16,10 +17,10 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.item.context.UseOnContext;
-import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayDeque;
@@ -256,7 +257,7 @@ public final class CinemaPairing {
 		}
 		projector.setScreenPos(screenPos);
 		ScreenBlockEntity.applyOwnerToConnected(level, screenPos, projector.getBlockPos());
-		Cinema.LOGGER.info("cinema pairing: linked projector {} to screen {}",
+		CinemaLog.info(CinemaLog.PAIRING, "linked projector {} to screen {}",
 			projector.getBlockPos().toShortString(), screenPos.toShortString());
 		return true;
 	}
@@ -271,7 +272,7 @@ public final class CinemaPairing {
 		}
 		receiver.addSpeaker(speaker.getBlockPos());
 		speaker.setReceiverPos(receiver.getBlockPos());
-		Cinema.LOGGER.info("cinema pairing: linked receiver {} to speaker {}",
+		CinemaLog.info(CinemaLog.PAIRING, "linked receiver {} to speaker {}",
 			receiver.getBlockPos().toShortString(), speaker.getBlockPos().toShortString());
 		return true;
 	}
@@ -288,7 +289,7 @@ public final class CinemaPairing {
 		}
 		receiver.setVideoTarget(projectorPos);
 		projector.setReceiverPos(receiverPos);
-		Cinema.LOGGER.info("cinema pairing: linked receiver {} to projector {}",
+		CinemaLog.info(CinemaLog.PAIRING, "linked receiver {} to projector {}",
 			receiverPos.toShortString(), projectorPos.toShortString());
 		return true;
 	}
@@ -373,7 +374,7 @@ public final class CinemaPairing {
 		}
 		projector.clearScreen();
 		ScreenBlockEntity.clearOwnerFor(level, clickedScreen, projector.getBlockPos());
-		Cinema.LOGGER.info("cinema pairing: unlinked projector {} from screen {}",
+		CinemaLog.info(CinemaLog.PAIRING, "unlinked projector {} from screen {}",
 			projector.getBlockPos().toShortString(), clickedScreen.toShortString());
 		return true;
 	}
@@ -392,7 +393,7 @@ public final class CinemaPairing {
 			linked = true;
 		}
 		if (linked) {
-			Cinema.LOGGER.info("cinema pairing: unlinked receiver {} from speaker {}",
+			CinemaLog.info(CinemaLog.PAIRING, "unlinked receiver {} from speaker {}",
 				receiverPos.toShortString(), speakerPos.toShortString());
 		}
 		return linked;
@@ -412,7 +413,7 @@ public final class CinemaPairing {
 			linked = true;
 		}
 		if (linked) {
-			Cinema.LOGGER.info("cinema pairing: unlinked receiver {} from projector {}",
+			CinemaLog.info(CinemaLog.PAIRING, "unlinked receiver {} from projector {}",
 				receiverPos.toShortString(), projectorPos.toShortString());
 		}
 		return linked;

@@ -1,21 +1,22 @@
 package com.example.cinema.block.entity;
 
-import com.example.cinema.Cinema;
 import com.example.cinema.block.ProjectorBlock;
+import com.example.cinema.Cinema;
+import com.example.cinema.CinemaLog;
 import com.example.cinema.util.CinemaNames;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
-import net.minecraft.network.protocol.Packet;
-import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
-import net.minecraft.world.level.ChunkPos;
-import net.minecraft.world.level.Level;
+import net.minecraft.network.protocol.game.ClientGamePacketListener;
+import net.minecraft.network.protocol.Packet;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.Objects;
@@ -171,7 +172,7 @@ public class ProjectorBlockEntity extends BlockEntity {
 		if (level.getBlockEntity(owner) instanceof ProjectorBlockEntity other
 			&& other.screenPos() != null
 			&& ScreenBlockEntity.isSameScreen(level, other.screenPos(), screenPos)) {
-			Cinema.LOGGER.info("cinema pairing: cleared duplicate projector {} from screen {}",
+			CinemaLog.info(CinemaLog.PAIRING, "cleared duplicate projector {} from screen {}",
 				worldPosition.toShortString(), screenPos.toShortString());
 			setScreenPos(null);
 			return;

@@ -9,6 +9,7 @@
 >
 > **已确认决策（2026-11-06，2026-11-07 修订）**：
 > - A2 直达声距离衰减由 Java 计算：自由场振幅 `1 / max(r, 1 m)`；OpenAL 距离模型设为 `AL_NONE`，避免双重衰减。
+> - **声学世界尺度（2026-11-12）**：Mod Menu `Audio` 页 `World scale` 可设 **0.25–2.00 m/block**（默认 1.00，步进 0.05）。所有声学公式中的“米”都通过 `AcousticScale` 从方块单位换算；方块几何、渲染、投影光学和反射发现容差（0.10 m 平面合并、1.5 m 迟滞、16 m/±8 m fallback 等）仍按方块单位，不随尺度缩放。尺度变化会使 `AcousticScene` 和反射/晚期缓存失效。本文其余“m”除特别说明外均指换算后的声学米。
 > - 空气吸收使用 ISO 9613-1，频率相关，作用于直达声；开关/温度/湿度放 Mod Menu（客户端）。
 > - 遮挡对直达声做路径扫描，产生宽带衰减 + 低通；低通、空气吸收和指向性一起合并进单个 **4096-tap 直达 FIR**。
 > - 早期反射采用独立 OpenAL source（方案 C）：每个 tap 一个 source，位置为镜像源；不按 5.1 声道混入直达声道。
@@ -23,12 +24,7 @@
 > **A2b 已通过游戏内听感验收**：镜面发现、镜像源几何、R 处墙面验证、两段可见性、32 source 池/延迟播放均确认可用。
 > **A2c-R 已重构**：直达声与反射声共用 `CommonAcousticFirProfile/Designer`；反射 4096-tap FIR 包含 on-axis、指向性、
 > 空气、材质和遮挡低通；反射路径不再使用材质/遮挡 biquad 或 `trimGain()`，一阶反射不再受 Schroeder 频率限制。
-> **A3 已实现全频带晚期混响**：Java 64-line FDN、4 级输入扩散 + 轻量慢速调制（±0.06 ms）、高频阻尼输出 + 120 Hz 低频支撑 + 7 kHz 输出低通、
-> Householder 混合、逐线 RT60 low/mid/high 衰减、20 Hz DC 高通、
-> 20–50 ms pre-delay、启用时创建的 6 个 wet source 和 6 路 Hadamard 去相关；发送改为 source power，
-> wet/direct 目标由 `R = S·α/(1-α)`、`r_c` 和实测指向性计算，FDN 输出做 mid-band RMS 归一化；
-> LFE 也送入 FDN，低频模态仍由 A5 处理但不再切掉晚期场。单元测试与完整构建通过，但 **2026-11-08 听感验收不通过**；散射仍未实现。
-> **2026-11-08 A3 验收结论：不通过。** 高频“沙沙”、低频不足、整体音色不平衡；继续调 FDN 参数收益低，当前方案基本失败。已执行方案 B：`DEFAULT_LATE_REVERB=false`，默认只保留直达 4096-tap FIR + 一阶反射 4096-tap FIR；`CinemaAudioEngine` 仅在启用时创建 wet source，禁用时释放并跳过 FDN 处理。A3 代码保留为实验路径，低频模态/SBIR 归 A5。
+> **A3 晚期场（2026-11-12 修订）**：FDN 晚期混响已彻底删除——2026-11-08 听感验收不通过（高频“沙沙”、低频不足、音色不平衡），且几何 late bus 已取代其职责。现在晚期场只由几何 `LateReflectionBus` 生成：order-2/3/4 路径、6 路 wet source、VBAP、LFE 作为源声道参与；房间常数校准保留 `sourceGainDb = 20·log10(2/√R)` 与 `lateTrimDb`，删除 RT60/pre-delay/DC 高通/阻尼等 FDN DSP。默认 `lateReverb=false`，低频模态/SBIR 归 A5。
 > **2026-11-09 LFE 修正**：LFE 已接入全部几何路径（一阶/二阶/三阶/四阶）与 premium/lazy 分类，6 路 wet source 的 LFE 输出不再为空。最终架构为 Premium 独立 `ReflectionSource` + Lazy `LateReflectionBus`（VBAP 已接入），详见 7.5。
 > **2026-11-09 房间感知几何延迟（方案 A）**：固定 160 ms 上限会在大型房间截断有效的 order-3/4 路径。现改为按房间对角线逐阶计算上限：`min(1.30 s, (order + 1) · roomDiagonal / 343, historySafe)`；48 m 立方房间 order-2/3/4 上限约为 727/970/1212 ms。raw history 与 late bus history 均扩到 **65536 frame**，`historySafe ≈ 1.323 s`；一阶、order-2、fast order-3、deep order-4 和 `/cinema_acoustics paths` 全部使用同一预算，超限路径丢弃并记录 `delayRejected`。premium per-tap 的 order-2/3 仍限制在 150 ms 内使用完整 FIR，更长路径进入 late bus（无 per-tap FIR，只有 delay/gain/damping/VBAP）。
 **2026-11-09 低音炮声学**：反射 FIR 改为 **4096 taps**；内置/未测量低音炮按 sealed（二阶 Butterworth、内置 30 Hz）/ported（四阶 Butterworth、内置 20 Hz）生成解析响应，measured profile 跳过解析模型；手动 Low/High（10–1000 Hz）用二阶 Butterworth 高通/低通实际带限，低音炮 FIR/源增益参考 `sqrt(low*high)`。lazy late bus 没有 per-tap FIR，LFE 的 late-bus 内容不受低音炮带限约束（已知限制）。
@@ -66,7 +62,7 @@
 - **衰减系数**：延迟线每循环的衰减可用 `powf(0.001, length / decayTime)` 表示（目标 -60 dB）。
 
 > 这些代码片段来自 OpenAL Soft 经典 `alcReverb.c` 的资料；不同 OpenAL Soft 版本内部实现可能已重构。
-> A0 探针通过 EFX 公共 API 验证过 EAXReverb；当前 A3 实际运行路径是自研 FDN，不依赖其内部结构。
+> A0 探针通过 EFX 公共 API 验证过 EAXReverb；当前 A3 实际运行路径是几何 `LateReflectionBus`，不依赖 EFX 或 FDN。
 
 ### 2.2 指向性与一阶反射
 
@@ -81,10 +77,10 @@
 | 方法 | 可行性 | 声学合理性 | 结论 |
 |---|---|---|---|
 | 整套 EAXReverb 直接使用 | 高：EFX 是 OpenAL 扩展，OpenAL Soft 实现了它；LWJGL 3.3.3 已带 `EXTEfx` 绑定 | 中低：早期反射固定为 ~5 m 房间，不随影院尺寸变化；晚期尾音是参数化/感知模型，不是几何声学 | **不整套使用**；只取晚期尾音，早期反射必须由房间几何决定 |
-| EAXReverb 仅作晚期混响 | 高 | 中高：扩散尾音用统计模型是合理的；EAXReverb 的调制/频响/衰减参数够用 | **备选**；A0 已验证可用，但首版 A3 改用可控的 Java FDN，EAXReverb 保留为后续回退 |
+| EAXReverb 仅作晚期混响 | 高 | 中高：扩散尾音用统计模型是合理的；EAXReverb 的调制/频响/衰减参数够用 | **备选**；A0 已验证可用，当前不启用，保留为后续回退 |
 | 自定义一阶镜像源早期反射 | 中高：需要房间边界、扬声器位置/朝向、材质；客户端计算量可控 | 高（在几何声学近似内）：一阶反射是强离散反射，携带距离/方向线索；忽略衍射/散射/高阶是已知近似 | **采用**，作为核心声学计算 |
 | EAXReverb 的早期反射 | 高 | 低：固定 5 m 房间模型，延迟和方向与我们的任意房间不匹配；容易产生错误的前期反射和梳状滤波 | 默认关闭；仅在完全没有房间几何时作为低电平 fallback |
-| 自定义 FDN 晚期混响 | 中：需要 DSP、稳定性、调参；CPU 仍可接受 | 中高：统计混响模型；可做 6 声道湿声 | **A3 采用**；全频带 FDN + 5.1 去相关，低频模态仍由 A5 单独处理 |
+| 自定义 FDN 晚期混响 | 中：需要 DSP、稳定性、调参；CPU 仍可接受 | 中高：统计混响模型；可做 6 声道湿声 | **已删除**；听感验收不通过，A3 改用几何高阶路径 + `LateReflectionBus`，低频模态仍由 A5 单独处理 |
 | 用 `REFLECTIONS_PAN` / `LATE_REVERB_PAN` 当声源指向性 | 高 | 低：它们是混响方向的艺术化控制，不描述扬声器辐射随角度的变化 | **不采用**为物理指向性；最多用于晚期尾音方向的艺术调整 |
 | 全阶路径追踪 / 实测 RIR 卷积 | 低：几何复杂、CPU/内存高、缺少测量数据 | 高但过度：对游戏内影院没有必要 | 不做；未来可评估离线/测量 RIR |
 | 低频房间模态 / 多低音炮 | 中 | 高：小型影院低频模态明显，单低音炮会有峰谷 | 首版不建模；排在 A4 之后（A5），含多低音炮管理与模态 EQ |
@@ -98,7 +94,7 @@
    把 EAXReverb 早期反射叠在自定义反射上还会造成双早期反射、梳状滤波和虚假的方向感。
 2. **一阶镜像源 + 指向性是性价比最高的几何声学部分。** 对矩形/近似矩形影院，一阶反射是最强、最有方向性的早期能量；
    更高阶反射迅速扩散，用晚期混响统计近似更合理。
-3. **晚期混响不需要逐反射计算。** 用小型 FDN 提供扩散能量即可；关键是 RT60、频响和 wet/dry 合理。首版只生成 Schroeder 频率以上的尾音，低频留给 A5。
+3. **晚期场由几何高阶路径近似。** 强反射保留为 premium per-tap；其余 order-2/3/4 路径进入 `LateReflectionBus`，用 VBAP 扩散到 6 路 wet source；低频留给 A5。
 4. **指向性同时作用于直达声和一阶反射。** 直达声使用扬声器到听者的辐射角，反射使用扬声器到反射点的辐射角；
    两者都按扬声器局部坐标查同一份 H/V 指向性表。为避免双重处理，所有声学增益必须在同一条“扬声器辐射 → 传播 → 听者”链路中只计算一次；
    早期反射采用独立 source 后，每个 tap 使用绝对物理增益，声像由 source 位置提供，距离由 Java 按同一 `1/max(L,1)` 规则计算，
@@ -127,17 +123,17 @@
 ```
 
 - `StreamingAudioDecoder` 通过 `-map 0:a:0 -ac 6 -ar 48000 -channel_layout 5.1 -f f32le -acodec pcm_f32le` 调外部 FFmpeg；chunk 为 24,000 帧（0.5 s），`ChunkSink` 遇到引擎满队列会反压 FFmpeg。
-- `CinemaAudioEngine` 在当前线程创建自己的 OpenAL context，6 个 source 默认使用虚拟相对位置；M4 已通过 `setChannelLayout()` 换成已配对扬声器相对听者的位置与增益。`SOFTDeviceClock` + `SOFTSourceStartDelay` 对齐启动，`SOFTSourceLatency` 发布 `audiblePts`。
+- `CinemaAudioEngine` 在当前线程创建自己的 OpenAL context；direct source 数按已连接物理扬声器动态分配，M4 通过 `setChannelLayout()` 设置相对听者的位置与增益；缺少物理扬声器的声道不创建 direct source。`SOFTDeviceClock` + `SOFTSourceStartDelay` 对齐启动，`SOFTSourceLatency` 发布 `audiblePts`。
 - 4 buffer/source × 2048 frame ≈ 171 ms 前瞻；该前瞻只约束直达声和反射 source 的调度。几何反射延迟由 65536-frame 原始历史环读取，不占用这条 lookahead；但不能再在这条链路上加额外 lookahead。
 - **32-bit float 管线**：FFmpeg 直接输出 `f32le`；`AudioChunk`、`StereoUpmixer`、FIR/指向性全程保持 float32，OpenAL source buffer 使用 `AL_FORMAT_MONO_FLOAT32`（`AL_EXT_FLOAT32`），只在最终设备转换时量化。仅当扩展不可用时回退 `AL_FORMAT_MONO16` 并在最终转换处钳位。这个顺序很重要：FIR 相对 1 kHz 的峰值可达 +2.5…+9.9 dB，旧实现会在 source gain 之前把峰值硬钳到 0 dBFS，正是实测削波失真的来源。整条链路都不做中间 16-bit 量化。
 - **声像平滑**：`AvReceiverPlayback` 仍以 20 Hz 更新 listener-relative source 位置；`CinemaAudioEngine` 以 30 ms 时间常数、约 200 Hz 在音频线程内分别插值半径和单位球方向（slerp）。快速转头时源点沿圆弧移动，180° 甩视角也不会穿过听者，避免 HRTF 位置跳变产生撕裂/zipper。
 - `AvReceiverPlayback` 根据接收器状态开/停本地解码器，按 `MAX_DRIFT_SECONDS` 做漂移校正；M3 起每个接收器持有独立 `CinemaAudioEngine`/OpenAL context，多个接收器可同时播放。
-- **M4 已接入物理布局**：`AvReceiverPlayback` 将已配对 `SpeakerBlockEntity` 的角色/位置/电平映射到六个 source；听者始终是玩家实际耳朵位置/朝向，已删除 Seat/皇帝位与声场校正，未配对声道回退虚拟 5.1。声学层仍不能假设房间几何/材质数据。
-- 当前没有 EFX；A2 已接入单个 4096-tap 联合 FIR（on-axis/指向性 + ISO 9613-1 空气吸收 + 遮挡低通）、Java 距离/遮挡宽带增益；A2b 已接入一阶反射播放，A2c-R 已接入 4096-tap 全频带反射 FIR（材质/遮挡/空气）；A3 FDN 晚期混响听感验收不通过，默认关闭；当前 `lateReverb` 开关驱动 geometric late bus（6 条 wet source；LFE 路径已接入，LFE wet 输出有效），FDN 仅保留为实验路径。
+- **M4 已接入物理布局**：`AvReceiverPlayback` 将已配对 `SpeakerBlockEntity` 的角色/位置/电平映射到 direct source；听者始终是玩家实际耳朵位置/朝向，已删除 Seat/皇帝位与声场校正。**缺少物理扬声器的声道不创建 direct source，不再 fallback 到虚拟 5.1**。声学层仍不能假设房间几何/材质数据。
+- 当前没有 EFX；A2 已接入单个 4096-tap 联合 FIR（on-axis/指向性 + ISO 9613-1 空气吸收 + 遮挡低通）、Java 距离/遮挡宽带增益；A2b 已接入一阶反射播放，A2c-R 已接入 4096-tap 全频带反射 FIR（材质/遮挡/空气）；A3 FDN 晚期混响已删除，默认关闭；当前 `lateReverb` 开关驱动 geometric late bus（6 条 wet source；LFE 路径已接入，LFE wet 输出有效）。
 
 ### 4.2 当前实现约束
 
-- `CinemaAudioEngine`：6 个 mono OpenAL source，在 Minecraft 的 OpenAL device 上创建自己的 context；48 kHz；默认虚拟相对位置，M4 已按已配对扬声器更新位置/增益；`AL_NONE`（距离/空气吸收/遮挡由 Java 计算）；目前没有 EFX。
+- `CinemaAudioEngine`：direct source 数按已连接物理扬声器动态分配（可为 0..64），在 Minecraft 的 OpenAL device 上创建自己的 context；48 kHz；M4 已按已配对扬声器更新位置/增益；`AL_NONE`（距离/空气吸收/遮挡由 Java 计算）；目前没有 EFX。
 - 该 context 目前用默认属性创建，没有请求 `ALC_MAX_AUXILIARY_SENDS`；EFX aux send 数量/默认值需要在 spike 中确认。
 - 音频线程优先用 `EXTThreadLocalContext.alcSetThreadContext` 设置/清空自己的 context，回退到 `alcMakeContextCurrent`；并复用 Minecraft 的函数指针。不要在音频线程调用 `alcMakeContextCurrent(NULL)`，否则会清掉 Minecraft 的全局/线程 context，导致 SoundEngine 报 `Allocate new source: Invalid operation`。
 - `MinecraftOpenAl`：复用 Minecraft 的 device；设备切换/资源重载尚未完整处理。
@@ -145,12 +141,13 @@
 - `SpeakerBlockEntity`：有 `role`、`levelDb`、`type`；`SpeakerBlock` 有 `FACING`；落地式为两格高，block entity 在下半格。M4 接收器→扬声器路由已接入。
 - `Seat` 方块已实现（`SeatBlock`/`SeatBlockEntity`/不可见 `SeatEntity`），可右键乘坐；**不提供皇帝位/听者参考，不参与声学**。
 - `AvReceiverPlaybackManager`：M3 每个接收器独立持有音频引擎/OpenAL context；停止或移除接收器时释放对应 context。
-- 六个 source 仍是 `AL_SOURCE_RELATIVE = AL_TRUE`；M4 每个 sync 把物理扬声器世界坐标转换为听者相对坐标并通过 `setChannelLayout()` 快照更新，音频线程在 30 ms 时间常数内对半径和球面方向（slerp）插值到目标位置，不读世界/玩家状态。A2 起该渲染半径同时用于 Java 距离衰减。世界坐标源迁移评审见 §4.2.1，当前暂不迁移。
+- direct source 均为 `AL_SOURCE_RELATIVE = AL_TRUE`；M4 每个 sync 把物理扬声器世界坐标转换为听者相对坐标并通过 `setChannelLayout()` 快照更新，音频线程在 30 ms 时间常数内对半径和球面方向（slerp）插值到目标位置，不读世界/玩家状态。A2 起该渲染半径同时用于 Java 距离衰减。世界坐标源迁移评审见 §4.2.1，当前暂不迁移。
 - `StreamingAudioDecoder` 的 FFmpeg stderr 没有单独消费（`redirectErrorStream(false)`，靠 `-loglevel error` 降低输出）；极端情况下仍可能因 stderr 管道填满而阻塞，后续可加 drain 线程。
 - `CinemaPlayer` 的 A/V 时钟使用音频设备时钟/PTS；声学处理不得改变 chunk 的 `startPtsSeconds` 或引入不可控 lookahead。
-- **声学增益归属（A2 直达声已实现，方案 C）**：直达声仍由 6 个物理扬声器 source 播放；OpenAL 距离模型为 `AL_NONE`，距离衰减由 Java 按平滑后的渲染半径 `1/max(r,1)` 计算；on-axis/指向性、空气吸收和遮挡低通合并进单个 4096-tap 直达 FIR；遮挡宽带衰减和整体 `overallGain` 进入 source gain。每个早期反射 tap 使用独立 OpenAL source，位置为镜像源；A2b 的距离也由 Java 按 `1/max(L,1)` 计算（与直达声同一规则），反射 4096-tap FIR 携带反射角指向性、空气、材质和遮挡低通（A2c-R；散射仍为 1；一阶反射全频带）。反射 tap 不混入 5.1 直达声道。
-- **反射 source 池（A2b 已实现，A3 扩展）**：每接收器固定 **56** 个反射 source/buffer，独立于 6 个直达 source，也不参与 `setChannelLayout()` 的物理扬声器布局。A3 premium 路径占用其中一部分：一阶最多 24 + 最强 16 条二阶 + 8 条三阶；其余二阶/三阶/四阶进 late bus。所有反射 source 与直达 source 同时启动、每块各喂一个 buffer（空闲槽喂静音），保持媒体时钟对齐；**65536-frame** 原始声道历史环提供几何反射延迟，每阶上限按房间对角线动态计算：`min(1.30 s, (order + 1) · roomDiagonal / 343, historySafe)`，超出上限的路径直接丢弃。`historySafe = min((65536 - 2048) / 48000, 65536 / 48000) ≈ 1.323 s`；48 m 立方房间的 order-1/2/3/4 上限约为 485/727/970/1212 ms。延迟变化 150 ms 平滑，tap 出现/消失 30 ms 采样淡变，每个 per-tap 反射仍使用 4096-tap 全频带 FIR（on-axis/指向性 + 空气 + 材质 + 遮挡低通）。
-- **晚期混响 source 池（A3 已实现，默认关闭）**：仅当 `lateReverb` 启用时，每接收器创建 6 个 mono source/buffer，与直达/反射 source 同时启动、每块各喂一个 buffer；禁用时停止并释放 source/buffer，`queueBlock` 跳过 late send 和 bus 处理。`LateReflectionBus` 按 VBAP 权重生成 6 个 5.1 wet 输出（LFE 作为源声道参与路径，LFE 扬声器不作为 VBAP 输出目标；LFE wet 输出有效）；各 source 位置跟随当前渲染的扬声器位置。wet source 的 `AL_GAIN` 承担 receiver master × `lateTrimDb`（衰减/静音对已排队 wet block 立即生效），只有正 trim 超过 AL_GAIN 上限 1.0 的部分才预乘到新生成的样本。
+- **声学增益归属（A2 直达声已实现，L2a 多扬声器）**：当前 5.1 每声道一只扬声器时，直达声由 6 个 direct source 播放；L2a 起每个声道可以接多只扬声器，每只扬声器都有独立 direct source。OpenAL 距离模型为 `AL_NONE`，距离衰减由 Java 按平滑后的渲染半径 `1/max(r,1)` 计算；on-axis/指向性、空气吸收和遮挡低通合并进单个 4096-tap 直达 FIR；遮挡宽带衰减和整体 `overallGain` 进入 source gain。每个早期反射 tap 使用独立 OpenAL source，位置为镜像源；A2b 的距离也由 Java 按 `1/max(L,1)` 计算（与直达声同一规则），反射 4096-tap FIR 携带反射角指向性、空气、材质和遮挡低通（A2c-R；散射仍为 1；一阶反射全频带）。反射 tap 不混入 5.1 直达声道。
+- **反射 source 池（A2b 已实现，A3 扩展，L2a 动态化）**：当前 5.1 且每声道一只扬声器时，每接收器最多 **116** 个反射 source/buffer（每引擎 source 预算 **128**：6 direct + 116 reflection + 6 lazy wet），独立于直达 source，也不参与 `setChannelLayout()` 的物理扬声器布局。**L2a 已实现多扬声器直达路由**：每只已连接扬声器各占一个 direct source，同一声道通过 `directSourceChannels[]` 映射多只 source；direct 增加时反射池按 `128 - direct - 6 wet`（并受 OpenAL source limit 限制）动态收缩，direct 减少时恢复。例如 12 只扬声器 → 12 direct + 110 reflection + 6 wet。**反射与 late bus 已按每只扬声器生成**：一阶 reflection tap key 包含 stable `sourceKey`，每只扬声器独立求解并保留 top 5，全局上限 64；late bus order-2/3/4 路径按每只扬声器求解，VBAP 使用全部物理扬声器 + 实际 5.1 声道映射，不再只取每声道 anchor。A3 premium 路径占用反射池的一部分：一阶最多 64 + 最强 16 条二阶 + 8 条三阶；其余槽位当前空闲，保留给后续扩展。所有反射 source 与直达 source 同时启动、每块各喂一个 buffer（空闲槽喂静音），保持媒体时钟对齐；**65536-frame** 原始声道历史环提供几何反射延迟，每阶上限按房间对角线动态计算：`min(1.30 s, (order + 1) · roomDiagonal / 343, historySafe)`，超出上限的路径直接丢弃。`historySafe = min((65536 - 2048) / 48000, 65536 / 48000) ≈ 1.323 s`；48 m 立方房间的 order-1/2/3/4 上限约为 485/727/970/1212 ms。延迟变化 150 ms 平滑，tap 出现/消失 30 ms 采样淡变，每个 per-tap 反射仍使用 4096-tap 全频带 FIR（on-axis/指向性 + 空气 + 材质 + 遮挡低通）。
+- **晚期反射 source 池（A3 几何总线，默认关闭）**：仅当 `lateReverb` 启用时，每接收器创建 6 个 mono source/buffer，与直达/反射 source 同时启动、每块各喂一个 buffer；禁用时停止并释放 source/buffer，`queueBlock` 跳过 late send 和 bus 处理。`LateReflectionBus` 按 VBAP 权重生成 6 个 5.1 wet 输出（LFE 作为源声道参与路径，LFE 扬声器不作为 VBAP 输出目标；LFE wet 输出有效）；各 source 位置跟随当前渲染的扬声器位置。wet source 的 `AL_GAIN` 承担 receiver master × `lateTrimDb`（衰减/静音对已排队 wet block 立即生效），`AL_MAX_GAIN` 提高到 64 后正 trim 也直接由 `AL_GAIN` 承担，不再预乘到样本。FDN 及其 RT60/pre-delay/高通/阻尼状态已删除。
+- **输出电平与限幅（2026-11-12）**：主音量 `-60..+18 dBFS`、扬声器 Level `-60..+12 dB`；所有 source 设置 `AL_MAX_GAIN = 64`，否则 OpenAL 默认 1.0 会钳掉正增益。`OutputLimiter` 在音频线程用 4 × 2048 frame 队列（≈171 ms 前瞻）统计 direct/reflection/wet 每个 source 的 block 峰值，按当前 master/channel/reflection/wet 增益求每声道最坏混合峰值 `Σ peak_i × gain_i`（三角不等式给出的硬上界），再取一个全局 `limiterGain` 乘到所有 `AL_GAIN`。**同一输出声道接多只扬声器时，该声道的预测峰值必须累加所有映射到该声道的 direct source，而不是只算一只。** ceiling **-0.3 dBFS**，瞬时 attack、400 ms release，下限 -60 dB。wet 正 trim 也直接由 `AL_GAIN` 承担，不再预乘到样本，避免 16-bit 路径在限幅前削波。它限制的是 OpenAL 最终混音前的数字信号，不是听者位置的 SPL；16-bit 上传路径仍会先把单 source 钳到 [-1,1]，限幅器无法恢复该级削波；HRTF/声像增益若总和大于 1，硬上界会偏乐观。接收器状态行/Signal 页显示 `Limiter -x.x dB`。
 
 ### 4.2.1 定位模型评审：相对源 vs 世界坐标源（暂不迁移）
 
@@ -161,14 +158,14 @@
 
 - 六个 source 均为 `AL_SOURCE_RELATIVE = AL_TRUE`，OpenAL listener 固定在原点、朝向 -Z。
 - `AvReceiverPlayback` 每个 client tick 取玩家眼睛位置和水平朝向，把扬声器世界坐标转成 listener space：
-  `x = dot(relative, right)`、`y = relative.y`、`z = -dot(relative, forward)`；未配对声道回退到 `DEFAULT_POSITIONS`。
+  `x = dot(relative, right)`、`y = relative.y`、`z = -dot(relative, forward)`；缺少物理扬声器的声道不生成 source。
 - 因此方位随玩家姿态更新；A2 之前距离衰减也由 OpenAL 按该相对位置计算，A2 起改为 Java 从平滑后的渲染半径计算。音频线程只读 float 快照，不访问 Minecraft 世界。
 - 这是 M3/M4 为了让音频线程与客户端世界状态解耦而选的结构，不是性能妥协。
 
 **世界坐标模型**
 
 - `AL_SOURCE_RELATIVE = AL_FALSE`；source 保存扬声器世界坐标（`speakerCenter`），listener 每个 tick 更新为玩家眼睛位置与 yaw-only 朝向。
-- 未配对声道用 listener pose + 默认偏移生成世界坐标，保持虚拟 5.1 仍围绕听者。
+- 缺少物理扬声器的声道不生成 source，也不使用 listener pose + 默认偏移生成虚拟声道。
 - 理论上与当前模型等价：Minecraft 与 OpenAL 都是右手、Y-up，可以直接使用世界坐标；listener `at` = 水平 look，`up` = (0,1,0)，source = 世界坐标。变换后的方位应与当前 `toListenerSpace` 完全一致；距离在 Java 侧应由同一世界距离得到。
 
 **主要风险**
@@ -177,7 +174,7 @@
 2. **上下文线程**：OpenAL 调用只能在 `cinema-audio` 线程；listener/source 更新必须通过不可变快照，不能在 client tick 直接调用 `alListener*`/`alSource*`。
 3. **原子性**：当前 `channelPositions`、`channelGains`、`layoutVersion` 是分开的 volatile 字段；加入 listener 后更容易出现“新位置 + 旧增益/listener”的撕裂。迁移时应改成单个 immutable `LayoutSnapshot`（listener + 六路位置 + 六路增益 + 相对/绝对标志）。
 4. **距离衰减（A2 已取代）**：A2 之前依赖 `AL_INVERSE_DISTANCE_CLAMPED` 默认参数；现在 context 使用 `AL_NONE`，Java 用平滑后的渲染半径计算 `1/max(r,1)`，OpenAL 不再产生距离衰减。世界坐标迁移只需保持同一世界距离作为 Java 输入，并继续把 listener 与 source 放在同一快照更新。
-5. **回退布局**：未配对声道若继续用 relative，会变成混合模型；建议全部 absolute，并用 listener yaw 旋转默认偏移。扬声器区块卸载时也要原子切换。
+5. **缺少声道**：未配对声道不生成 source；不要为绝对坐标模型重新引入默认虚拟位置。扬声器区块卸载时也要原子切换。
 6. **Doppler/HRTF**：当前没有设置 listener/source velocity，不产生 Doppler；迁移后不要误设 velocity。HRTF 下需 A/B 验证 listener 朝向。
 7. **多接收器**：每个 OpenAL context 有自己的 listener，必须全部更新；player 不存在时使用接收器中心 +1.5 的 fallback。
 
@@ -191,7 +188,7 @@
 1. 纯数学：对随机 listener 位置/yaw 和扬声器世界坐标，比较 `toListenerSpace` 与“世界坐标 + listener 变换”的 x/y/z；覆盖前/后/左/右、yaw=0/90/180/270。
 2. 固定姿态：同一影院、同一听者位置，逐声道 Ping，比较相对源与世界坐标源的声像/响度。
 3. 移动与转头：沿前后左右移动、连续转头，确认没有左右翻转、Z 轴反向、俯仰导致的垂直漂移。
-4. 回退布局：拔掉部分扬声器/让区块卸载，确认未配对声道仍围绕听者，且切换时无爆音。
+4. 缺少声道：拔掉部分扬声器/让区块卸载，确认缺失声道不创建 source、其余声道仍围绕听者，且切换时无爆音。
 5. 多接收器/HRTF：两个接收器同时播放；开启/关闭 HRTF，确认 listener 姿态和距离衰减一致。
 6. 线程：确认 client tick 只写快照，所有 `alListener*`/`alSource*` 都在 `cinema-audio` 线程执行。
 
@@ -206,6 +203,10 @@
 
 当前声学层仍假设 5.1。未来 mono/stereo/2.1/3.1/5.1/7.1/5.1.2/5.1.4/7.1.2/7.1.4 需要把早期反射、遮挡和指向性计算从固定 6 声道泛化到布局声道；天空/吸顶音响是吸顶式、向下发声的扬声器，声学层按天花板安装位置/朝向处理。路由/布局规划见 [CHANNEL-LAYOUTS.md](CHANNEL-LAYOUTS.md)；声学原型仍在 `acoustic-simulation` 分支开发。
 
+> **Source 预算（2026-11-12）**：每引擎最多 **128** 个 OpenAL source。**每个声道可以接多只扬声器**，因此 direct source 按“已连接的真实扬声器”计数，而不是按声道数计数：先为每只真实扬声器保留 direct source，再为每个输出声道保留 lazy wet slot，剩余预算给反射池，并按“一阶反射 → 二阶 premium → 三阶 premium”优先级动态管理。当前 5.1 每声道一只时为 6 direct + 116 reflection + 6 lazy wet = 128；12 只扬声器时为 12 direct + 110 reflection + 6 wet。不要直接按旧 56 反射池或固定 6 direct 扩展。限幅器的峰值统计按实际 source 池遍历，并按 `directSourceChannels[]` 把同一输出声道的多只 direct source 峰值相加，不依赖固定 56/6。
+>
+> **运行时上限（2026-11-12 核对）**：LWJGL 3.3.3 自带 OpenAL Soft **1.23.1**；默认每 context **256** 个 source（255 mono + 1 stereo），由 `ALC_MONO_SOURCES` / `ALC_STEREO_SOURCES` 报告，`alsoft.ini [general] sources` 可覆盖（最小 16）。128 source 预算有约 2× 余量；两个独立 context 各创建 128 个 source 已实测成功。`/cinema_acoustics` 输出 `openal sourceLimit`，低于 128 时记录警告并按 `limit - direct - 6 wet` 缩小反射池。
+
 ## 5. 目标音频图
 
 ```text
@@ -219,13 +220,14 @@ FFmpeg 5.1 PCM（48 kHz, FL/FR/FC/LFE/BL/BR）
         ├─► 一阶早期反射：镜像源 + 材质吸收 + 扬声器指向性
         │        └─ 每个 tap 一个独立 OpenAL source（镜像源位置）
         │
-        └─► 晚期混响 send：20 Hz DC 高通 → 64-line FDN（RT60 low/mid/high + pre-delay）
-                 └─ 6 路 Hadamard wet（含 LFE）
+        └─► 晚期反射 send：原始 5.1 × source power
+                 └─ 几何 order-2/3/4 路径 → LateReflectionBus → VBAP
+                 └─ 6 路 wet（含 LFE；LFE 扬声器不作为普通输出目标）
         │
         ▼
-六个 mono OpenAL source（M4 实体扬声器位置；未配对声道回退虚拟 5.1）
-+ 最多 24 个活动反射 source（镜像源位置，固定 32 source 池，独立于直达声）
-+ 启用时 +6 个晚期混响 source（每声道一个，随扬声器位置；默认关闭）
+direct sources（仅已连接物理扬声器；缺少的声道不创建）
++ 最多 64 个活动反射 source（镜像源位置，独立于直达声）
++ 启用时 +6 个晚期反射 source（每声道一个，随扬声器位置；默认关闭）
         │
         ▼
 OpenAL device / Minecraft 音频输出
@@ -234,7 +236,7 @@ OpenAL device / Minecraft 音频输出
 原则：
 
 - **干声路径不被延迟**；反射是额外的延迟抽头，不引入 lookahead。
-- 早期反射在 Java 侧按 5.1 声道混合；晚期混响由 Java FDN 生成，不经过 EFX。
+- 早期反射在 Java 侧按 5.1 声道混合；晚期场由 Java 几何 `LateReflectionBus` 生成，不经过 EFX。
 - 声学参数更新与音频渲染解耦；音频线程只消费不可变快照。
 
 ## 6. 数据模型
@@ -311,7 +313,7 @@ RoomAcousticSnapshot
 
 - 从听者/座位向 ±X、±Y、±Z 六个方向做有界 raycast（例如 48 m），取最近碰撞面作为六个平面。
 - 验证六个平面是否形成包含听者的近似凸盒；不满足时：
-  - 仍可用包围盒做粗略 late reverb；
+  - 仍可用包围盒做粗略晚期场；
   - 关闭一阶早期反射，或使用低电平 fallback。
 - 扫到的方块决定材质；可在命中点附近采样多个方块，避免单点误差。
 - 屏幕/幕墙、地板、天花板、侧墙、后墙分别记录；屏幕可作为低吸收/中等吸收材质处理，避免前墙强反射造成梳状滤波。
@@ -336,7 +338,7 @@ RT60_Fitzroy = 0.161 · V / S² · Σ_i S_i / (-ln(1 - α_i))
 
 其中 `S_i` 是垂直于 i 轴的两面边界总面积，`S = S_x + S_y + S_z`，`α_i` 是该轴对边界的面积加权平均吸声系数。均匀吸收时退化为 Eyring `0.161 V / (-S ln(1-α))`；某一轴对完全无吸收（`α_i = 0`）时该轴对轴向声场不衰减，RT60 为无穷。Sabine 不采用。
 
-- RT60 不设上下限；Fitzroy 在非均匀吸收/非扩散房间中给出比 Eyring 更长的尾音，A3 映射到 FDN 时再 clamp 到 `[0.15,5.0] s`。
+- RT60 不设上下限；Fitzroy 在非均匀吸收/非扩散房间中给出比 Eyring 更长的尾音。RT60 目前只用于诊断和 FIR 的 `f_s`，不再映射到 FDN。
 - 材质吸收是近似值，必须提供调试/覆盖入口。
 
 **A1 初始实现（2026-11-06）**
@@ -345,8 +347,8 @@ RT60_Fitzroy = 0.161 · V / S² · Σ_i S_i / (-ln(1 - α_i))
 - 房间检测：从玩家眼睛沿 ±X/±Y/±Z 各发 **25 条射线扇形**（5×5，约 ±9°），共 150 条；每条射线最多反射 **2 次**，取同轴向、同命中面的中位平面，避免墙角/门洞单条射线失败。跳过扬声器、座椅、投影仪、接收器，屏幕作为墙面；不再因“墙面太近”直接失败，仅保留任一维 <1.5 m 的失败条件。
 - 墙面材质：命中点周围 **9×9（半径 4）** 方块采样，但严格裁剪到该平面的 u/v 边界；跳过空气/设备，按样本数平均。`samples` 是方块数量，不是 m²；完整方块平面上不会超过面积（边界取整除外）。屏幕单独映射。
 - 凸盒验证：监听者必须在六面内；盒内 1/3、2/3 的 2×2×2 点采样，仅在 **8/8 全为固体** 时判为不可信（避免墙角/家具误判）。
-- 失败 fallback：保留所有已命中的**真实平面**；某轴只有一个面命中时，以该真实面为基准向缺失侧延伸 **16 m**；某轴两面都缺失时，该轴使用听者 ±8 m。缺失面用默认材质，`valid=false`，仍保留真实面的材质/面积与 RT60 供 late reverb 使用。
-- RT60：使用 **Fitzroy** `0.161 V / S² · Σ S_i / (-ln(1-α_i))`，按 x/y/z 三个轴对的面积与平均吸收计算；**不设上下限**；α_i=0 时该轴对输出无穷，A3 映射到 FDN 时再 clamp 到 `[0.15,5.0] s`。均匀吸收时与 Eyring 一致；Sabine 不采用。
+- 失败 fallback：保留所有已命中的**真实平面**；某轴只有一个面命中时，以该真实面为基准向缺失侧延伸 **16 m**；某轴两面都缺失时，该轴使用听者 ±8 m。缺失面用默认材质，`valid=false`，仍保留真实面的材质/面积与 RT60 供诊断和 FIR 使用。
+- RT60：使用 **Fitzroy** `0.161 V / S² · Σ S_i / (-ln(1-α_i))`，按 x/y/z 三个轴对的面积与平均吸收计算；**不设上下限**；α_i=0 时该轴对输出无穷。RT60 目前只用于诊断和 FIR 的 `f_s`，不再映射到 FDN。均匀吸收时与 Eyring 一致；Sabine 不采用。
 - 材质表（`AcousticMaterials`，low/mid/high 分别取 125/250、500/1k、2k/4k 的平均）：
   - screen `0.05/0.10/0.15`，scattering `0.10`（声学透声幕布估计）
   - fabric（羊毛/窗帘，14 oz 褶皱帘）`0.19/0.62/0.65`，`0.35`
@@ -374,12 +376,12 @@ RT60_Fitzroy = 0.161 · V / S² · Σ_i S_i / (-ln(1 - α_i))
 
 **A2 当前实现（2026-11-08）**
 
-- **距离衰减只做一次。** `CinemaAudioEngine` 在音频线程按 30 ms 平滑后的渲染半径 `r` 计算自由场振幅 `1 / max(r, 1 m)`，乘入 source gain；OpenAL 距离模型为 `AL_NONE`，source 位置只用于声像/HRTF，不再产生距离衰减。真实扬声器和未配对虚拟 5.1 声道使用同一规则。
+- **距离衰减只做一次。** `CinemaAudioEngine` 在音频线程按 30 ms 平滑后的渲染半径 `r` 计算自由场振幅 `1 / max(r, 1 m)`，乘入 source gain；OpenAL 距离模型为 `AL_NONE`，source 位置只用于声像/HRTF，不再产生距离衰减。只有真实扬声器 source；缺少物理扬声器的声道不创建 source。
 - **单个 4096-tap 直达 FIR**：目标幅度 = `onAxisEqGainDb(f) + gainDb(h, v, f)`（相对 1 kHz）− ISO 9613-1 空气吸收 + occlusion Butterworth 低通；on-axis、指向性、空气和遮挡低通全部在这一个 FIR 中，不再有独立的环境 FIR。宽带 `1/r` 和遮挡宽带衰减不进 FIR。
 - **空气吸收**：ISO 9613-1:1993 `α(f,T,RH,p)`，路径取 `x = max(0, r - 1 m)`，即 **1 m、20 °C、50 % RH、101.325 kPa 为 0 dB 参考点**；1 m 及以内不产生空气吸收。开关/温度/湿度在 Mod Menu。实现值已与参考实现核对到约 `1e-7 dB/m`。
 - **指向性**：见 7.4。直达声按“扬声器 → 听者”的实际几何查 H/V 数据，不使用固定皇帝位；`overallGain` = on-axis + H/V 在参考频率的电平（普通扬声器 1 kHz；低音炮为手动 band 的 `sqrt(low*high)`，无 band 时回退 `2*lowHz`），乘入 source gain；FIR 只保留相对该参考频率的形状。
 - **遮挡**：见 7.6。宽带衰减乘入 source gain（30 ms 平滑），低通截止/阶数并入同一个直达 FIR；屏幕和 mod 家具对直达声透明。
-- **未配对声道 fallback**：没有物理扬声器位置/朝向/型号时，仍用虚拟 5.1 位置计算距离和空气吸收，但不做遮挡扫描；诊断中标注 fallback。
+- **缺少声道**：没有物理扬声器位置/朝向/型号时不创建该 direct source，不做距离/空气/遮挡虚拟 fallback。
 - **source 增益**：`G_direct = BASE_GAIN · receiverVolume · speakerGain · overallGain(θ_listener,1kHz) · (1/max(r,1)) · 10^(-occlusionDb/20)`。频率形状只有一个 4096-tap FIR；`FirProcessor` 使用 overlap-add 和 1024-frame 交叉淡化，不做中间 16-bit 量化。
 - **直达/反射共用构造器**：`CommonAcousticFirProfile` / `CommonAcousticFirDesigner` 统一计算 on-axis、H/V、空气、材质、遮挡和 Schroeder 目标；直达声 `taps=4096`，反射声 `taps=4096`。
 
@@ -779,11 +781,11 @@ for t in data:
 
 ### 7.5 晚期混响
 
-**A3 实现：Java 64-line FDN（全频带晚期场）**
+**当前实现：几何晚期总线（2026-11-12）**
 
-> **当前状态（2026-11-08）**：听感验收不通过——高频“沙沙”、低频不足、整体音色不平衡；当前方案基本失败。已执行方案 B：默认关闭晚期混响（`DEFAULT_LATE_REVERB=false`，配置版本 2 会把旧配置迁移为 false），启用时才创建 wet source，禁用时释放并跳过 FDN；默认路径只保留直达 + 一阶反射。以下为实现记录，不再视为默认启用方案；A3 代码保留为实验路径，低频模态/SBIR 归 A5。
+> **FDN 已删除。** 2026-11-08 的 64-line FDN 听感验收不通过（高频“沙沙”、低频不足、整体音色不平衡）；几何 `LateReflectionBus` 已经接管晚期场，因此 FDN DSP、RT60/pre-delay/DC 高通/阻尼、Hadamard 去相关和 `LateReverb*` 类已全部移除。默认仍为 `DEFAULT_LATE_REVERB=false`，配置版本 2 会把旧配置迁移为 false。晚期场现在只由几何路径生成；低频模态/SBIR 归 A5。
 
-**A3 重做：order-2 geometric late bus 已接入（2026-11-08）**：`ImageSourcePathSolver` / `ReflectionPathTap` 用现有 `MirrorPlaneDiscovery`、`ReflectionProbe.wallAt` 和分段遮挡递归生成高阶镜面路径。真实房间（`/cinema_acoustics paths`）：候选 planes 60–69/扬声器；2 阶 105 条，3 阶累计 418 条（visits 391k，全组约 34–42 ms），最大延迟 140 ms，最强 0.108；4/5 阶在 200k visit cap 下 truncated，暂不追。`LateReflectionBus`（6 声道、512 tap cap、每 tap delay/gain + 一阶低通；当时 history 为 16384、延迟上限 160 ms，现已被 2026-11-09 房间感知预算取代）已接入 `CinemaAudioEngine`，复用 lazy wet source；`AvReceiverPlayback` 在 5 Hz 反射更新里发布 order-2 taps。`lateReverb` 开关现在驱动几何 bus，FDN `LateReverb` 保留但 inactive；默认关闭；30 ms fade-in、seek/reset 后重新应用 taps。order-4 采用两阶段动态调度：动态稳态按 listener 移动 EMA 取 150–600 ms；phase fast 也使用可恢复 `ImageSourcePathSolver.Session`，每个 client tick 只跑 4 ms，按扬声器逐步完成 order-3；phase deep 同样每 tick 4 ms 完成 order-4（默认 visit cap 200k、path cap 512）。两阶段都不再按 200 ms 批量求解。移动 >0.15 m 中止。**premium per-tap**：一阶 24 + 最强 16 条二阶 + 8 条三阶走完整 4096-tap FIR；其余路径进 bus 并从 bus 剔除；反射池 56，bus maxTaps 512（raw history 与延迟上限见 2026-11-09 房间感知预算）。79 项测试通过。低频模态仍走 A5。
+**A3 重做：order-2/3/4 geometric late bus（2026-11-08 起）**：`ImageSourcePathSolver` / `ReflectionPathTap` 用现有 `MirrorPlaneDiscovery`、`ReflectionProbe.wallAt` 和分段遮挡递归生成高阶镜面路径。真实房间（`/cinema_acoustics paths`）：候选 planes 60–69/扬声器；2 阶 105 条，3 阶累计 418 条（visits 391k，全组约 34–42 ms），最大延迟 140 ms，最强 0.108；4/5 阶在 200k visit cap 下 truncated，暂不追。`LateReflectionBus`（6 声道、512 tap cap、每 tap delay/gain + 一阶低通；history 与延迟上限见 2026-11-09 房间感知预算）已接入 `CinemaAudioEngine`，复用 lazy wet source；`AvReceiverPlayback` 在 5 Hz 反射更新里发布 taps。`lateReverb` 开关驱动几何 bus；默认关闭；30 ms fade-in、seek/reset 后重新应用 taps。order-4 采用两阶段动态调度：动态稳态按 listener 移动 EMA 取 150–600 ms；phase fast 也使用可恢复 `ImageSourcePathSolver.Session`，每个 client tick 只跑 4 ms，按扬声器逐步完成 order-3；phase deep 同样每 tick 4 ms 完成 order-4（默认 visit cap 200k、path cap 512）。两阶段都不再按 200 ms 批量求解。移动 >0.15 m 中止。**premium per-tap**：一阶 24 + 最强 16 条二阶 + 8 条三阶走完整 4096-tap FIR；其余路径进 bus 并从 bus 剔除；反射池当时为 56，当前 128 source 预算下为 116，bus maxTaps 512。低频模态仍走 A5。
 
 **2026-11-09 修正与最终架构**：LFE 已接入全部几何路径（一阶/二阶/三阶/四阶）和 premium/lazy 分类，6 路 wet source 的 LFE 输出不再为空；LFE 不强制低通、不单独削弱。最终架构：
 
@@ -794,7 +796,7 @@ for t in data:
 - LFE 作为源声道参与完整路径与 VBAP；LFE 扬声器不作为普通 VBAP 输出目标，低频发送由 A5 单独处理。
 - Premium/lazy 划分依据路径增益、延迟、方向稳定性和资源预算。
 
-**2026-11-09 A3-R3 lazy VBAP 已实现**：`Vbap.java` 实现精确 3D VBAP → 水平 VBAP → 最近扬声器 → 扩散 fallback，输出排除 LFE，权重能量归一化。`LateReflectionBus.Tap` 保存输入声道、delay、gain、damping、到达方向和输出声道/权重数组，bus 将每个 tap 累加到多个输出声道；`AvReceiverPlayback` 用 **listener → 最后反射点** 的方向（经 `toListenerSpace`）调用 VBAP，未配对声道不作为输出目标，无物理布局时回退到输入声道。LFE 作为源声道参与完整路径与 VBAP；LFE 扬声器不作为普通 VBAP 输出目标，低频发送由 A5 单独处理。95 项测试通过；待游戏内听感验收。
+**2026-11-09 A3-R3 lazy VBAP 已实现**：`Vbap.java` 实现精确 3D VBAP → 水平 VBAP → 最近扬声器 → 扩散 fallback，输出排除 LFE，权重能量归一化。`LateReflectionBus.Tap` 保存输入声道、delay、gain、damping、到达方向和输出声道/权重数组，bus 将每个 tap 累加到多个输出声道；`AvReceiverPlayback` 用 **listener → 最后反射点** 的方向（经 `toListenerSpace`）调用 VBAP，未配对声道不作为输出目标，无物理布局时回退到输入声道。LFE 作为源声道参与完整路径与 VBAP；LFE 扬声器不作为普通 VBAP 输出目标，低频发送由 A5 单独处理。**L2a 起 VBAP 输入为全部物理扬声器 + 各自 5.1 声道映射**：同一 5.1 声道可有多只物理扬声器，VBAP 权重先按扬声器计算，再在 `LateReflectionBus.Tap` 中合并到实际输出声道。95 项测试通过；待游戏内听感验收。
 
 **2026-11-09 房间感知几何延迟预算（方案 A）**：固定延迟上限在大型房间会截断本来有效的 order-3/4 路径。现在由 `ReflectionDelayBudget` 统一给出逐阶上限：
 
@@ -813,88 +815,71 @@ historySafe     = min((65536 - 2048) / 48000,
 - premium per-tap 的 order-2/3 仍限制在 **150 ms** 内并使用完整 4096-tap FIR；更长的 order-2/3/4 路径进入 `LateReflectionBus`，只有 delay/gain/damping/VBAP，没有 per-tap FIR。
 - 诊断：`/cinema_acoustics` 输出 order-1/2/3/4 上限与 `historySafe`；`paths` 输出当前阶上限、`dropped` 和总计 `delayDropped`；接收器日志输出房间尺寸、`maxDelay`、`order2Dropped`，fast/deep 日志输出各自 `maxDelay` 与 `dropped`。
 
-A0 已证明 OpenAL Soft 的 EAXReverb late tail 可用，但首版 A3 仍选择自研
-FDN，原因是：需要可控的 5.1 去相关输出，并且不想让湿声布局依赖 EFX aux
-send 的版本/设备行为。EAXReverb 保留为后续 fallback；当前运行时不创建
-effect/aux slot。
+**待实现 A3-N1：噪波阈值 / 自适应 late bus 深度**：当前 fast/deep 固定到 order-3/4 结束。计划按每阶新增路径的能量继续 order-5/6…，直到低于阈值或触达安全上限：
 
-- **频段边界**：发送信号只经过 **20 Hz 的 DC/次声高通**；`f_s` 以下的内容
-  仍进入晚期场，不再按 Schroeder 频率切掉。低频房间模态/SBIR 仍由 A5 单独
-  处理，但不再是晚期混响的硬边界。LFE 也作为普通 unity-weight source 送入
-  FDN，并拥有自己的 decorrelated wet 输出。
-- **结构**：64 条延迟线（约 20–150 ms），前置 4 级 Schroeder allpass 扩散
-  （5.1/7.7/11.3/15.7 ms，增益 0.45），每条线有 ±0.06 ms、约 0.03–0.19 Hz
-  的轻量慢速延迟调制。64 条线本身已足够密，调制只用于打散静态模态；
-  更深的调制会让全通插值产生可闻的高频“沙沙”边带。Householder 正交反馈
-  矩阵 `M = I - (2/N)·11ᵀ`，输入注入使用交替符号，避免只激励公共模式。
-- **衰减（低/中/高）**：每条线中频反馈
-  `g_i = 10^(-3·L_i/RT60_mid)`，并钳位到 `<0.9995`。低频用 200 Hz 一阶
-  low-shelf 把环路增益调到 `10^(-3·L_i/RT60_low)`（相对中频比例钳位
-  0.25–8）；高频用一阶低通，其极点按 `RT60_high` 在 4 kHz 的环路增益求解。
-  `RT60_high >= RT60_mid` 时不额外衰减，避免高频被错误提升。三段都来自
-  Fitzroy 的 low/mid/high RT60。
-- **Pre-delay**：由 `4V/S / 343` 估算平均自由程，钳位 **20–50 ms**。它与
-  几何反射的动态延迟线（逐阶上限最高 1.30 s，见 7.5）独立，不改变媒体时钟。
-- **输出整形**：Hadamard 求和取**只做过高频阻尼的线状态**，不是阻尼前的
-  原始延迟输出，也不是完整反馈状态。短 RT60 时首轮直达注入占主导，若取
-  原始输出会把未衰减的宽带 send 直接叠加到尾音上，形成明显高频“沙沙”。
-  输出路径的低频架只允许提升、不再跟随反馈做衰减：反馈仍按物理
-  `RT60_low` 控制低频衰减，输出侧再叠加一个 **120 Hz、+3 dB** 的固定
-  low-shelf，保证木质/玻璃等低吸收房间的低频湿声不会消失。最后经过
-  7 kHz 二阶 Butterworth 低通，进一步压掉全通插值调制边带和残余高频；
-  1 kHz 中频电平基本不变。
-- **6 路去相关**：64 条线输出乘以 64 点 Hadamard 矩阵的 6 行，得到
-  6 个两两正交的 wet 声道（含 LFE）。每接收器固定 6 个额外 OpenAL
-  source/buffer，与直达/反射 source 同一 block、同一 device-clock 启动。
-- **发送权重**：使用 **unity source-power weights**
-  `{FL,FR,FC,LFE,BL,BR} = {1,1,1,1,1,1}`，不是归一化 5.1 下混。对不相关声道，
-  `Σw²P = ΣP`，这样 FDN 输入才与房间常数目标一致；归一化下混会让单声道/
-  中置/环绕的湿声电平随活跃声道数变化。LFE 也参与 send。高度相关的 6 个声道
-  会让单声道 send 暂时偏热；这是当前 mono FDN 输入的已知近似。
+```text
+orderEnergyDb(n) = 10 · log10(Σ gain_i²)   // 可再按频带/材质加权
+continue while orderEnergyDb(n) > lateDepthFloorDb
+```
+
+- 默认建议用**相对阈值** `lateDepthFloorDb ≈ -40 dB`（相对当前 late bus 总能量，音量无关）；如果已知接收器音量/房间底噪，可增加可选绝对阈值 `lateNoiseFloorDb`（dBFS）。
+- 阈值必须在 `lateTrimDb`、master gain、channel gain 之后的数字域定义，否则调音量会改变停止阶次。
+- 安全上限：`maxLateOrder`（建议 6）、每 tick 4 ms 预算、visit/path/tap cap；移动或房间变化后从 order-2 重新开始增量。
+- `/cinema_acoustics` 和日志应输出每阶 `orderEnergyDb`、停止原因（threshold/maxOrder/cap）与实际求解耗时。
+
+**待实现 A3-S1：散射/扩散**：`AcousticMaterial.scattering` 已存在，但当前所有求解器和 FIR 都未使用它。建议先做能量分流的低成本版本：
+
+```text
+specular pressure coefficient *= sqrt(1 - scattering)
+scattered energy            → late bus diffuse send
+```
+
+- `scattering = 0` 时完全保持现有镜面路径；`scattering = 1` 时去除镜面 tap，全部进入扩散 late bus。
+- 第一版保持单值 scattering；低/中/高频散射需要扩展 `AcousticMaterial` 和材质表。
+- 可选第二阶段在反射点按 cosine-weighted hemisphere 采样少量 diffuse ray（固定低差异序列、时间平滑、CPU/路径预算），生成真正的非镜面早期 tap；否则只把散射能量交给 `LateReflectionBus`。
+- 验收重点：镜面/散射能量不超过入射能量、`scattering=0` 回退一致、fabric/carpet/vegetation 与 glass/metal/water 的 A/B 差异，以及多扬声器下的 CPU。
+
+**已删除的 FDN 路径**：2026-11-08 的 64-line FDN（输入扩散、慢速调制、RT60 low/mid/high 衰减、DC 高通、pre-delay、Hadamard 去相关、mid-band 归一化）已全部移除。其听感验收不通过，且几何 `LateReflectionBus` 已经提供晚期场；不再保留 inactive 的 FDN 代码、RT60 映射或相关测试。EAXReverb 仅作为未来可选 fallback 记录，当前运行时不创建 effect/aux slot。
+
+**当前晚期场的发送与校准**：
+
 - **发送电平**：发送取自**直达 FIR 之前的原始 5.1 声道**，避免把直达路径的
-  空气吸收、听者角度指向性和遮挡低通带入扩散场。每个声道的发送增益为
+  空气吸收、听者角度指向性和遮挡低通带入晚期场。每个声道的发送增益为
   `onAxisSourceGain × √(∫g(Ω)²dΩ) × occlusionGain`；`∫g²dΩ` 由 Spinorama
   H/V 数据在 1 kHz 做功率积分（omni 为 `4π`，cardioid 更小）。因此远处
-  扬声器的直达声会变弱，但它对扩散场的功率贡献不会按 `1/r` 被错误压低。
-  直达 FIR 仍只作用于干声。
+  扬声器的直达声会变弱，但它对晚期场的功率贡献不会按 `1/r` 被错误压低。
+  直达 FIR 仍只作用于干声。LFE 与其他 5 声道一样以 unity 权重参与。
 - **物理目标**：令 `S` 为有效表面积、`α` 为面积加权中频吸声，
   `R = S·α/(1-α)`，`r_c = √(R/16π)`。对每个 source
   `P_k = onAxis_k²·∫g_k²dΩ`，`D_k = (onAxis_k·g_k(Ω_L)/r_k)²`，
   目标 wet/direct 振幅比为
   `T = √(4·ΣP_k / (R·ΣD_k))`。`/cinema_acoustics` 显示 `R`、`r_c`、
-  `target`、`sourceGain`、trim 和 effective gain。
-- **FDN 归一化**：FDN 输出按**中频环路增益**归一化；对白噪声输入，6 个
-  wet 声道的总 RMS 约等于 send RMS，`RT60_mid=RT60_high` 时跨
-  `RT60=0.3…5 s` 保持稳定（`LateReverbTest`）。高频阻尼不被归一化抵消：
-  `RT60_high < RT60_mid` 时总 wet 能量会下降，符合高频吸收的物理趋势。
-  因此 source gain 可以按房间常数计算，而不是补偿 FDN 自身电平。
-- **湿声电平**：FDN 输入是 source power，归一化后的扩散场增益为
-  `sourceGainDb = 20·log10(2/√R)`。wet source 的 `AL_GAIN` 承担
-  `master × lateTrimDb`，因此 `lateTrimDb`（默认 **0 dB**）和音量/静音
-  对已经排队的 wet block 也能在下一个 mixer 更新生效，不再等待
-  128–171 ms 的 sample queue。由于常规 OpenAL 实现把 `AL_GAIN` 钳在
-  1.0，正 trim 超过该上限的部分（最多 +6 dB）才预乘到新生成的样本；
-  衰减和静音不经过这条较慢的路径。旧的绝对 `lateGainDb` 配置键
-  会被忽略，改用 `lateTrimDb`。
+  `target`、`sourceGain`、trim 和 effective gain。`target` 仅用于诊断。
+- **湿声电平**：`LateReflectionTarget` 保留
+  `sourceGainDb = 20·log10(2/√R)`，使删除 FDN 不改变几何 late bus 的校准。
+  wet source 的 `AL_GAIN` 承担 `master × lateTrimDb`，因此 `lateTrimDb`
+  （默认 **0 dB**）和音量/静音对已经排队的 wet block 也能在下一个 mixer
+  更新生效，不再等待 128–171 ms 的 sample queue。所有 source 的
+  `AL_MAX_GAIN` 已提高到 64，正 trim 也直接由 `AL_GAIN` 承担，不再预乘到
+  样本，因此 16-bit 回退路径不会在限幅器之前先把 wet 样本钳到 [-1,1]。
+  旧的绝对 `lateGainDb` 配置键会被忽略，改用 `lateTrimDb`。
 - **参数更新**：`AvReceiverPlayback` 约 20 Hz 从 `AcousticRoom` 和实际
-  扬声器布局计算 `LateReverbSettings`（RT60 clamp `[0.15,5.0] s`、20 Hz
-  DC 高通、pre-delay、`R`、`r_c`、source power）；音频线程在 block 边界
-  以 80 ms 常数平滑 RT60/截止，pre-delay 保持 150 ms 平滑。seek、reset、
-  device rebuild 时清空延迟线和滤波器状态。
-- **稳定性**：反馈增益上限、Householder 正交矩阵、低通极点范围和一阶
-  高通共同保证无自激；`LateReverbTest` 覆盖长时连续输入、脉冲衰减、
-  6 个 wet 声道（含 LFE）的去相关、mid-band wet RMS 归一化和低频 RT60 差异。
-  `LateReverbTargetTest` 覆盖单源临界距离、离轴指向性、source power 和
-  无效输入回退；`SpeakerDataProfileTest` 覆盖 omni/cardioid 功率积分。
-- **A0 记录**：`/cinema_efx_spike` 仍保留为 EFX 能力探针。2026-11-06 的
-  OpenAL Soft 结果：EFX/sharedCaps/真实设备临时 context 均为 OK，
-  `ALC_MAX_AUXILIARY_SENDS=2`，5.1 wet 覆盖 5 个非 LFE 声道，HRTF enabled，
-  reset OK，loopback CPU≈0.8%。这些不再作为当前 A3 的运行路径。
+  扬声器布局计算 `LateReflectionTarget` 与 `LateReflectionSettings`；
+  音频线程只交换不可变设置，不重建 source/buffer。seek、reset、device
+  rebuild 时清空 bus 延迟状态。
+- **测试**：`LateReflectionTargetTest` 覆盖单源临界距离、离轴指向性、
+  source power、`sourceGainDb` 和无效输入回退；`LateReflectionBusTest` /
+  `VbapTest` 覆盖几何 bus 与 VBAP。`SpeakerDataProfileTest` 覆盖
+  omni/cardioid 功率积分。
+- **A0 记录**：`/cinema_efx_spike` 仍保留为 EFX 能力探针，但当前 A3 不依赖
+  EFX。2026-11-06 的 OpenAL Soft 结果：EFX/sharedCaps/真实设备临时 context
+  均为 OK，`ALC_MAX_AUXILIARY_SENDS=2`，5.1 wet 覆盖 5 个非 LFE 声道，
+  HRTF enabled，reset OK，loopback CPU≈0.8%。
 
 **原则**
 
 - 不要同时启用 EAXReverb 早期反射和自定义早期反射。
-- LFE 也送入 late reverb；低频管理仍由独立低频管理与 A5 模态处理负责。
+- LFE 也参与晚期场；低频管理仍由独立低频管理与 A5 模态处理负责。
 - 晚期混响是统计尾音，不提供精确方向；早期反射仍由几何镜像源负责。
 - 对白清晰度优先：RT60 过长或 wet 过强会糊；提供“电影/音乐/干燥”预设。
 
@@ -908,7 +893,7 @@ effect/aux slot。
 - 材质表 `AcousticMaterials.occlusionForState()` 给出每米衰减、低通截止和阶数：stone 18 dB/800 Hz/2、wood 8 dB/2500 Hz/2、glass 5 dB/8000 Hz/1、metal 24 dB/600 Hz/2、vegetation 4 dB/5000 Hz/1、fabric 6 dB/3000 Hz/1、porous 10 dB/1500 Hz/1、snow 12 dB/1200 Hz/1、water 2 dB/12000 Hz/1、default 8 dB/2500 Hz/2。这些是游戏调参值，不是 STC/实测隔声量。
 - 总宽带衰减每声道上限 40 dB；低通截止按路径长度加权调和平均，阶数取路径上最高阶。
 - 低通（Butterworth 幅度）与 ISO 空气吸收、on-axis/指向性一起合并进单个 4096-tap 直达 FIR；宽带衰减乘入 source gain，并以 30 ms 时间常数平滑，避免遮挡切换爆音。
-- 未配对 fallback 声道没有物理声源位置，因此不做遮挡扫描，只做距离/空气吸收。
+- 缺少物理扬声器的声道没有 source，因此也没有遮挡扫描或虚拟距离/空气 fallback。
 
 **A2c-R 反射路径遮挡（2026-11-08）**
 
@@ -943,9 +928,9 @@ effect/aux slot。
 - 指向性/空气吸收/遮挡：直达声每声道使用单个 4096-tap 联合 FIR，overlap-add；滤波器切换做 1024-frame（≈21 ms）交叉淡化。FIR 在 daemon worker 异步设计并缓存（角度 5°、距离 0.5 m、温度 0.5 °C、湿度 2 %、压力 0.1 kPa、遮挡 cutoff 100 Hz/order，上限 2048 条，超限按批淘汰），音频线程只换引用。设计目标曲线先按 512 个对数频点预计算，误差用 8192 点 FFT 一次性评估；当前机器实测单次直达联合 FIR 约 **1–2 ms**。直达设计预算 **12 次 burst + 20 次/秒**，移动时可接近 20 Hz 刷新；被限流时沿用上一个 FIR。
 - 反射 source：每接收器固定 32 个额外 source + buffer（24 活动 taps）；source/buffer 预分配并随房间快照复用。A2c-R 每 tap 使用 4096-tap 反射 FIR（角度 5°、路径 0.5 m、温度 0.5 °C、湿度 2 %、气压 0.1 kPa、材质、遮挡 cutoff/order、`f_s` 10 Hz 分桶，上限 2048 条，24 次 burst + 30 次/秒）；没有反射 biquad。多接收器、HRTF、设备切换下要实测 OpenAL source 上限和 CPU。
 - 反射 FIR 与直达声同为 4096 taps；材质/遮挡/空气全部合并进这一个全频带 FIR，避免每 tap 再串 biquad。若实测 CPU 仍偏高，优先降低活动 taps/多接收器并发，而不是增加频带数。
-- 晚期混响：每接收器每 block 只跑一个 64-line FDN（64 次延迟线读写 + 全通扩散 + Householder 混合 + 6 路输出混合），CPU 远低于 32 个反射 tap 的 FIR；主要成本仍是 44 个 OpenAL source 的混音/HRTF。多接收器时需实测 source 上限与 CPU。
+- 晚期场：每接收器每 block 对 `LateReflectionBus` 的 tap 做延迟读取、一阶低通和 VBAP 累加，再写 6 路 wet buffer；不做 per-tap FIR，CPU 远低于 premium 反射 FIR。主要成本仍是 68 个 OpenAL source 的混音/HRTF。多接收器时需实测 source 上限与 CPU。
 - 参数平滑：增益/滤波系数一阶平滑；延迟变化交叉淡化。
-- 晚期混响生命周期：seek/reset/device rebuild 时清空 FDN 延迟线、高通和阻尼状态；参数更新只换目标值，不重建 source/buffer。
+- 晚期场生命周期：seek/reset/device rebuild 时清空 `LateReflectionBus` 的历史和低通状态；参数更新只换不可变设置/taps，不重建 source/buffer。
 - M3 已选择每接收器独立引擎/context；启用晚期混响时，6 个 wet source 也按接收器 context 隔离，不共享 EFX aux slot。
 
 ## 8. 参数默认与 UI
@@ -956,7 +941,7 @@ effect/aux slot。
 roomAcousticsEnabled   true              // 后续
 earlyReflections       true              // A2b 已验收；A2c-R 统一直达/反射 FIR 已实现，A/B 待做
 earlyGainDb            0                 // Mod Menu, debug only; 作用于反射 source 电平
-lateReverb             true              // A3 全频带 FDN, Mod Menu
+lateReverb             false             // A3 几何晚期总线, Mod Menu
 lateTrimDb             0                 // Mod Menu trim, -24..+6 dB
 lateGainTarget         auto              // R/r_c + source power; Target is diagnostic
 directivity            true              // A2 已实现
@@ -969,9 +954,6 @@ maxReflectionTaps      24                // A2b/A2c-R
 reflectionFirTaps      4096              // A2c-R，固定
 roomSchroederHz        50–2000           // 房间诊断量；一阶反射不使用它滤波
 geometryUpdateHz       2–5               // A1 房间快照；扬声器布局仍约 20 Hz
-rt60Clamp              0.15–5.0 s        // Fitzroy; only when mapping to the FDN
-lateDcHighPass         20 Hz             // 晚期场 DC/次声高通；f_s 以下保留
-latePreDelay           20–50 ms           // 由 4V/S / 343 估算并钳位
 ```
 
 `earlyGainDb` 放 Mod Menu，仅调试用，现已乘入反射 source 增益（不改变直达声）；早期反射的基础电平由 7.3 的物理链路计算，不再默认压低 6–12 dB。`lateReverb` / `lateTrimDb` 同样先在 Mod Menu，A4 再迁入接收器设置；`lateTrimDb` 是叠加在物理 `sourceGainDb` 上的偏移，不是绝对 wet 电平，也不改变 target 诊断值。旧的 `lateGainDb` 键会被忽略并回退到 0 dB trim。
@@ -979,7 +961,7 @@ latePreDelay           20–50 ms           // 由 4V/S / 343 估算并钳位
 UI 归属：
 
 - Mod Menu（客户端，`CinemaClientConfig` / `CinemaConfigScreen`）：空气吸收开关、温度、湿度、`earlyGainDb` 调试滑杆、`lateReverb` 开关和 `lateTrimDb` 滑杆；这些是客户端本地设置，不写入接收器。
-- AV Receiver 的 Speakers/Settings 页：声学总开关、late reverb 电平、房间预设、重新扫描房间、调试信息；不放 `earlyGainDb`。
+- AV Receiver 的 Speakers/Settings 页：声学总开关、late reflections 电平、房间预设、重新扫描房间、调试信息；不放 `earlyGainDb`。
 - Speakers 页显示每只扬声器的 speaker data profile（品牌/型号/测量来源/许可证），允许切换 profile 或恢复默认。
 - 投影仪 GUI 不放音频设置。
 - 调试命令（后续实现）：dump 房间尺寸/RT60/taps 数、指向性表、A/B 开关、强制材质、强制座位。
@@ -998,7 +980,7 @@ UI 归属：
 | A2c-R | 反射指向性 + 频带精度：共用 `CommonAcousticFirProfile/Designer`；4096-tap 最小相位 **全频带** FIR 包含反射角 on-axis/指向性、空气、材质相对形状、遮挡低通；`overallGain` 与直达声同为参考频率的 on-axis/H/V（普通 1 kHz，低音炮带内参考）；两段遮挡合并；flood-fill 补丁种子；无反射 biquad；不实现散射 | A2b/A2c | 已实现并通过 `CommonAcousticFirDesignerTest`、`OcclusionResultTest`、`ReflectionSurfaceMergerTest`、`AcousticRoomTest` 及 `ImageSourceSolverTest`；**游戏内 A/B 验收待做** |
 | A2d | 直达声 A/B/CPU：32-bit float、30 ms 声像平滑、快速转头/移动/削波 | A2/A2c | 游戏内复测通过，无爆音/掉帧 |
 | A2e | Mod Menu 声学设置：空气吸收开关/温度/湿度、`earlyGainDb` 调试滑杆 | A2 | 已实现；设置持久化并即时影响直达/反射 FIR |
-| A3 | 全频带晚期混响：64-line FDN、4 级输入扩散 + 轻量慢速调制、高频阻尼输出 + 120 Hz 低频支撑 + 7 kHz 输出低通、Householder、RT60 low/mid/high 衰减、20 Hz DC 高通、20–50 ms pre-delay、启用时 6 个 wet source（含 LFE）、6 路 Hadamard 去相关；unity source-power send、`R/r_c` 方向性修正目标、FDN RMS 归一化、`lateTrimDb`；`f_s` 以下不再切除 | A0/A1/A2b | 已实现并通过 `LateReverbTest`；**2026-11-08 听感验收不通过（高频沙沙、低频不足、音色不平衡），默认关闭（方案 B），仅保留为实验路径** |
+| A3 | 几何晚期总线：order-2/3/4 路径、premium per-tap（4096-tap FIR）与 lazy `LateReflectionBus`、VBAP、6 个 wet source（含 LFE）、unity source-power send、`R/r_c` 校准、`lateTrimDb`；FDN 已删除 | A1/A2b | 几何 bus/VBAP 已实现；**待游戏内听感验收**；默认 `lateReverb=false` |
 | A4 | 接收器 GUI 开关/校准/预设 + 服务端字段/同步 | M4/M3 已完成 | 声学总开关/late 电平/预设可用；4K/BSL 无掉帧 |
 | A5 | 低频管理与模态（原 A6 提前，排在 A4 之后）：LFE 分频/低频管理、多低音炮路由与校准、低频模态计算与模态 EQ | A4 | 多低音炮可独立管理与校准；房间低频峰谷可按尺寸/座位预测并用 EQ 改善；不破坏 A2/A3 |
 | A6 | 调试/验收：dump 房间/RT60/taps；A/B 开关；多房间/材质/设备切换 | A2–A5 | 用户游戏内听感验收通过 |
@@ -1006,8 +988,8 @@ UI 归属：
 
 ## 10. 测试清单
 
-- 几何/单元：镜像源位置/延迟/增益、房间体积/表面积、Fitzroy RT60（均匀吸收退化为 Eyring、轴对面积/吸收、α_i=0 输出无穷）、空气吸收曲线、指向性插值、FDN 稳定性。
-- A3 FDN：`LateReverbTest` 验证 LFE wet 输出活跃、关闭时静音、脉冲尾音衰减、6 个声道的去相关、5 s RT60 长时连续输入有限且稳定，以及 mid-band 总 wet RMS 归一化和低频 RT60 差异；`LateReverbTargetTest` 验证单源 `r/r_c`、离轴指向性、source power 和 fallback；`SpeakerDataProfileTest` 验证 omni/cardioid 功率积分。
+- 几何/单元：镜像源位置/延迟/增益、房间体积/表面积、Fitzroy RT60（均匀吸收退化为 Eyring、轴对面积/吸收、α_i=0 输出无穷）、空气吸收曲线、指向性插值、VBAP/bus 稳定性。
+- A3 几何总线：`LateReflectionTargetTest` 验证单源 `r/r_c`、离轴指向性、source power、`sourceGainDb` 和 fallback；`VbapTest` / `LateReflectionBusTest` 验证方向、LFE 输出排除、能量归一化和 bus 性能；`SpeakerDataProfileTest` 验证 omni/cardioid 功率积分。
 - A3-R3 geometric bus/VBAP：`VbapTest` 验证前/后方向、左右符号、水平对插值、3D 高度扬声器、LFE 输出排除、能量归一化、零方向扩散和最近扬声器回退；`LateReflectionBusTest` 验证多输出 tap 权重、权重归一化/去重、无权重回退输入声道、Tap equals/hashCode 以及 dense 418-tap 实时性能。
 - A2b 纯几何：镜像源/R/Lpath/延迟、切向边界、同侧、门洞/遮挡/玻璃、LFE 源参与路径；`ImageSourceSolverTest` 通过；`MirrorPlaneDiscoveryTest` 通过（26 方向 + 近共面合并）；游戏内用 `/cinema_acoustics` 检查 planes/taps。
 - A2b 播放：每个 tap 的镜像源位置/延迟/方向正确；反射/直达比与物理计算一致（`sqrt(1-α_mid)/max(L,1)` × 扬声器 trim/EQ × `earlyGainDb`，空气吸收只由每 tap FIR 施加）；32 source 池/24 活动 taps 无爆音、无掉帧、无双重处理；空闲槽静音保持媒体时钟对齐；游戏内听感/CPU/多接收器已验收。
@@ -1028,12 +1010,12 @@ UI 归属：
 ## 11. 风险与未决
 
 - **EAXReverb 可用性/语义**：A0 已通过 OpenAL Soft 探针；当前 A3 不依赖 EFX，EAXReverb 仅保留为后续 fallback。
-- **FDN 听感/稳定性**：64-line FDN 的延迟长度、阻尼、扩散和调制是工程选择；单元测试只证明有界/去相关/归一化，不证明影院听感。输出取只做过高频阻尼的线状态，再经过非衰减低频架（120 Hz、+3 dB）和 7 kHz 二阶低通，优先压掉短 RT60 首轮直达和全通插值调制边带，同时不让低频湿声被反馈低架吃掉；若听感过暗，应上调输出低通截止频率，而不是恢复大调制深度。`lateTrimDb`、pre-delay 和 RT60 clamp 需游戏内校准。单极点阻尼只能缩短高频衰减；`RT60_high > RT60_mid` 时高频尾音仍按 mid 衰减，不做高频提升。当前 seek/停止会清空 FDN，不做播放结束后的 post-roll；尾音随 source 队列结束，不作为正式影院尾音长度验收。
+- **几何晚期场的听感/稳定性**：`LateReflectionBus` 依赖高阶镜面路径和 VBAP，tap 数量、方向离散和 bus 增益需要游戏内校准；单元测试只证明方向/权重/有界性，不证明影院听感。`lateTrimDb` 需游戏内校准。当前 seek/停止会清空 bus 状态，不做播放结束后的 post-roll；尾音随 source 队列结束。
 - **物理目标仍是扩散场近似**：`R = S·α/(1-α)`、`r_c`、source power 和方向性修正去掉了“全向声源”，但没有房间几何的高阶反射/散射/开口耦合；`α` 是面积加权中频值，`∫g²dΩ` 是 H/V 两切面的近似积分。source power send 只用 1 kHz on-axis/功率积分和宽带遮挡，未施加完整频带 speaker EQ/空气吸收；真正非扩散场需要房间扫描时的射线 RIR 或 radiosity，属于后续校准阶段。
 - **几何近似的局限**：忽略衍射、散射和房间模态；LFE 虽已参与高阶几何路径，但低频驻波/峰谷仍不能由镜面反射正确重现（低频模态由 A5 单独处理）。
 - **直达声/反射 source 的双重处理**：直达声已使用 `AL_NONE`，距离/空气吸收/遮挡/指向性仅在 Java 计算一次。A2b 反射 source 已使用同一 Java 距离规则，OpenAL 不叠加距离衰减；source 位置是镜像源 `s'`，不是反射点 `r`。反射信号取直达处理前的原始 `sourceChannel`，空气吸收/材质增益只在反射链路施加一次。A2c-R 进一步让直达/反射共用 `CommonAcousticFirDesigner`，`overallGain` 都是参考频率的 on-axis/H/V（普通 1 kHz，低音炮带内参考）；反射 FIR 携带其余频率形状，gain 只保留宽带项，避免重复。
 - **反射 FIR/材质近似**：反射 FIR 与直达声同为 4096 taps，低频分辨率相同；材质只有 3 个八度带，设计时的 shelf/peaking 目标曲线不能还原完整 1/3 octave 或实测反射曲线；遮挡低通用 Butterworth 幅度近似，不是真实隔声传递函数；全频带反射没有 Schroeder 过渡。这些都是为每 tap 成本可控而做的近似，需游戏内 A/B 校准。
-- **source 数量/性能**：每接收器固定 **56** 个反射 source/buffer（一阶 24 + premium2 16 + premium3 8 = 48 活动，8 个淡变/调度余量）；默认关闭晚期混响时为 62 个 source，启用时再加 6 个 wet source/buffer，共 68 个。per-tap 一阶/premium 使用 4096-tap FIR；其余高阶路径进 6 条 bus，不做 per-tap FIR；FDN 保留但 inactive。lazy late bus 没有 per-tap FIR，因此 LFE 的 late-bus 内容不受低音炮 FIR/手动带限约束；只有直达和 premium LFE 路径经过低音炮带限，这是当前已知限制。多接收器、HRTF、设备切换、OpenAL source 上限和 CPU 都需实测。
+- **source 数量/性能**：每接收器固定 **56** 个反射 source/buffer（一阶 24 + premium2 16 + premium3 8 = 48 活动，8 个淡变/调度余量）；默认关闭晚期混响时为 62 个 source，启用时再加 6 个 wet source/buffer，共 68 个。per-tap 一阶/premium 使用 4096-tap FIR；其余高阶路径进 6 条 bus，不做 per-tap FIR。lazy late bus 没有 per-tap FIR，因此 LFE 的 late-bus 内容不受低音炮 FIR/手动带限约束；只有直达和 premium LFE 路径经过低音炮带限，这是当前已知限制。多接收器、HRTF、设备切换、OpenAL source 上限和 CPU 都需实测。
 - **距离模型（A2/A2b 已解决）**：direct path 使用 Java `1/max(r,1)` 与 `AL_NONE`，不再依赖 OpenAL 的 `inverse distance clamped`；A2b 反射沿用同一规则。需游戏内确认 HRTF/设备切换下 `AL_NONE` 与相对 source 位置仍只影响声像。
 - **空气吸收/指向性校准**：ISO 9613-1 与 Spinorama 数据都是近似；温湿度、扬声器型号映射和 H/V 两切面都会造成偏差，必须提供开关和 A/B。
 - **材质数据**：Minecraft 方块没有实测吸声系数；房间吸声和遮挡衰减/截止都是游戏调参近似，需要试听校准。当前遮挡表以 1 m 石墙为最强常见参照，玻璃/木墙/树叶的听感平衡仍需验证。A2c-R 的 3 频带材质目标只是把现有低/中/高吸声系数转成压力反射形状，不代表真实频率响应；A1b 的数据驱动材质表仍是后续工作。
@@ -1042,10 +1024,10 @@ UI 归属：
 - **Spinorama 许可**：默认 CC BY-NC-SA 4.0（非商业/相同方式共享），与项目 CC0 代码不同；发布前必须做许可决策/attribution，不能默认打包。
 - **房间检测**：矩形假设；非矩形/开放空间可能误判；需要 fallback 和调试可视化。
 - **听者策略（已决定）**：不做影院锁定/皇帝位/声场校正；listener 跟随玩家实际耳朵和朝向，保证玩家在影院外也有正确的空间定位。
-- **5.1 vs. 耳机**：启用晚期混响时，FDN 的 6 个 wet source 在 stereo/HRTF/5.1 设备上会经过不同声像/下混；Hadamard 去相关在耳机 HRTF 下仍需试听，不能只用声道相关系数代替。
-- **多接收器（M3）**：已改为每接收器独立 context/FDN/wet source；多接收器同时播放的 CPU/设备性能仍需实测。
+- **5.1 vs. 耳机**：启用晚期场时，6 个 wet source 在 stereo/HRTF/5.1 设备上会经过不同声像/下混；VBAP 权重在耳机 HRTF 下仍需试听，不能只用声道相关系数代替。
+- **多接收器（M3）**：已改为每接收器独立 context/wet source；多接收器同时播放的 CPU/设备性能仍需实测。
 - **低频管理**：单低音炮的房间模态未建模；A5 处理多低音炮/模态 EQ，测量 RIR 仍在 A7。
-- **性能**：Java DSP（直达/反射 FIR + FDN）+ 4K 视频 + shader 的叠加需要实测；音频线程不能卡。
+- **性能**：Java DSP（直达/反射 FIR + late bus）+ 4K 视频 + shader 的叠加需要实测；音频线程不能卡。
 - **设置归属**：声学开关/电平建议存接收器 block entity；几何是客户端本地。需确认是否要 LAN 同步。
 
 ## 12. 资料可信度说明
@@ -1061,4 +1043,4 @@ UI 归属：
 2. **A2c-R 游戏内 A/B 验收**：直达声单 FIR 与旧两级 FIR 听感一致；反射 4096-tap **全频带** FIR 的材质三频带、遮挡低通、`overallGain` 参考频率语义（普通 1 kHz，低音炮带内参考）；检查石墙/木墙/玻璃/吸声材质、墙角/薄墙遮挡、开放空间/门洞、听者移动与多接收器 CPU。
 3. **A3 游戏内验收**：确认 geometric late bus 的 order-2/3/4 增量、premium per-tap、LFE 反射、`lateTrimDb` 量级、fast/deep 的 `upgrade`/CPU，以及 seek/reset 无残留；A3-R3 lazy VBAP 已实现，重点验收 listener → 最后反射点方向、左右/前后不反向、能量归一化权重、精确 3D → 水平 → 最近扬声器 → 扩散回退，以及 LFE 源声道参与后低频是否自然。
 4. 做 **A4–A6**：接收器 GUI 声学开关/校准/预设、低频管理与模态（A5）、A/B 调试与 4K/BSL/设备切换/多接收器验收（A6）。
-5. 如果 EFX 在目标设备不可用，改用小型 FDN 或暂时只做直达声 + 早期反射；不要为了混响阻塞主线。A1e 的 CC BY-NC-SA attribution 仍须在发布前补齐。
+5. 如果 EFX 在目标设备不可用，当前几何晚期场不依赖 EFX；必要时暂时只做直达声 + 早期反射，不要为了混响阻塞主线。A1e 的 CC BY-NC-SA attribution 仍须在发布前补齐。

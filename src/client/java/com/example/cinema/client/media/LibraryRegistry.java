@@ -1,6 +1,6 @@
 package com.example.cinema.client.media;
 
-import com.example.cinema.Cinema;
+import com.example.cinema.CinemaLog;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import net.minecraft.client.Minecraft;
@@ -38,7 +38,7 @@ public final class LibraryRegistry {
 		try {
 			Files.createDirectories(root);
 		} catch (IOException e) {
-			Cinema.LOGGER.warn("cinema media: could not create default library directory", e);
+			CinemaLog.warn(CinemaLog.MEDIA, "could not create default library directory", e);
 		}
 		return root;
 	}
@@ -57,7 +57,7 @@ public final class LibraryRegistry {
 				result.add(new Library(stored.id, stored.name,
 					Path.of(stored.path).toAbsolutePath().normalize()));
 			} catch (Exception e) {
-				Cinema.LOGGER.warn("cinema media: ignoring invalid library path for {}", stored.id);
+				CinemaLog.warn(CinemaLog.MEDIA, "ignoring invalid library path for {}", stored.id);
 			}
 		}
 		return result;
@@ -112,7 +112,7 @@ public final class LibraryRegistry {
 		stored.path = root.toString();
 		externalLibraries.add(stored);
 		save();
-		Cinema.LOGGER.info("cinema media: added external library {} ({})", name, id);
+		CinemaLog.info(CinemaLog.MEDIA, "added external library {} ({})", name, id);
 		return new Library(id, name, root);
 	}
 
@@ -124,7 +124,7 @@ public final class LibraryRegistry {
 		boolean removed = externalLibraries.removeIf(stored -> stored.id.equals(id));
 		if (removed) {
 			save();
-			Cinema.LOGGER.info("cinema media: removed external library {}", id);
+			CinemaLog.info(CinemaLog.MEDIA, "removed external library {}", id);
 		}
 		return removed;
 	}
@@ -164,7 +164,7 @@ public final class LibraryRegistry {
 				}
 			}
 		} catch (Exception e) {
-			Cinema.LOGGER.warn("cinema media: could not read libraries.json", e);
+			CinemaLog.warn(CinemaLog.MEDIA, "could not read libraries.json", e);
 		}
 	}
 
@@ -178,7 +178,7 @@ public final class LibraryRegistry {
 				GSON.toJson(data, writer);
 			}
 		} catch (IOException e) {
-			Cinema.LOGGER.warn("cinema media: could not save libraries.json", e);
+			CinemaLog.warn(CinemaLog.MEDIA, "could not save libraries.json", e);
 		}
 	}
 

@@ -1,6 +1,13 @@
 package com.example.cinema.client.media;
 
 import com.example.cinema.Cinema;
+import com.example.cinema.CinemaLog;
+import com.example.cinema.client.media.audio.decode.StreamingAudioDecoder;
+import com.example.cinema.client.media.audio.playback.CinemaAudioEngine;
+import com.example.cinema.client.media.ffmpeg.Ffmpeg;
+import com.example.cinema.client.media.video.CinemaVideoTexture;
+import com.example.cinema.client.media.video.VideoDecoder;
+import com.example.cinema.client.media.video.VideoFrame;
 import net.minecraft.client.Minecraft;
 import net.minecraft.resources.ResourceLocation;
 
@@ -8,12 +15,12 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
-import java.util.Deque;
 import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.Deque;
 
 /**
  * Client-side cinema playback pipeline for one local file.
@@ -229,7 +236,7 @@ public final class CinemaPlayer implements AutoCloseable {
 			// There is no first video frame to trigger the audio clock.
 			audio.startPlayback();
 		}
-		Cinema.LOGGER.info("cinema player: started {}{}", file.getFileName(),
+		CinemaLog.info(CinemaLog.PLAYER, "started {}{}", file.getFileName(),
 			audioOnly ? " (audio only)" : "");
 	}
 
@@ -248,7 +255,7 @@ public final class CinemaPlayer implements AutoCloseable {
 				pausedAtNanos = 0;
 			}
 		}
-		Cinema.LOGGER.info("cinema player: {}", paused ? "paused" : "resumed");
+		CinemaLog.info(CinemaLog.PLAYER, "{}", paused ? "paused" : "resumed");
 	}
 
 	public void togglePause() {
@@ -401,7 +408,7 @@ public final class CinemaPlayer implements AutoCloseable {
 		}
 		Throwable failure = error.get();
 		if (failure != null) {
-			Cinema.LOGGER.error("cinema player decode failed", failure);
+			CinemaLog.error(CinemaLog.PLAYER, "decode failed", failure);
 			running.set(false);
 			return;
 		}
@@ -488,7 +495,7 @@ public final class CinemaPlayer implements AutoCloseable {
 		if (info == null) {
 			audioOnly = true;
 			audio.startPlayback();
-			Cinema.LOGGER.info("cinema player: no video stream; playing audio only");
+			CinemaLog.info(CinemaLog.PLAYER, "no video stream; playing audio only");
 			return;
 		}
 
@@ -568,7 +575,7 @@ public final class CinemaPlayer implements AutoCloseable {
 						|| !Double.isNaN(videoSeekTarget) || generation != seekGeneration);
 				}
 				if (!running.get() || closed.get() || seeked) {
-					Cinema.LOGGER.info("cinema video decode cancelled");
+					CinemaLog.info(CinemaLog.VIDEO, "decode cancelled");
 					continue;
 				}
 				error.compareAndSet(null, t);
@@ -635,15 +642,15 @@ public final class CinemaPlayer implements AutoCloseable {
 				}
 				if (!running.get() || closed.get() || seeked) {
 					// close()/seekTo() closed the decoder while it waited for FFmpeg.
-					Cinema.LOGGER.info("cinema audio decode cancelled");
+					CinemaLog.info(CinemaLog.AUDIO, "decode cancelled");
 					continue;
 				}
 				if (audioOnly) {
 					error.compareAndSet(null, t);
-					Cinema.LOGGER.warn("cinema audio decode failed for audio-only media", t);
+					CinemaLog.warn(CinemaLog.AUDIO, "decode failed for audio-only media", t);
 				} else {
 					audioUnavailable = true;
-					Cinema.LOGGER.warn("cinema audio decode failed; continuing video-only", t);
+					CinemaLog.warn(CinemaLog.AUDIO, "decode failed; continuing video-only", t);
 				}
 				return;
 			}
@@ -658,10 +665,10 @@ public final class CinemaPlayer implements AutoCloseable {
 			if (!hasAudio) {
 				if (audioOnly) {
 					error.compareAndSet(null, new IOException("No decodable audio stream"));
-					Cinema.LOGGER.warn("cinema player: audio-only media has no decodable audio");
+					CinemaLog.warn(CinemaLog.PLAYER, "audio-only media has no decodable audio");
 				} else {
 					audioUnavailable = true;
-					Cinema.LOGGER.info("cinema player: no audio stream; using wall clock for video");
+					CinemaLog.info(CinemaLog.PLAYER, "no audio stream; using wall clock for video");
 				}
 			}
 			return;
@@ -700,11 +707,11 @@ public final class CinemaPlayer implements AutoCloseable {
 		if (now - lastStatsAt >= 5.0) {
 			lastStatsAt = now;
 			if (audioOnly) {
-				Cinema.LOGGER.info("cinema player: audio only, audioPts={}, latency={} ms",
+				CinemaLog.info(CinemaLog.PLAYER, "audio only, audioPts={}, latency={} ms",
 					String.format("%.3f", audio.audiblePtsSeconds()),
 					String.format("%.1f", audio.latencySeconds() * 1000));
 			} else {
-				Cinema.LOGGER.info("cinema player: {}x{}, presented={}, dropped={}, audioPts={}, latency={} ms",
+				CinemaLog.info(CinemaLog.PLAYER, "{}x{}, presented={}, dropped={}, audioPts={}, latency={} ms",
 					width, height, presented, dropped,
 					String.format("%.3f", audio.audiblePtsSeconds()),
 					String.format("%.1f", audio.latencySeconds() * 1000));
@@ -792,6 +799,6 @@ public final class CinemaPlayer implements AutoCloseable {
 		if (ownsTexture) {
 			client.getTextureManager().release(textureId);
 		}
-		Cinema.LOGGER.info("cinema player: stopped (presented={}, dropped={})", presented, dropped);
+		CinemaLog.info(CinemaLog.PLAYER, "stopped (presented={}, dropped={})", presented, dropped);
 	}
 }

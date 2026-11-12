@@ -1,15 +1,15 @@
 package com.example.cinema.client.command;
 
 import com.example.cinema.block.entity.SpeakerType;
-import com.example.cinema.client.audio.fir.CommonAcousticFirService;
-import com.example.cinema.client.audio.speakerdata.SpeakerDataProfile;
-import com.example.cinema.client.audio.speakerdata.SpeakerDataRegistry;
-import com.example.cinema.client.audio.speakerdata.SubwooferAcoustics;
-import com.example.cinema.client.audio.speakerdata.SubwooferBand;
 import com.example.cinema.client.gui.SpeakerDataConfigScreen;
-import com.mojang.brigadier.CommandDispatcher;
+import com.example.cinema.client.media.audio.acousticfir.CommonAcousticFirService;
+import com.example.cinema.client.media.audio.speaker.SpeakerDataProfile;
+import com.example.cinema.client.media.audio.speaker.SpeakerDataRegistry;
+import com.example.cinema.client.media.audio.speaker.SubwooferAcoustics;
+import com.example.cinema.client.media.audio.speaker.SubwooferBand;
 import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.CommandDispatcher;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 import net.minecraft.client.Minecraft;

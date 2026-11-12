@@ -1,19 +1,15 @@
 package com.example.cinema.client;
 
-import com.example.cinema.Cinema;
-import com.example.cinema.block.SpeakerBlock;
 import com.example.cinema.block.entity.AvReceiverBlockEntity;
 import com.example.cinema.block.entity.ProjectorBlockEntity;
 import com.example.cinema.block.entity.SpeakerBlockEntity;
-import com.example.cinema.client.audio.EfxReverbSpike;
-import com.example.cinema.client.audio.InGameAudioSpike;
-import com.example.cinema.client.audio.acoustics.AcousticScene;
-import com.example.cinema.client.audio.speakerdata.SpeakerDataAssignments;
-import com.example.cinema.client.audio.speakerdata.SpeakerDataRegistry;
+import com.example.cinema.block.SpeakerBlock;
+import com.example.cinema.Cinema;
+import com.example.cinema.CinemaLog;
 import com.example.cinema.client.command.ClientAcousticsCommand;
 import com.example.cinema.client.command.ClientHelpCommand;
-import com.example.cinema.client.command.ClientReceiverCommand;
 import com.example.cinema.client.command.ClientProjectorCommand;
+import com.example.cinema.client.command.ClientReceiverCommand;
 import com.example.cinema.client.command.ClientSpeakerDataCommand;
 import com.example.cinema.client.config.CinemaClientConfig;
 import com.example.cinema.client.gui.AvReceiverConfigScreen;
@@ -22,6 +18,11 @@ import com.example.cinema.client.gui.RemoteDeviceScreen;
 import com.example.cinema.client.gui.RemotePairingScreen;
 import com.example.cinema.client.gui.SpeakerDataConfigScreen;
 import com.example.cinema.client.item.RemoteControllerClient;
+import com.example.cinema.client.media.audio.acoustics.scene.AcousticScene;
+import com.example.cinema.client.media.audio.debug.EfxReverbSpike;
+import com.example.cinema.client.media.audio.debug.InGameAudioSpike;
+import com.example.cinema.client.media.audio.speaker.SpeakerDataAssignments;
+import com.example.cinema.client.media.audio.speaker.SpeakerDataRegistry;
 import com.example.cinema.client.media.AvReceiverPlaybackManager;
 import com.example.cinema.client.media.CinemaPlayer;
 import com.example.cinema.client.media.CinemaPrewarm;
@@ -52,12 +53,12 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.GameRules;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.lwjgl.glfw.GLFW;
@@ -194,8 +195,7 @@ public class CinemaClient implements ClientModInitializer {
 		ClientTickEvents.END_CLIENT_TICK.register(SpeakerLocator::tick);
 		ClientTickEvents.END_CLIENT_TICK.register(AcousticScene::tick);
 
-		Cinema.LOGGER.info(
-			"cinema screen: max rendered size {}x{} ({})",
+		CinemaLog.info(CinemaLog.SCREEN, "max rendered size {}x{} ({})",
 			ScreenLimits.maxSize(), ScreenLimits.maxSize(), ScreenLimits.source());
 
 		if (System.getProperty("cinema.spike.audio") != null
@@ -220,7 +220,7 @@ public class CinemaClient implements ClientModInitializer {
 				if (GLFW.glfwGetWindowAttrib(handle, GLFW.GLFW_FOCUSED) == GLFW.GLFW_TRUE) {
 					if (!spikeWindowFocused) {
 						spikeWindowFocused = true;
-						Cinema.LOGGER.info("cinema spike: game window is focused");
+						CinemaLog.info(CinemaLog.SPIKE, "game window is focused");
 					}
 					return;
 				}
@@ -254,11 +254,11 @@ public class CinemaClient implements ClientModInitializer {
 			boolean autoExit = System.getProperty("cinema.spike.exit") != null && !isManualSpikeTest();
 			ClientTickEvents.END_CLIENT_TICK.register(client -> {
 				if (++autoSpikeTicks == 100) {
-					Cinema.LOGGER.info("cinema audio spike: auto-running after client startup");
+					CinemaLog.info(CinemaLog.AUDIO_SPIKE, "auto-running after client startup");
 					InGameAudioSpike.runAsync();
 				}
 				if (autoExit && autoSpikeTicks == 220) {
-					Cinema.LOGGER.info("cinema audio spike: stopping the client");
+					CinemaLog.info(CinemaLog.AUDIO_SPIKE, "stopping the client");
 					client.stop();
 				}
 			});
@@ -275,10 +275,10 @@ public class CinemaClient implements ClientModInitializer {
 				autoVideoTicks++;
 				if (autoVideoTicks == 40) {
 					try {
-						Cinema.LOGGER.info("cinema video spike: playing {}", videoPath);
+						CinemaLog.info(CinemaLog.VIDEO_SPIKE, "playing {}", videoPath);
 						CinemaPlayer.play(client, Path.of(videoPath));
 					} catch (Throwable t) {
-						Cinema.LOGGER.error("cinema video spike failed", t);
+						CinemaLog.error(CinemaLog.VIDEO_SPIKE, "failed", t);
 					}
 				}
 				if (autoVideoTicks == 100) {
@@ -286,10 +286,10 @@ public class CinemaClient implements ClientModInitializer {
 					if (seek != null) {
 						try {
 							double seconds = Double.parseDouble(seek);
-							Cinema.LOGGER.info("cinema video spike: seeking to {} s", seconds);
+							CinemaLog.info(CinemaLog.VIDEO_SPIKE, "seeking to {} s", seconds);
 							CinemaPlayer.seekActive(client, seconds);
 						} catch (Throwable t) {
-							Cinema.LOGGER.error("cinema video seek failed", t);
+							CinemaLog.error(CinemaLog.VIDEO_SPIKE, "seek failed", t);
 						}
 					}
 				}
@@ -299,7 +299,7 @@ public class CinemaClient implements ClientModInitializer {
 							"Use /cinema_play, /cinema_projector_client and /cinema_help."), false);
 				}
 				if (autoExit && autoVideoTicks == 240) {
-					Cinema.LOGGER.info("cinema video spike: stopping the client");
+					CinemaLog.info(CinemaLog.VIDEO_SPIKE, "stopping the client");
 					CinemaPlayer.stopActive(client);
 					client.stop();
 				}
@@ -364,8 +364,7 @@ public class CinemaClient implements ClientModInitializer {
 				player.setDeltaMovement(Vec3.ZERO);
 				player.setNoGravity(false);
 			}
-			Cinema.LOGGER.info(
-				"cinema spike: fixed player at {} yaw={} worldModified={} removedMobs={}",
+			CinemaLog.info(CinemaLog.SPIKE, "fixed player at {} yaw={} worldModified={} removedMobs={}",
 				pose, yaw, modifyWorld, removed);
 		});
 	}

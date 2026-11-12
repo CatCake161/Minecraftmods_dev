@@ -1,41 +1,42 @@
 package com.example.cinema.client.command;
 
 import com.example.cinema.block.entity.SpeakerRole;
-import com.example.cinema.client.audio.acoustics.AcousticMaterial;
-import com.example.cinema.client.audio.acoustics.AcousticRoom;
-import com.example.cinema.client.audio.acoustics.AcousticScene;
-import com.example.cinema.client.audio.acoustics.AcousticSpeaker;
-import com.example.cinema.client.audio.acoustics.AcousticSurface;
-import com.example.cinema.client.audio.acoustics.AxisAbsorption;
-import com.example.cinema.client.audio.acoustics.ImageSourcePathSolver;
-import com.example.cinema.client.audio.acoustics.ImageSourceSolver;
-import com.example.cinema.client.audio.acoustics.MirrorPlane;
-import com.example.cinema.client.audio.acoustics.MirrorPlaneDiscovery;
-import com.example.cinema.client.audio.acoustics.OcclusionResult;
-import com.example.cinema.client.audio.acoustics.OcclusionScanner;
-import com.example.cinema.client.audio.acoustics.Point3;
-import com.example.cinema.client.audio.acoustics.ReflectionDelayBudget;
-import com.example.cinema.client.audio.acoustics.ReflectionDelayLimit;
-import com.example.cinema.client.audio.acoustics.ReflectionPathTap;
-import com.example.cinema.client.audio.acoustics.ReflectionProbe;
-import com.example.cinema.client.audio.acoustics.ReflectionTap;
-import com.example.cinema.client.audio.acoustics.RoomAcousticSnapshot;
-import com.example.cinema.client.audio.acoustics.RoomFill;
-import com.example.cinema.client.audio.directivity.MinimumPhaseFir;
-import com.example.cinema.client.audio.directivity.SpeakerDirectivityService;
-import com.example.cinema.client.audio.environment.AirAbsorption;
-import com.example.cinema.client.audio.fir.CommonAcousticFirDesigner;
-import com.example.cinema.client.audio.fir.CommonAcousticFirProfile;
-import com.example.cinema.client.audio.fir.CommonAcousticFirService;
-import com.example.cinema.client.audio.reverb.LateReverbSettings;
-import com.example.cinema.client.audio.reverb.LateReverbTarget;
-import com.example.cinema.client.audio.speakerdata.SpeakerDataProfile;
-import com.example.cinema.client.audio.speakerdata.SpeakerDataRegistry;
-import com.example.cinema.client.audio.speakerdata.SubwooferBand;
 import com.example.cinema.client.config.CinemaClientConfig;
-import com.example.cinema.client.media.CinemaAudioEngine;
-import com.mojang.brigadier.CommandDispatcher;
+import com.example.cinema.client.media.audio.AcousticScale;
+import com.example.cinema.client.media.audio.acousticfir.CommonAcousticFirDesigner;
+import com.example.cinema.client.media.audio.acousticfir.CommonAcousticFirProfile;
+import com.example.cinema.client.media.audio.acousticfir.CommonAcousticFirService;
+import com.example.cinema.client.media.audio.acoustics.geometry.ImageSourcePathSolver;
+import com.example.cinema.client.media.audio.acoustics.geometry.ImageSourceSolver;
+import com.example.cinema.client.media.audio.acoustics.geometry.MirrorPlane;
+import com.example.cinema.client.media.audio.acoustics.geometry.MirrorPlaneDiscovery;
+import com.example.cinema.client.media.audio.acoustics.geometry.Point3;
+import com.example.cinema.client.media.audio.acoustics.geometry.ReflectionProbe;
+import com.example.cinema.client.media.audio.acoustics.path.ReflectionDelayBudget;
+import com.example.cinema.client.media.audio.acoustics.path.ReflectionDelayLimit;
+import com.example.cinema.client.media.audio.acoustics.path.ReflectionPathTap;
+import com.example.cinema.client.media.audio.acoustics.path.ReflectionTap;
+import com.example.cinema.client.media.audio.acoustics.propagation.AirAbsorption;
+import com.example.cinema.client.media.audio.acoustics.propagation.OcclusionResult;
+import com.example.cinema.client.media.audio.acoustics.propagation.OcclusionScanner;
+import com.example.cinema.client.media.audio.acoustics.room.AcousticMaterial;
+import com.example.cinema.client.media.audio.acoustics.room.AcousticRoom;
+import com.example.cinema.client.media.audio.acoustics.room.AcousticSurface;
+import com.example.cinema.client.media.audio.acoustics.room.AxisAbsorption;
+import com.example.cinema.client.media.audio.acoustics.room.RoomFill;
+import com.example.cinema.client.media.audio.acoustics.scene.AcousticScene;
+import com.example.cinema.client.media.audio.acoustics.scene.AcousticSpeaker;
+import com.example.cinema.client.media.audio.acoustics.scene.RoomAcousticSnapshot;
+import com.example.cinema.client.media.audio.dsp.MinimumPhaseFir;
+import com.example.cinema.client.media.audio.playback.CinemaAudioEngine;
+import com.example.cinema.client.media.audio.reflection.LateReflectionSettings;
+import com.example.cinema.client.media.audio.reflection.LateReflectionTarget;
+import com.example.cinema.client.media.audio.speaker.SpeakerDataProfile;
+import com.example.cinema.client.media.audio.speaker.SpeakerDataRegistry;
+import com.example.cinema.client.media.audio.speaker.SpeakerDirectivityService;
+import com.example.cinema.client.media.audio.speaker.SubwooferBand;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.mojang.brigadier.CommandDispatcher;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 import net.minecraft.client.Minecraft;
@@ -81,29 +82,32 @@ public final class ClientAcousticsCommand {
 		}
 		CinemaClientConfig config = CinemaClientConfig.get();
 		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
-			"acoustics: air=%s T=%.1f C RH=%.0f %% p=%.3f kPa earlyGain=%+.1f dB (debug)",
-			config.airAbsorption() ? "ON" : "OFF", config.airTemperatureC(),
-			config.airHumidityPercent(), AirAbsorption.REFERENCE_PRESSURE_KPA,
-			config.earlyGainDb())));
+			"acoustics: scale=%.2f m/block air=%s T=%.1f C RH=%.0f %% p=%.3f kPa "
+				+ "earlyGain=%+.1f dB (debug)",
+			config.metersPerBlock(), config.airAbsorption() ? "ON" : "OFF",
+			config.airTemperatureC(), config.airHumidityPercent(),
+			AirAbsorption.REFERENCE_PRESSURE_KPA, config.earlyGainDb())));
+		int openAlLimit = CinemaAudioEngine.openAlSourceLimit();
+		source.sendFeedback(Component.literal(openAlLimit < 0
+			? "acoustics: openal sourceLimit=unknown (no active engine)"
+			: String.format(Locale.ROOT,
+				"acoustics: openal sourceLimit=%d budget=%d",
+				openAlLimit, CinemaAudioEngine.MAX_SOURCES)));
 		AcousticRoom room = snapshot.room();
 		ReflectionDelayLimit delayLimit = ReflectionDelayBudget.forRoom(room,
 			CinemaAudioEngine.maxReflectionDelaySeconds(),
 			CinemaAudioEngine.historySafeDelaySeconds());
-		LateReverbSettings late = lateSettings(snapshot, config);
+		LateDiagnostics late = lateSettings(snapshot, config);
 		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
-			"acoustics: late reverb=%s target=%+.1f dB sourceGain=%+.1f dB "
+			"acoustics: late reflections=%s target=%+.1f dB sourceGain=%+.1f dB "
 				+ "trim=%+.1f dB effective=%+.1f dB wetDry=%+.1f dB "
 				+ "R=%.1f m2 rc=%.2f m",
-			late.enabled() ? "ON" : "OFF", late.targetWetGainDb(),
-			late.sourceGainDb(), late.trimDb(), late.wetGainDb(),
-			late.targetWetGainDb() + late.trimDb(),
-			late.roomConstant(), late.criticalDistanceMeters())));
-		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
-			"acoustics: late rt60L/M/H=%.2f/%.2f/%.2f s dcHighPass=%.0f Hz "
-				+ "preDelay=%.0f ms",
-			late.rt60LowSeconds(), late.rt60MidSeconds(),
-			late.rt60HighSeconds(), late.highPassHz(),
-			late.preDelaySeconds() * 1_000.0)));
+			late.settings().enabled() ? "ON" : "OFF",
+			late.target().targetWetGainDb(), late.target().sourceGainDb(),
+			late.trim(), late.settings().wetGainDb(),
+			late.target().targetWetGainDb() + late.trim(),
+			late.target().roomConstant(),
+			late.target().criticalDistanceMeters())));
 		RoomFill fill = room.fill();
 		String fillState = fill == null ? "none"
 			: fill.complete() ? "complete" : "incomplete";
@@ -113,7 +117,7 @@ public final class ClientAcousticsCommand {
 			fillState, snapshot.version())));
 		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
 			"acoustics: size=%s boxVolume=%.1f m3 boxSurface=%.1f m2",
-			room.sizeLabel(), room.volume(), room.surfaceArea())));
+			room.sizeLabel(), room.volumeMeters3(), room.surfaceAreaMeters2())));
 		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
 			"acoustics: reflection delay limit order1/2/3/4=%.1f/%.1f/%.1f/%.1f ms "
 				+ "historySafe=%.1f ms",
@@ -127,14 +131,17 @@ public final class ClientAcousticsCommand {
 		} else {
 			source.sendFeedback(Component.literal(String.format(Locale.ROOT,
 				"acoustics: fill volume=%.1f m3 surface=%.1f m2 open=%.1f m2 cells=%d faces=%s coverage=%.2f patches=%d",
-				fill.volume(), fill.surfaceArea(), fill.openArea(),
+				AcousticScale.cubicBlocksToCubicMeters(fill.volume()),
+				AcousticScale.squareBlocksToSquareMeters(fill.surfaceArea()),
+				AcousticScale.squareBlocksToSquareMeters(fill.openArea()),
 				fill.cells(), fill.openFacesLabel(), room.fillCoverage(),
 				fill.reflectionSurfaceCount())));
 		}
 		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
 			"acoustics: alpha L/M/H=%.3f/%.3f/%.3f RT60 L/M/H=%s/%s/%s s (Fitzroy) fs=%.0f Hz source=%s",
 			room.alphaLow(), room.alphaMid(), room.alphaHigh(),
-			rt60(room.rt60Low()), rt60(room.rt60Mid()), rt60(room.rt60High()),
+			rt60(room.rt60LowMeters()), rt60(room.rt60MidMeters()),
+			rt60(room.rt60HighMeters()),
 			room.schroederHz(),
 			room.fillComplete() ? "fill" : "box")));
 		AxisAbsorption xAxis = room.xAxis();
@@ -142,7 +149,9 @@ public final class ClientAcousticsCommand {
 		AxisAbsorption zAxis = room.zAxis();
 		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
 			"acoustics: fitzroy axisArea X/Y/Z=%.1f/%.1f/%.1f m2",
-			xAxis.area(), yAxis.area(), zAxis.area())));
+			AcousticScale.squareBlocksToSquareMeters(xAxis.area()),
+			AcousticScale.squareBlocksToSquareMeters(yAxis.area()),
+			AcousticScale.squareBlocksToSquareMeters(zAxis.area()))));
 		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
 			"acoustics: fitzroy alpha X=%.3f/%.3f/%.3f Y=%.3f/%.3f/%.3f Z=%.3f/%.3f/%.3f",
 			xAxis.alphaLow(), xAxis.alphaMid(), xAxis.alphaHigh(),
@@ -157,7 +166,9 @@ public final class ClientAcousticsCommand {
 			AcousticMaterial material = surface.material();
 			source.sendFeedback(Component.literal(String.format(Locale.ROOT,
 				"acoustics: plane %s @ %.2f area=%.1f material=%s alpha=%.2f/%.2f/%.2f samples=%d",
-				surface.label(), surface.coordinate(), surface.area(), material.name(),
+				surface.label(), surface.coordinate(),
+				AcousticScale.squareBlocksToSquareMeters(surface.area()),
+				material.name(),
 				material.low(), material.mid(), material.high(), surface.samples())));
 		}
 		int patchShown = 0;
@@ -168,7 +179,8 @@ public final class ClientAcousticsCommand {
 			AcousticMaterial material = surface.material();
 			source.sendFeedback(Component.literal(String.format(Locale.ROOT,
 				"acoustics: patch %s @ %.2f area=%.1f material=%s samples=%d",
-				surface.label(), surface.coordinate(), surface.area(),
+				surface.label(), surface.coordinate(),
+				AcousticScale.squareBlocksToSquareMeters(surface.area()),
 				material.name(), surface.samples())));
 		}
 		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
@@ -188,7 +200,8 @@ public final class ClientAcousticsCommand {
 				speaker.profileId());
 			SpeakerDirectivityService.Angles angles = SpeakerDirectivityService.angles(
 				speaker.position(), speaker.forward(), snapshot.listener().eye());
-			double distance = speaker.position().distanceTo(snapshot.listener().eye());
+			double distance = AcousticScale.blocksToMeters(
+				speaker.position().distanceTo(snapshot.listener().eye()));
 			OcclusionResult occlusion = scanOcclusion(speaker,
 				snapshot.listener().eye());
 			CommonAcousticFirProfile firProfile = CommonAcousticFirProfile.direct(
@@ -246,7 +259,8 @@ public final class ClientAcousticsCommand {
 							+ "occ=%.1f dB cutoff=%.0f Hz order=%d",
 						speaker.role().label(), tap.planeKey(),
 						tap.reflectionPoint().x(), tap.reflectionPoint().y(),
-						tap.reflectionPoint().z(), tap.pathLength(),
+						tap.reflectionPoint().z(),
+						AcousticScale.blocksToMeters(tap.pathLength()),
 						tap.delayMilliseconds(), tap.material().name(), tap.gain(),
 						tap.occlusion().attenuationDb(), tap.occlusion().cutoffHz(),
 						tap.occlusion().order())));
@@ -257,7 +271,8 @@ public final class ClientAcousticsCommand {
 							speaker.forward(), reflectionPoint);
 					CommonAcousticFirProfile firProfile =
 						CommonAcousticFirProfile.reflection(profile,
-							angles.horizontal(), angles.vertical(), tap.pathLength(),
+							angles.horizontal(), angles.vertical(),
+							AcousticScale.blocksToMeters(tap.pathLength()),
 							config.airAbsorption(), config.airTemperatureC(),
 							config.airHumidityPercent(),
 							AirAbsorption.REFERENCE_PRESSURE_KPA,
@@ -389,10 +404,15 @@ public final class ClientAcousticsCommand {
 		return result;
 	}
 
-	private static LateReverbSettings lateSettings(RoomAcousticSnapshot snapshot,
-												   CinemaClientConfig config) {
+	private record LateDiagnostics(LateReflectionSettings settings,
+								   LateReflectionTarget.Result target,
+								   double trim) {
+	}
+
+	private static LateDiagnostics lateSettings(RoomAcousticSnapshot snapshot,
+												CinemaClientConfig config) {
 		AcousticRoom room = snapshot.room();
-		List<LateReverbTarget.Source> sources = new ArrayList<>();
+		List<LateReflectionTarget.Source> sources = new ArrayList<>();
 		for (AcousticSpeaker speaker : snapshot.speakers()) {
 			if (speaker.role() == SpeakerRole.NONE) {
 				continue;
@@ -421,16 +441,17 @@ public final class ClientAcousticsCommand {
 				/ Math.max(1.0e-4, directivity);
 			double sourcePowerGain = Math.min(8.0, onAxisSourceGain
 				* Math.sqrt(powerIntegral));
-			double distance = speaker.position().distanceTo(
-				snapshot.listener().eye());
-			sources.add(new LateReverbTarget.Source(directGain,
+			double distance = AcousticScale.blocksToMeters(
+				speaker.position().distanceTo(snapshot.listener().eye()));
+			sources.add(new LateReflectionTarget.Source(directGain,
 				sourcePowerGain, distance));
 		}
-		LateReverbTarget.Result target = LateReverbTarget.compute(room, sources);
-		return LateReverbSettings.forRoom(room, config.lateReverb(),
-			target.targetWetGainDb(), target.sourceGainDb(),
-			config.lateTrimDb(), target.roomConstant(),
-			target.criticalDistanceMeters());
+		LateReflectionTarget.Result target =
+			LateReflectionTarget.compute(room, sources);
+		double trim = config.lateTrimDb();
+		LateReflectionSettings settings = new LateReflectionSettings(
+			config.lateReverb(), target.sourceGainDb() + trim);
+		return new LateDiagnostics(settings, target, trim);
 	}
 
 	private static Point3 pointOf(Vec3 point) {

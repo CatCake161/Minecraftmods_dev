@@ -12,7 +12,7 @@
 
 > 媒体解码/播放状态/音画时钟归 **AV Receiver**。客户端命令只负责选择本机媒体并发送控制包；投影仪只消费接收器的视频输出，扬声器只消费音频输出。
 
-默认媒体库为 `<game>/cinema/media/`；可在接收器 GUI 的 **Settings → Add library** 添加外部文件夹。默认库使用相对 key，外部库使用 `lib/<id>/<相对路径>`；粘贴已注册库内的绝对路径也会自动转成 key。绝对路径不会写入接收器状态或网络包。媒体列表首次打开时扫描并探测元数据，之后在当前游戏会话内缓存；**Refresh / Refresh library** 强制重新扫描。每个接收器独立播放，可同时播放多个接收器。
+默认媒体库为 `<game>/cinema/media/`；可在接收器 GUI 的 **Settings → Add library** 添加外部文件夹。默认库使用相对 key，外部库使用 `lib/<id>/<相对路径>`；粘贴已注册库内的绝对路径也会自动转成 key。绝对路径不会写入接收器状态或网络包。媒体列表首次打开时扫描并探测元数据，探测结果持久化在 `<game>/cinema/media-cache.json`（按文件大小和修改时间校验）；打开文件夹仍会重新列目录，**Refresh / Refresh library** 强制重新探测。每个接收器分别记住自己的库/文件夹/搜索词，并独立播放，可同时播放多个接收器。
 
 | 指令 | 说明 |
 |---|---|
@@ -20,7 +20,7 @@
 | `/cinema_pause` | 暂停 / 继续 |
 | `/cinema_seek <秒>` | 跳转；当前实现会在关键帧附近重启解码器 |
 | `/cinema_stop` | 停止播放并释放视频纹理 |
-| `/cinema_volume <-60..+6>` | 设置接收器主音量，单位为 dBFS（0 = 数字满刻度，+6 = 最大增益，-60 = 静音） |
+| `/cinema_volume <-60..+18>` | 设置接收器主音量，单位为 dBFS（0 = 数字满刻度，+18 = 最大增益，-60 = 静音；输出端限幅 -0.3 dBFS） |
 | `/cinema_mute` | 切换静音 |
 | `/cinema_receiver info` | 查看最近接收器的媒体/状态/音量（dBFS）/投影仪 |
 | `/cinema_receiver_info` | 同上，`/cinema_receiver` 的兼容别名 |
@@ -80,7 +80,7 @@
 - 一块屏幕同一时间只能被一个投影仪占用；第二个投影仪尝试配对同一屏幕会被拒绝并提示先解除原连接。拆除投影仪、解除连接或投影仪改配其他屏幕时会释放屏幕；旧存档中的重复占用会在加载后自动清理，只保留一个投影仪。
 - 解除连接：潜行右键设备 A，再潜行右键设备 B；只解除 A↔B 这一条连接（支持任意屏幕方块）。同一设备再次潜行右键取消解除选择；两者没有连接时提示。解除选择同样 60 秒超时/断线清除。
 - 接收器不再自动配对投影仪。显式配对（影院线材）：右键接收器再右键投影仪，或反向顺序；接收器保存 `videoTarget`，投影仪保存 `receiverPos`。
-- 显式配对（影院线材）：右键接收器再右键扬声器，或反向顺序；双方保存双向链接。接收器 Speakers 页显示已连接扬声器的声道角色和 `Level` 滑块，可直接调整每只扬声器的电平（-60.0..+6.0 dB，0.5 dB 步进并吸附 0.0 dB；方向键同），改动即保存；列表超过可视行数时用滚轮查看，右侧显示滚动条。未连接对应声道的扬声器时该声道回退虚拟 5.1。
+- 显式配对（影院线材）：右键接收器再右键扬声器，或反向顺序；双方保存双向链接。接收器 Speakers 页显示已连接扬声器的声道角色和 `Level` 滑块，可直接调整每只扬声器的电平（-60.0..+12.0 dB，0.5 dB 步进并吸附 0.0 dB；方向键同），改动即保存；列表超过可视行数时用滚轮查看，右侧显示滚动条。同一角色可以接多只扬声器；L2a 起每只都获得独立 direct source 并同时出声，反射与 late bus 也按每只扬声器生成。**未连接对应声道的物理扬声器时，该声道不创建 direct source，不再 fallback 到默认虚拟位置**。
 - 空手右键投影仪打开正式 GUI：状态区显示屏幕/灯泡/AV 输入；自动/手动投掷比、自动/手动焦距、梯形、亮度、wash、Power ON/OFF、Focus/Keystone/Wash/Warmup 模拟开关都**改动即保存**（按钮立即，滑块约 200ms debounce；Close/Esc 前 flush）。手持物品时保留原版物品/方块交互，不打开 GUI。命令 `/cinema_projector[_client]` 仍可用于调试。
 - AV 接收器与四种扬声器同样只有空手右键打开 GUI；手持物品时保留原版交互。AV 接收器不再向聊天栏打印状态，状态可用 `/cinema_receiver` 查看。
 - 空手右键扬声器打开 Speaker Data，可在顶部编辑自定义名称（最长 32 字符，服务端同步）；接收器 Speakers 列表优先显示该名称。未命名时显示角色/箱体/坐标。列表每行还有 `Ping` 按钮，播放定位音并在方块位置生成约 8 秒粒子光柱。
@@ -105,7 +105,7 @@
 
 创造模式位置：接收器/座位/扬声器在 Functional Blocks，线材/遥控器/朝向校准器在 Tools & Utilities。
 
-5.1 音频路由：接收器用线材连接的扬声器会按 FL/FR/FC/LFE/BL/BR 角色映射到实际位置，每只扬声器可在接收器 Speakers 页调整 `Level`（-60.0..+6.0 dB）；未连接对应声道的扬声器时，该声道回退虚拟 5.1。双声道/单声道媒体会自动上混为 5.1：FL/FR 保持原样，FC 取中置，LFE 取 120 Hz 低通中置，BL/BR 取左右差信号。听者始终使用玩家实际耳朵位置和朝向，不做 Seat/皇帝位或屏幕锁定的声场校正，因此玩家走出影院后空间定位仍然正确。主音量使用 dBFS（-60..+6，+6 为最大增益），静音独立。A2 起直达声距离（`1/max(r,1)`）、ISO 9613-1 空气吸收和遮挡由客户端 Java 计算，OpenAL 距离模型为 `AL_NONE`；空气吸收以 1 m 为 0 dB 参考点，开关/温度/湿度在 Mod Menu。
+5.1 音频路由：接收器用线材连接的扬声器会按 FL/FR/FC/LFE/BL/BR 角色映射到实际位置，每只扬声器可在接收器 Speakers 页调整 `Level`（-60.0..+12.0 dB）；**缺少物理扬声器的声道不创建，不再回退虚拟 5.1**。双声道/单声道媒体会自动上混为 5.1：FL/FR 保持原样，FC 取中置，LFE 取 120 Hz 低通中置，BL/BR 取左右差信号。听者始终使用玩家实际耳朵位置和朝向，不做 Seat/皇帝位或屏幕锁定的声场校正，因此玩家走出影院后空间定位仍然正确。主音量使用 dBFS（-60..+18，+18 为最大增益），静音独立；输出端 `OutputLimiter` 把最终数字混音限制在 -0.3 dBFS，接收器状态行/Signal 页显示当前限幅量。A2 起直达声距离（`1/max(r,1)`）、ISO 9613-1 空气吸收和遮挡由客户端 Java 计算，OpenAL 距离模型为 `AL_NONE`；空气吸收以 1 m 为 0 dB 参考点，开关/温度/湿度在 Mod Menu。
 
 ### 调试命令
 
@@ -114,7 +114,7 @@
 | `/cinema_speaker_data` | 打开 Speaker Data 的类型默认编辑器；`reload` 重新读取 profiles，`info` 打印类型默认、箱体/指向性、profile -3 dB 范围、有效范围与 on-axis 参考电平（低音炮采样 80 Hz），`test <type> <h> <v> <hz>` 打印指向性采样与 on-axis EQ 增益（低音炮额外打印 enclosure 响应和手动 band 响应） |
 | `/cinema_audio_spike` | 运行 5.1/OpenAL 音频测试，结果写入游戏日志 |
 | `/cinema_efx_spike` | A0 EFX/EAXReverb 能力测试：loopback 5.1/HRTF 湿声布局、aux send、CPU、reset；结果到聊天和日志 |
-| `/cinema_acoustics` | A1/A2/A3 调试：输出当前房间平面/尺寸/体积/表面积、材质吸收、Fitzroy RT60（含 x/y/z 轴对面积与平均吸收）、听者和附近扬声器；另输出空气吸收配置（开关/温度/湿度/压力/earlyGain）、late reverb 开关/target/sourceGain/trim/effective/wetDry、R/r_c、RT60_mid/High、20 Hz DC 高通/pre-delay、每扬声器距离增益、8 kHz 空气损失、遮挡 dB/截止/阶数、直达/反射 FIR 状态/taps/maxErr；A2b 另输出每扬声器候选镜面（planes）与验证后的反射 taps（镜像源/反射点/路径/延迟/材质/增益）；另输出房间感知反射延迟上限 order1/2/3/4 与 historySafe。接收器播放时日志另输出活动反射 tap 数（最多每 5 s 一次） |
+| `/cinema_acoustics` | A1/A2/A3 调试：输出当前声学世界尺度（`scale=... m/block`）、房间平面/米制尺寸/体积/表面积、材质吸收、Fitzroy RT60（秒，含 x/y/z 轴对面积与平均吸收）、听者和附近扬声器；另输出空气吸收配置（开关/温度/湿度/压力/earlyGain）、late reflections 开关/target/sourceGain/trim/effective/wetDry、R/r_c、每扬声器米制距离增益、8 kHz 空气损失、遮挡 dB/截止/阶数、直达/反射 FIR 状态/taps/maxErr；A2b 另输出每扬声器候选镜面（planes）与验证后的反射 taps（镜像源/反射点/米制路径/延迟/材质/增益）；另输出房间感知反射延迟上限 order1/2/3/4 与 historySafe。接收器播放时日志另输出活动反射 tap 数（最多每 5 s 一次）；另输出 `openal sourceLimit=... budget=...`（引擎已打开时） |
 | `/cinema_acoustics paths [order]` | A3-R1 诊断：用真实 `ReflectionProbe`/`OcclusionScanner` 统计 2..order 阶镜像路径数、最大延迟、最强增益、visits 和求解耗时；`order` 范围 2–5，默认 3，每扬声器 cap 256；统计包含 LFE 声道；同时输出当前阶延迟上限、逐扬声器 `dropped` 和总计 `delayDropped`。只打印统计；geometric late bus 由 `lateReverb` 开关单独启用 |
 
 ## 5. 手动 / 自动测试
@@ -136,7 +136,7 @@ $env:JAVA_TOOL_OPTIONS="-Dcinema.spike.video=$video -Dcinema.spike.manual=true"
 - 视频停在最后一帧：`/cinema_seek 0` 重播。
 - 屏幕没有画面：确认接收器正在播放、投影仪已用线材配对（`linked`）、屏幕正面朝向投影仪、距离在 128 格内、光路没有不透明方块遮挡。
 - `/cinema_play` 提示找不到文件：文件必须放在默认库或 Settings 添加的外部库；参数用库内 key，或粘贴已注册库内的绝对路径。
-- 每个接收器独立播放，使用独立播放器/纹理/OpenAL context；两个接收器可同时播放。若仍失败，查看日志中的 `cinema audio engine failed` 或 `cinema receiver ...`。
+- 每个接收器独立播放，使用独立播放器/纹理/OpenAL context；两个接收器可同时播放。若仍失败，查看日志中的 `cinema audio: engine failed` 或 `cinema receiver <id>: ...`。
 - `/cinema_projector_client` 没反应：它是客户端命令；真实方块用 `/cinema_projector`。
 - 找不到新命令：重启客户端加载最新代码。
 

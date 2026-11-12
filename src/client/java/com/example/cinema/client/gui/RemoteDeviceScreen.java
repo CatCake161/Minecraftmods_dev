@@ -235,7 +235,8 @@ public final class RemoteDeviceScreen extends Screen {
 			case SPEAKER -> "Speaker";
 		};
 		String name = entry.name().isBlank() ? type : entry.name();
-		return name + " · " + String.format(Locale.ROOT, "%.0f m", entry.distance());
+		return name + " · " + String.format(Locale.ROOT, "%.0f blocks",
+			entry.distance());
 	}
 
 	private String fullEntryLabel(RemoteScanListPayload.Entry entry) {
@@ -247,7 +248,8 @@ public final class RemoteDeviceScreen extends Screen {
 		String name = entry.name().isBlank() ? "(unnamed)" : entry.name();
 		return name + "\n" + type
 			+ "\nBlock: " + entry.pos().toShortString()
-			+ "\nDistance: " + String.format(Locale.ROOT, "%.1f m", entry.distance());
+			+ "\nDistance: " + String.format(Locale.ROOT, "%.1f blocks",
+				entry.distance());
 	}
 
 	private String truncate(String text, int maxWidth) {

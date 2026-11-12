@@ -216,9 +216,10 @@ public final class ProjectorConfigScreen extends Screen {
 			},
 			value -> focusAuto
 				? (screenDistance > 0.5
-					? String.format(Locale.ROOT, "Focus: auto · %.2f m", screenDistance)
+					? String.format(Locale.ROOT,
+						"Focus: auto · %.2f blocks", screenDistance)
 					: "Focus: auto")
-				: String.format(Locale.ROOT, "Focus %.2f m", value));
+				: String.format(Locale.ROOT, "Focus %.2f blocks", value));
 		keystoneHorizontalDegreesSlider = addSlider(rightX, row2, half,
 			ProjectorBlockEntity.MIN_KEYSTONE_DEGREES, ProjectorBlockEntity.MAX_KEYSTONE_DEGREES,
 			draftKeystoneHorizontalDegrees, 1.0,
@@ -400,7 +401,8 @@ public final class ProjectorConfigScreen extends Screen {
 			resolvedThrowRatio = optics.throwRatio();
 			String screenName = linkedScreenName();
 			String screenLabel = screenName.isEmpty() ? "" : screenName + " · ";
-			statusLines.add(String.format(Locale.ROOT, "Screen: %s%d×%d @ %s · %.1f m · linked",
+			statusLines.add(String.format(Locale.ROOT,
+				"Screen: %s%d×%d @ %s · %.1f blocks · linked",
 				screenLabel, screen.width(), screen.height(), screen.master().toShortString(),
 				screenDistance));
 			if (throwAuto && throwSlider != null) {

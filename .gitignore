@@ -46,3 +46,7 @@ replay_*.log
 
 # cinema spike
 spike/testmedia/
+
+# local run artifacts / user-imported speaker data
+/logs/
+/speaker data/

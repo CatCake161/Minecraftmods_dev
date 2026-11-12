@@ -1,23 +1,26 @@
 package com.example.cinema;
 
 import com.example.cinema.block.AvReceiverBlock;
-import com.example.cinema.block.FloorstandingSpeakerBlock;
-import com.example.cinema.block.ProjectorBlock;
-import com.example.cinema.block.ScreenBlock;
-import com.example.cinema.block.SeatBlock;
-import com.example.cinema.block.SpeakerBlock;
 import com.example.cinema.block.entity.AvReceiverBlockEntity;
 import com.example.cinema.block.entity.ProjectorBlockEntity;
 import com.example.cinema.block.entity.ScreenBlockEntity;
 import com.example.cinema.block.entity.SeatBlockEntity;
 import com.example.cinema.block.entity.SpeakerBlockEntity;
 import com.example.cinema.block.entity.SpeakerType;
+import com.example.cinema.block.FloorstandingSpeakerBlock;
+import com.example.cinema.block.ProjectorBlock;
+import com.example.cinema.block.ScreenBlock;
+import com.example.cinema.block.SeatBlock;
+import com.example.cinema.block.SpeakerBlock;
 import com.example.cinema.command.ProjectorCommand;
 import com.example.cinema.entity.SeatEntity;
 import com.example.cinema.item.CableItem;
 import com.example.cinema.item.RemoteControllerItem;
 import com.example.cinema.item.SpeakerAlignmentToolItem;
-import com.example.cinema.pairing.CinemaPairing;
+import com.example.cinema.network.AvReceiverControlHandler;
+import com.example.cinema.network.AvReceiverControlPayload;
+import com.example.cinema.network.DeviceNameHandler;
+import com.example.cinema.network.DeviceNamePayload;
 import com.example.cinema.network.ProjectorSettingsHandler;
 import com.example.cinema.network.ProjectorSettingsPayload;
 import com.example.cinema.network.RemoteBindHandler;
@@ -29,24 +32,21 @@ import com.example.cinema.network.RemotePairingRequestPayload;
 import com.example.cinema.network.RemoteScanHandler;
 import com.example.cinema.network.RemoteScanListPayload;
 import com.example.cinema.network.RemoteScanRequestPayload;
-import com.example.cinema.network.AvReceiverControlHandler;
-import com.example.cinema.network.AvReceiverControlPayload;
-import com.example.cinema.network.DeviceNameHandler;
-import com.example.cinema.network.DeviceNamePayload;
 import com.example.cinema.network.SpeakerLevelHandler;
 import com.example.cinema.network.SpeakerLevelPayload;
 import com.example.cinema.network.SpeakerNameHandler;
 import com.example.cinema.network.SpeakerNamePayload;
 import com.example.cinema.network.SpeakerRoleHandler;
 import com.example.cinema.network.SpeakerRolePayload;
+import com.example.cinema.pairing.CinemaPairing;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.itemgroup.v1.ItemGroupEvents;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
-import net.minecraft.core.Registry;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.Registry;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.MobCategory;
@@ -55,14 +55,14 @@ import net.minecraft.world.item.CreativeModeTabs;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class Cinema implements ModInitializer {
 	public static final String MOD_ID = "cinema";
 
-	// Use the mod id as the logger name so log lines are easy to trace back.
+	// Single underlying logger. Application code should use CinemaLog so every
+	// line keeps the "cinema <area>: <message>" shape.
 	public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
 	public static final ScreenBlock SCREEN_BLOCK = new ScreenBlock(
@@ -194,7 +194,7 @@ public class Cinema implements ModInitializer {
 			entries.accept(SPEAKER_ALIGNMENT_TOOL_ITEM);
 		});
 
-		LOGGER.info("Cinema is loading!");
+		CinemaLog.info(CinemaLog.LIFECYCLE, "loading");
 	}
 
 	public static ResourceLocation id(String path) {

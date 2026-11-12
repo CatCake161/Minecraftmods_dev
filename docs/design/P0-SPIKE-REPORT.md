@@ -174,6 +174,7 @@ Sodium/Iris/BSL 只作为测试环境放入 `run/mods`、`run/shaderpacks`，不
 
 | 能力 | 结果 |
 |---|---|
+| 每 context source 上限 | **256**（255 mono + 1 stereo，默认 `[general] sources`）；实测两个独立 context 各可创建 128 个 source |
 | EFX | 1.0，最多 **2 个 auxiliary send** |
 | HRTF | 支持（`ALC_SOFT_HRTF`） |
 | 扬声器半径 | 支持（`AL_EXT_SOURCE_RADIUS`） |
