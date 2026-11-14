@@ -1,6 +1,5 @@
 package com.example.cinema.client.gui;
 
-import com.example.cinema.Cinema;
 import com.example.cinema.block.entity.AvReceiverBlockEntity;
 import com.example.cinema.block.entity.ProjectorBlockEntity;
 import com.example.cinema.block.entity.SpeakerBlockEntity;
@@ -21,9 +20,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
-import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 
@@ -35,7 +32,7 @@ import java.util.Locale;
  *
  * <p>The server sends the list of compatible loaded devices around the anchor.
  * The player can link/unlink any row; the anchor access is revalidated on every
- * request and action (normal 16-block range or a bound remote within 128).
+ * request and action (normal 16-block range or any held remote within 128).
  */
 public final class RemotePairingScreen extends Screen {
 	private static final int ROW_HEIGHT = 20;
@@ -181,23 +178,14 @@ public final class RemotePairingScreen extends Screen {
 		if (player == null) {
 			return false;
 		}
-		if (player.blockPosition().distSqr(entry.pos()) <= 16.0 * 16.0) {
+		if (player.blockPosition().distSqr(entry.pos())
+			<= RemoteControlAccess.MAX_DIRECT_ACCESS_DISTANCE
+				* RemoteControlAccess.MAX_DIRECT_ACCESS_DISTANCE) {
 			return true;
 		}
-		if (anchorKind != RemoteBinding.Kind.RECEIVER
-			|| player.blockPosition().distSqr(anchorPos)
-				> RemoteControlAccess.MAX_REMOTE_DISTANCE * RemoteControlAccess.MAX_REMOTE_DISTANCE) {
-			return false;
-		}
-		for (InteractionHand hand : InteractionHand.values()) {
-			ItemStack stack = player.getItemInHand(hand);
-			if (stack.is(Cinema.REMOTE_CONTROLLER_ITEM)
-				&& RemoteBinding.matches(stack, player.level().dimension(), anchorPos,
-					RemoteBinding.Kind.RECEIVER)) {
-				return true;
-			}
-		}
-		return false;
+		return entry.kind() == RemotePairingListPayload.TargetKind.SPEAKER
+			? RemoteControlAccess.canAccessLinkedSpeaker(player, entry.pos())
+			: RemoteControlAccess.canAccessLinkedProjector(player, entry.pos());
 	}
 
 	private void openEntry(RemotePairingListPayload.Entry entry) {

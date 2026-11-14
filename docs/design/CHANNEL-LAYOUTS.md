@@ -169,7 +169,7 @@ BR = 0.5 * (R - L)
 
 - 5.1 → stereo：`L = FL + 0.707*FC + 0.707*BL`，`R = FR + 0.707*FC + 0.707*BR`；LFE 可选丢弃或低电平混入。
 - 7.1 → 5.1：SL/SR 按系数折叠到 BL/BR 或 FL/FR，需试听决定。
-- 任何矩阵都要限幅/软削波，避免多声道求和削波。
+- 矩阵纯函数本身不钳位；下混后仍经过接收器 `OutputLimiter`，由它在 -0.3 dBFS ceiling 统一处理求和峰值。当前 `SurroundDownmix` 已实现 5.1 → stereo 这一段（FC/BL/BR 使用 `sqrt(0.5)`，LFE 默认丢弃，可选低电平混入）。
 
 ### 4.3 LFE / 低频管理
 

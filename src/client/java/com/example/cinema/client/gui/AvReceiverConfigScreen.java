@@ -5,13 +5,11 @@ import com.example.cinema.block.entity.ProjectorBlockEntity;
 import com.example.cinema.block.entity.SpeakerBlockEntity;
 import com.example.cinema.block.entity.SpeakerRole;
 import com.example.cinema.block.entity.SpeakerType;
-import com.example.cinema.Cinema;
 import com.example.cinema.CinemaLog;
 import com.example.cinema.client.config.CinemaClientConfig;
 import com.example.cinema.client.media.AvReceiverPlayback;
 import com.example.cinema.client.media.AvReceiverPlaybackManager;
 import com.example.cinema.client.media.CinemaPlayer;
-import com.example.cinema.client.media.audio.playback.OutputLimiter;
 import com.example.cinema.client.media.LibraryRegistry;
 import com.example.cinema.client.media.MediaLibrary;
 import com.example.cinema.client.media.MediaLibraryCache;
@@ -22,6 +20,7 @@ import com.example.cinema.client.render.SpeakerLocator;
 import com.example.cinema.item.RemoteBinding;
 import com.example.cinema.item.RemoteControlAccess;
 import com.example.cinema.network.AvReceiverControlPayload;
+import com.example.cinema.pairing.CinemaPairing;
 import com.example.cinema.util.CinemaNames;
 import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.Button;
@@ -36,8 +35,6 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.FormattedCharSequence;
-import net.minecraft.world.InteractionHand;
-import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.ChunkPos;
@@ -89,9 +86,10 @@ public final class AvReceiverConfigScreen extends Screen {
 	private final MediaState mediaState;
 	private Tab tab = Tab.MEDIA;
 	private final List<EntryView> entries = new ArrayList<>();
-	private final List<String> speakerLines = new ArrayList<>();
+	private int detectedSpeakers;
 	private final List<SpeakerRow> linkedSpeakers = new ArrayList<>();
 	private final Map<BlockPos, SpeakerLevelSlider> speakerLevelSliders = new LinkedHashMap<>();
+	private final Map<BlockPos, Button> speakerPingButtons = new LinkedHashMap<>();
 	private final Map<BlockPos, Button> speakerAccessButtons = new LinkedHashMap<>();
 	private String speakerRowsKey = "";
 	private String builtSpeakerRowsKey = "";
@@ -188,6 +186,7 @@ public final class AvReceiverConfigScreen extends Screen {
 	protected void init() {
 		super.init();
 		speakerLevelSliders.clear();
+		speakerPingButtons.clear();
 		speakerAccessButtons.clear();
 		panelWidth = Math.min(width - 12, 420);
 		panelHeight = Math.min(height - 12, 300);
@@ -319,7 +318,9 @@ public final class AvReceiverConfigScreen extends Screen {
 		}
 		if (minecraft != null && minecraft.level != null && minecraft.level.getGameTime() % 20L == 0L) {
 			refreshWarnings();
-			refreshSpeakers();
+			if (tab == Tab.SPEAKERS) {
+				refreshSpeakers();
+			}
 			ensureReceiverProbe();
 			if (tab == Tab.SPEAKERS
 				&& !speakerRowsKey.equals(builtSpeakerRowsKey)
@@ -642,8 +643,11 @@ public final class AvReceiverConfigScreen extends Screen {
 			volumeSlider.setExternal(receiver.volumeDb());
 		}
 		syncSpeakerLevels();
+		for (Map.Entry<BlockPos, Button> entry : speakerPingButtons.entrySet()) {
+			entry.getValue().active = canUseSpeakerRow(entry.getKey());
+		}
 		for (Map.Entry<BlockPos, Button> entry : speakerAccessButtons.entrySet()) {
-			entry.getValue().active = canAccessSpeaker(entry.getKey());
+			entry.getValue().active = canUseSpeakerRow(entry.getKey());
 		}
 		if (playSelectedButton != null) {
 			playSelectedButton.active = selectedFile() != null && !pendingPlay;
@@ -812,7 +816,7 @@ public final class AvReceiverConfigScreen extends Screen {
 		graphics.drawString(font, "Linked " + receiver.speakerTargets().size()
 			+ "  ·  routing " + (playback == null ? "idle"
 				: "physical " + physical + "/6 (" + physicalSpeakers + " spk)")
-			+ "  ·  detected " + speakerLines.size(),
+			+ "  ·  detected " + detectedSpeakers,
 			contentLeft, y + 11, 0x9A9A9A, false);
 		graphics.drawString(font, truncate("Channel trim "
 			+ formatDb(SpeakerBlockEntity.MIN_LEVEL_DB) + " .. "
@@ -828,16 +832,18 @@ public final class AvReceiverConfigScreen extends Screen {
 		int labelWidth = speakerLabelWidth();
 		for (int i = 0; i < visibleRows && speakerScroll + i < linkedSpeakers.size(); i++) {
 			SpeakerRow row = linkedSpeakers.get(speakerScroll + i);
-			SpeakerLevelSlider slider = speakerLevelSliders.get(row.pos());
-			if (slider == null) {
-				continue;
+			int rowY = speakerRowsTop() + i * SPEAKER_ROW_HEIGHT;
+			String label;
+			if (!row.loaded()) {
+				label = "Unloaded " + row.pos().toShortString();
+			} else if (row.name().isEmpty()) {
+				label = row.role().label() + " " + speakerTypeShortLabel(row.type())
+					+ " " + row.pos().toShortString();
+			} else {
+				label = row.name() + " (" + row.role().label() + ")";
 			}
-			String label = row.name().isEmpty()
-				? row.role().label() + " " + speakerTypeShortLabel(row.type())
-					+ " " + row.pos().toShortString()
-				: row.name() + " (" + row.role().label() + ")";
 			graphics.drawString(font, truncate(label, labelWidth - 4),
-				contentLeft, slider.getY() + 4, 0xB8B8B8, false);
+				contentLeft, rowY + 4, 0xB8B8B8, false);
 		}
 		int maxScroll = Math.max(0, linkedSpeakers.size() - visibleRows);
 		if (maxScroll > 0) {
@@ -898,12 +904,13 @@ public final class AvReceiverConfigScreen extends Screen {
 
 	private static String limiterLine(AvReceiverPlayback playback) {
 		float reduction = playback == null ? 0.0f : playback.limiterReductionDb();
+		double ceiling = CinemaClientConfig.get().limiterCeilingDb();
 		if (reduction > 0.05f) {
 			return String.format(Locale.ROOT, "-%.1f dB  (ceiling %.1f dBFS)",
-				reduction, OutputLimiter.CEILING_DB);
+				reduction, ceiling);
 		}
 		return String.format(Locale.ROOT, "idle  (ceiling %.1f dBFS)",
-			OutputLimiter.CEILING_DB);
+			ceiling);
 	}
 
 	private void drawSettingsTab(GuiGraphics graphics) {
@@ -969,6 +976,16 @@ public final class AvReceiverConfigScreen extends Screen {
 			SpeakerRow row = linkedSpeakers.get(rowIndex);
 			double distance = Math.sqrt(Vec3.atCenterOf(row.pos())
 				.distanceToSqr(Vec3.atCenterOf(receiver.getBlockPos())));
+			if (!row.loaded()) {
+				renderWrappedTooltip(graphics,
+					"Speaker (chunk not loaded)"
+						+ "\nBlock: " + row.pos().toShortString()
+						+ "\nDistance from receiver: "
+						+ String.format(Locale.ROOT, "%.1f blocks", distance)
+						+ "\nMove closer to load the chunk before editing.",
+					mouseX, mouseY);
+				return;
+			}
 			String title = row.name().isEmpty() ? "(unnamed)" : row.name();
 			renderWrappedTooltip(graphics,
 				title + "\nRole: " + row.role().label() + " · " + speakerTypeLabel(row.type())
@@ -1242,17 +1259,32 @@ public final class AvReceiverConfigScreen extends Screen {
 	}
 
 	private void refreshSpeakers() {
-		speakerLines.clear();
 		linkedSpeakers.clear();
+		detectedSpeakers = 0;
 		Level level = receiver.getLevel();
 		if (level == null) {
 			speakerRowsKey = "";
 			return;
 		}
+		// The receiver's link list is authoritative: every linked speaker is
+		// listed even when its chunk is outside the local scan radius. Detection
+		// uses the same 128-block link range instead of a smaller probe radius.
+		for (BlockPos target : receiver.speakerTargets()) {
+			if (level.isLoaded(target)
+				&& level.getBlockEntity(target) instanceof SpeakerBlockEntity speaker) {
+				linkedSpeakers.add(new SpeakerRow(speaker.getBlockPos(), speaker.name(),
+					speaker.role(), speaker.type(), speaker.levelDb(), true));
+			} else {
+				linkedSpeakers.add(new SpeakerRow(target, "", SpeakerRole.NONE, null,
+					0.0, false));
+			}
+		}
 		BlockPos center = receiver.getBlockPos();
 		Vec3 origin = Vec3.atCenterOf(center);
+		double maxDistance = CinemaPairing.MAX_LINK_DISTANCE;
+		double maxDistanceSqr = maxDistance * maxDistance;
 		ChunkPos centerChunk = new ChunkPos(center);
-		int radius = 3;
+		int radius = (int) Math.ceil(maxDistance / 16.0);
 		for (int chunkX = centerChunk.x - radius; chunkX <= centerChunk.x + radius; chunkX++) {
 			for (int chunkZ = centerChunk.z - radius; chunkZ <= centerChunk.z + radius; chunkZ++) {
 				LevelChunk chunk = level.getChunkSource().getChunkNow(chunkX, chunkZ);
@@ -1263,25 +1295,23 @@ public final class AvReceiverConfigScreen extends Screen {
 					if (!(blockEntity instanceof SpeakerBlockEntity speaker)) {
 						continue;
 					}
-					if (Vec3.atCenterOf(speaker.getBlockPos()).distanceToSqr(origin) > 48.0 * 48.0) {
+					if (Vec3.atCenterOf(speaker.getBlockPos()).distanceToSqr(origin) > maxDistanceSqr) {
 						continue;
 					}
-					boolean linked = receiver.speakerTargets().contains(speaker.getBlockPos());
-					speakerLines.add((linked ? "LINKED " : "       ") + speaker.role().label() + "  "
-						+ speaker.type().id() + "  " + speaker.getBlockPos().toShortString());
-					if (linked) {
-						linkedSpeakers.add(new SpeakerRow(speaker.getBlockPos(), speaker.name(),
-							speaker.role(), speaker.type(), speaker.levelDb()));
-					}
+					detectedSpeakers++;
 				}
 			}
 		}
-		speakerLines.sort(String.CASE_INSENSITIVE_ORDER);
-		linkedSpeakers.sort(Comparator.comparingInt(row -> row.role().ordinal()));
+		linkedSpeakers.sort(Comparator
+			.comparingInt((SpeakerRow row) -> row.loaded() ? 0 : 1)
+			.thenComparingInt(row -> row.role().ordinal())
+			.thenComparingLong(row -> row.pos().asLong()));
 		StringBuilder key = new StringBuilder();
 		for (SpeakerRow row : linkedSpeakers) {
 			key.append(row.pos().asLong()).append(':').append(row.name()).append(':')
-				.append(row.role().name()).append(':').append(row.type().id()).append(';');
+				.append(row.role().name()).append(':')
+				.append(row.type() == null ? "-" : row.type().id()).append(':')
+				.append(row.loaded()).append(';');
 		}
 		speakerRowsKey = key.toString();
 	}
@@ -1302,15 +1332,21 @@ public final class AvReceiverConfigScreen extends Screen {
 		for (int i = 0; i < visibleRows && speakerScroll + i < linkedSpeakers.size(); i++) {
 			SpeakerRow row = linkedSpeakers.get(speakerScroll + i);
 			int rowY = speakerRowsTop() + i * SPEAKER_ROW_HEIGHT;
-			addRenderableWidget(Button.builder(Component.literal("Ping"),
+			Button ping = Button.builder(Component.literal("Ping"),
 					button -> pingSpeaker(row))
-				.bounds(pingX, rowY, pingWidth, 16).build());
+				.bounds(pingX, rowY, pingWidth, 16).build();
+			ping.active = canUseSpeakerRow(row.pos());
+			addRenderableWidget(ping);
+			speakerPingButtons.put(row.pos(), ping);
 			Button access = Button.builder(Component.literal("Access"),
 					button -> openSpeakerAccess(row))
 				.bounds(accessX, rowY, accessWidth, 16).build();
-			access.active = canAccessSpeaker(row.pos());
+			access.active = canUseSpeakerRow(row.pos());
 			addRenderableWidget(access);
 			speakerAccessButtons.put(row.pos(), access);
+			if (!row.loaded()) {
+				continue;
+			}
 			SpeakerLevelSlider slider = new SpeakerLevelSlider(sliderX, rowY, sliderWidth, 16,
 				row.pos(), row.levelDb());
 			addRenderableWidget(slider);
@@ -1318,26 +1354,21 @@ public final class AvReceiverConfigScreen extends Screen {
 		}
 	}
 
+	private boolean canUseSpeakerRow(BlockPos speakerPos) {
+		return isSpeakerLoaded(speakerPos) && canAccessSpeaker(speakerPos);
+	}
+
+	private boolean isSpeakerLoaded(BlockPos speakerPos) {
+		return minecraft != null && minecraft.level != null
+			&& minecraft.level.isLoaded(speakerPos)
+			&& minecraft.level.getBlockEntity(speakerPos) instanceof SpeakerBlockEntity;
+	}
+
 	private boolean canAccessSpeaker(BlockPos speakerPos) {
 		if (minecraft == null || minecraft.player == null) {
 			return false;
 		}
-		if (minecraft.player.blockPosition().distSqr(speakerPos) <= 16.0 * 16.0) {
-			return true;
-		}
-		if (minecraft.player.blockPosition().distSqr(receiver.getBlockPos())
-			> RemoteControlAccess.MAX_REMOTE_DISTANCE * RemoteControlAccess.MAX_REMOTE_DISTANCE) {
-			return false;
-		}
-		for (InteractionHand hand : InteractionHand.values()) {
-			ItemStack stack = minecraft.player.getItemInHand(hand);
-			if (stack.is(Cinema.REMOTE_CONTROLLER_ITEM)
-				&& RemoteBinding.matches(stack, minecraft.player.level().dimension(),
-					receiver.getBlockPos(), RemoteBinding.Kind.RECEIVER)) {
-				return true;
-			}
-		}
-		return false;
+		return RemoteControlAccess.canAccessSpeaker(minecraft.player, speakerPos);
 	}
 
 	private void openSpeakerAccess(SpeakerRow row) {
@@ -1676,7 +1707,7 @@ public final class AvReceiverConfigScreen extends Screen {
 	}
 
 	private record SpeakerRow(BlockPos pos, String name, SpeakerRole role, SpeakerType type,
-							  double levelDb) {
+							  double levelDb, boolean loaded) {
 	}
 
 	private record ReceiverKey(ResourceKey<Level> dimension, BlockPos pos) {

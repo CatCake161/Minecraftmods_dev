@@ -12,8 +12,6 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 
 /** Validates and applies the speaker role selected in the speaker GUI. */
 public final class SpeakerRoleHandler {
-	private static final double MAX_CONTROL_DISTANCE = 16.0;
-
 	private SpeakerRoleHandler() {
 	}
 
@@ -21,9 +19,7 @@ public final class SpeakerRoleHandler {
 		ServerPlayer player = context.player();
 		ServerLevel level = player.serverLevel();
 		BlockPos pos = payload.speakerPos();
-		boolean near = player.blockPosition().distSqr(pos) <= MAX_CONTROL_DISTANCE * MAX_CONTROL_DISTANCE;
-		if (!level.isLoaded(pos)
-			|| (!near && !RemoteControlAccess.canAccessLinkedSpeaker(player, pos))) {
+		if (!level.isLoaded(pos) || !RemoteControlAccess.canAccessSpeaker(player, pos)) {
 			error(player, "Speaker is out of range");
 			return;
 		}

@@ -36,10 +36,19 @@ public final class OutputLimiter {
 	 * untouched.
 	 */
 	public static float gainFor(float predictedPeak) {
-		if (!(predictedPeak > CEILING_LINEAR)) {
+		return gainFor(predictedPeak, CEILING_DB);
+	}
+
+	/**
+	 * Ceiling-aware variant used by the configurable limiter. A non-finite or
+	 * out-of-range ceiling falls back to {@link #CEILING_DB}.
+	 */
+	public static float gainFor(float predictedPeak, float ceilingDb) {
+		float ceilingLinear = ceilingLinear(ceilingDb);
+		if (!(predictedPeak > ceilingLinear)) {
 			return 1.0f;
 		}
-		return Math.max(MIN_GAIN, CEILING_LINEAR / predictedPeak);
+		return Math.max(MIN_GAIN, ceilingLinear / predictedPeak);
 	}
 
 	/**
@@ -47,6 +56,16 @@ public final class OutputLimiter {
 	 * higher target is approached with {@link #RELEASE_SECONDS}.
 	 */
 	public static float advance(float current, float target, double dt) {
+		return advance(current, target, dt, RELEASE_SECONDS);
+	}
+
+	/**
+	 * Release-time aware variant used by the configurable limiter. A
+	 * non-positive or non-finite release time falls back to
+	 * {@link #RELEASE_SECONDS}.
+	 */
+	public static float advance(float current, float target, double dt,
+								double releaseSeconds) {
 		if (!Float.isFinite(current) || current <= 0.0f) {
 			current = 1.0f;
 		}
@@ -57,9 +76,19 @@ public final class OutputLimiter {
 		if (target < current) {
 			return target;
 		}
-		double alpha = 1.0 - Math.exp(-Math.max(0.0, dt) / RELEASE_SECONDS);
+		double release = Double.isFinite(releaseSeconds) && releaseSeconds > 0.0
+			? releaseSeconds : RELEASE_SECONDS;
+		double alpha = 1.0 - Math.exp(-Math.max(0.0, dt) / release);
 		float next = current + (target - current) * (float) alpha;
 		return Math.min(target, next);
+	}
+
+	private static float ceilingLinear(float ceilingDb) {
+		if (!Float.isFinite(ceilingDb) || ceilingDb > 0.0f
+			|| ceilingDb < -120.0f) {
+			return CEILING_LINEAR;
+		}
+		return (float) Math.pow(10.0, ceilingDb / 20.0);
 	}
 
 	/** Positive gain reduction in dB, or {@code 0} when the limiter is idle. */

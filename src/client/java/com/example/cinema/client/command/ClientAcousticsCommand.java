@@ -29,6 +29,7 @@ import com.example.cinema.client.media.audio.acoustics.scene.AcousticSpeaker;
 import com.example.cinema.client.media.audio.acoustics.scene.RoomAcousticSnapshot;
 import com.example.cinema.client.media.audio.dsp.MinimumPhaseFir;
 import com.example.cinema.client.media.audio.playback.CinemaAudioEngine;
+import com.example.cinema.client.media.audio.reflection.LateReflectionAudibility;
 import com.example.cinema.client.media.audio.reflection.LateReflectionSettings;
 import com.example.cinema.client.media.audio.reflection.LateReflectionTarget;
 import com.example.cinema.client.media.audio.speaker.SpeakerDataProfile;
@@ -82,11 +83,10 @@ public final class ClientAcousticsCommand {
 		}
 		CinemaClientConfig config = CinemaClientConfig.get();
 		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
-			"acoustics: scale=%.2f m/block air=%s T=%.1f C RH=%.0f %% p=%.3f kPa "
-				+ "earlyGain=%+.1f dB (debug)",
+			"acoustics: scale=%.2f m/block air=%s T=%.1f C RH=%.0f %% p=%.3f kPa",
 			config.metersPerBlock(), config.airAbsorption() ? "ON" : "OFF",
 			config.airTemperatureC(), config.airHumidityPercent(),
-			AirAbsorption.REFERENCE_PRESSURE_KPA, config.earlyGainDb())));
+			AirAbsorption.REFERENCE_PRESSURE_KPA)));
 		int openAlLimit = CinemaAudioEngine.openAlSourceLimit();
 		source.sendFeedback(Component.literal(openAlLimit < 0
 			? "acoustics: openal sourceLimit=unknown (no active engine)"
@@ -100,14 +100,19 @@ public final class ClientAcousticsCommand {
 		LateDiagnostics late = lateSettings(snapshot, config);
 		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
 			"acoustics: late reflections=%s target=%+.1f dB sourceGain=%+.1f dB "
-				+ "trim=%+.1f dB effective=%+.1f dB wetDry=%+.1f dB "
-				+ "R=%.1f m2 rc=%.2f m",
+				+ "effective=%+.1f dB R=%.1f m2 rc=%.2f m",
 			late.settings().enabled() ? "ON" : "OFF",
 			late.target().targetWetGainDb(), late.target().sourceGainDb(),
-			late.trim(), late.settings().wetGainDb(),
-			late.target().targetWetGainDb() + late.trim(),
+			late.settings().wetGainDb(),
 			late.target().roomConstant(),
 			late.target().criticalDistanceMeters())));
+		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
+			"acoustics: late floor=%+.0f dB re direct, direct=%.1f dB, "
+				+ "tapFloor=%.1f dB, RT60=%.2f s, lateMaxDelay=%.1f ms",
+			config.lateFloorDb(),
+			LateReflectionAudibility.amplitudeDb(Math.sqrt(late.directPower())),
+			LateReflectionAudibility.amplitudeDb(Math.sqrt(late.floorPower())),
+			late.rt60Seconds(), late.maxDelaySeconds() * 1_000.0)));
 		RoomFill fill = room.fill();
 		String fillState = fill == null ? "none"
 			: fill.complete() ? "complete" : "incomplete";
@@ -120,12 +125,13 @@ public final class ClientAcousticsCommand {
 			room.sizeLabel(), room.volumeMeters3(), room.surfaceAreaMeters2())));
 		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
 			"acoustics: reflection delay limit order1/2/3/4=%.1f/%.1f/%.1f/%.1f ms "
-				+ "historySafe=%.1f ms",
+				+ "historySafe=%.1f ms lateLimit=%.1f ms",
 			delayLimit.maxDelaySeconds(1) * 1_000.0,
 			delayLimit.maxDelaySeconds(2) * 1_000.0,
 			delayLimit.maxDelaySeconds(3) * 1_000.0,
 			delayLimit.maxDelaySeconds(4) * 1_000.0,
-			CinemaAudioEngine.historySafeDelaySeconds() * 1_000.0)));
+			CinemaAudioEngine.historySafeDelaySeconds() * 1_000.0,
+			late.maxDelaySeconds() * 1_000.0)));
 		if (fill == null) {
 			source.sendFeedback(Component.literal("acoustics: fill=none"));
 		} else {
@@ -319,9 +325,12 @@ public final class ClientAcousticsCommand {
 			return 0;
 		}
 		AcousticRoom room = snapshot.room();
-		ReflectionDelayLimit delayLimit = ReflectionDelayBudget.forRoom(room,
-			CinemaAudioEngine.maxReflectionDelaySeconds(),
-			CinemaAudioEngine.historySafeDelaySeconds());
+		CinemaClientConfig config = CinemaClientConfig.get();
+		double lateMaxDelay = LateReflectionAudibility.maxDelaySeconds(
+			room.rt60MidMeters(), config.lateFloorDb(),
+			CinemaAudioEngine.maxReflectionDelaySeconds());
+		ReflectionDelayLimit delayLimit =
+			ReflectionDelayLimit.constant(lateMaxDelay);
 		ReflectionProbe probe = new ReflectionProbe(level);
 		Point3 listener = pointOf(snapshot.listener().eye());
 		int total = 0;
@@ -329,8 +338,10 @@ public final class ClientAcousticsCommand {
 		long totalNanos = 0L;
 		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
 			"acoustics: higher-order paths maxOrder=%d capPerSpeaker=%d "
-				+ "visitCap=%d (specular only, no scattering, not wired to audio)",
-			maxOrder, PATH_STAT_MAX, ImageSourcePathSolver.MAX_VISITS)));
+				+ "visitCap=%d lateLimit=%.1f ms floor=%+.0f dB re direct "
+				+ "(specular only, no scattering, not wired to audio)",
+			maxOrder, PATH_STAT_MAX, ImageSourcePathSolver.MAX_VISITS,
+			lateMaxDelay * 1_000.0, config.lateFloorDb())));
 		List<AcousticSpeaker> speakers = nearestSpeakers(snapshot);
 		for (AcousticSpeaker speaker : speakers) {
 			if (speaker.role() == SpeakerRole.NONE) {
@@ -406,7 +417,9 @@ public final class ClientAcousticsCommand {
 
 	private record LateDiagnostics(LateReflectionSettings settings,
 								   LateReflectionTarget.Result target,
-								   double trim) {
+								   double directPower,
+								   double floorPower, double maxDelaySeconds,
+								   double rt60Seconds) {
 	}
 
 	private static LateDiagnostics lateSettings(RoomAcousticSnapshot snapshot,
@@ -448,10 +461,21 @@ public final class ClientAcousticsCommand {
 		}
 		LateReflectionTarget.Result target =
 			LateReflectionTarget.compute(room, sources);
-		double trim = config.lateTrimDb();
 		LateReflectionSettings settings = new LateReflectionSettings(
-			config.lateReverb(), target.sourceGainDb() + trim);
-		return new LateDiagnostics(settings, target, trim);
+			config.lateReverb(), target.sourceGainDb());
+		double directPower = 0.0;
+		for (LateReflectionTarget.Source source : sources) {
+			double amplitude = source.directGainAtListener()
+				/ Math.max(1.0, source.distanceMeters());
+			directPower += amplitude * amplitude;
+		}
+		double floorPower = LateReflectionAudibility.floorPower(
+			directPower, config.lateFloorDb());
+		double rt60 = room == null ? 0.0 : room.rt60MidMeters();
+		double maxDelay = LateReflectionAudibility.maxDelaySeconds(rt60,
+			config.lateFloorDb(), CinemaAudioEngine.maxReflectionDelaySeconds());
+		return new LateDiagnostics(settings, target, directPower,
+			floorPower, maxDelay, rt60);
 	}
 
 	private static Point3 pointOf(Vec3 point) {

@@ -123,18 +123,14 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	 */
 	private static final float MAX_SOURCE_GAIN = 64.0f;
 	/**
-	 * Hard geometric-delay ceiling. The room-aware budget can be smaller; this
-	 * keeps the raw history and late bus within their allocated capacity.
+	 * Raw per-channel history for per-tap reflections and direct propagation
+	 * delay. 262144 frames is ~5.46 s; the block-sized guard leaves ~5.42 s of
+	 * safe delay. This is a memory capacity, not an RT60 or geometric hard cap.
 	 */
-	public static final double MAX_GEOMETRIC_DELAY_SECONDS = 1.30;
-	/**
-	 * Raw per-channel history for per-tap reflections. 65536 frames is
-	 * ~1.365 s; the block-sized guard leaves ~1.323 s of safe delay.
-	 */
-	private static final int RAW_HISTORY_FRAMES = 65_536;
+	private static final int RAW_HISTORY_FRAMES = 262_144;
 	private static final int RAW_HISTORY_MASK = RAW_HISTORY_FRAMES - 1;
-	/** Order-2/3/4 geometric late bus: ~1.365 s history and 512 taps. */
-	private static final int LATE_BUS_HISTORY_FRAMES = 65_536;
+	/** Order-2/3/4 geometric late bus: ~5.46 s history and 512 taps. */
+	private static final int LATE_BUS_HISTORY_FRAMES = 262_144;
 	/** Maximum taps the geometric late bus renders. */
 	public static final int LATE_BUS_MAX_TAPS = 512;
 	/** 30 ms fade-in/out for reflection tap appearance and disappearance. */
@@ -194,6 +190,8 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	private final float[][] lateBusOutput =
 		new float[LateReflectionBus.CHANNELS][BLOCK_FRAMES];
 	private volatile List<LateReflectionBus.Tap> lateReflectionTargets = List.of();
+	private volatile double lateTapMaxDelaySeconds = lateBusMaxDelaySeconds();
+	private volatile float lateTapMinGain;
 	private final AtomicInteger lateReflectionVersion = new AtomicInteger();
 	private int appliedLateReflectionVersion = -1;
 	private volatile LateReflectionSettings lateSettings = LateReflectionSettings.OFF;
@@ -224,6 +222,8 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	private final boolean[] activeOutputChannels = new boolean[CHANNELS];
 	private float wetNextTarget;
 	private volatile float limiterGain = 1.0f;
+	private volatile float limiterCeilingDb = OutputLimiter.CEILING_DB;
+	private volatile double limiterReleaseSeconds = OutputLimiter.RELEASE_SECONDS;
 	private float appliedLimiterGain = Float.NaN;
 	private final AtomicInteger layoutVersion = new AtomicInteger();
 	private volatile float[][] channelPositions = new float[0][];
@@ -235,7 +235,19 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	private volatile float[] channelLateSendGains = new float[0];
 	private volatile MinimumPhaseFir[] channelFilters = new MinimumPhaseFir[0];
 	private volatile float[] channelOcclusionGains = new float[0];
+	/**
+	 * Extra propagation delay per direct source, in seconds, relative to the
+	 * nearest speaker. The earliest direct sound stays at media time t=0 so the
+	 * A/V offset does not change; every other speaker is delayed by its extra
+	 * flight time. Reflections add the same offset, so their relative timing to
+	 * the direct sound of the same speaker is unchanged.
+	 */
+	private volatile float[] channelDelays = new float[0];
 	private final FirProcessor[] firProcessors = new FirProcessor[MAX_DIRECT_SOURCES];
+	/** Smoothed/current and target direct delay in frames (audio thread only). */
+	private final double[] directDelayFrames = new double[MAX_DIRECT_SOURCES];
+	private final double[] directTargetDelayFrames = new double[MAX_DIRECT_SOURCES];
+	private final float[] directInputScratch = new float[BLOCK_FRAMES];
 	private final float[] appliedGains = new float[MAX_DIRECT_SOURCES];
 	private final float[] renderedChannelGains = defaultMaxGains();
 	private final float[] renderedLateSendGains = defaultMaxGains();
@@ -369,6 +381,19 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	}
 
 	/**
+	 * Configurable limiter ceiling/release. Both values are read by the audio
+	 * thread on every gain update, so changes apply without restarting
+	 * playback. Out-of-range inputs fall back to the limiter defaults.
+	 */
+	public void setLimiterSettings(float ceilingDb, double releaseSeconds) {
+		limiterCeilingDb = Float.isFinite(ceilingDb) && ceilingDb <= 0.0f
+			? ceilingDb : OutputLimiter.CEILING_DB;
+		limiterReleaseSeconds =
+			Double.isFinite(releaseSeconds) && releaseSeconds > 0.0
+				? releaseSeconds : OutputLimiter.RELEASE_SECONDS;
+	}
+
+	/**
 	 * Wall-clock timestamp of the scheduled six-source start, or 0 before the
 	 * first start. Used to align the first video frame with the first audio.
 	 */
@@ -428,7 +453,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 								 float[] lateSendGains) {
 		int count = positions == null ? DEFAULT_DIRECT_SOURCES : positions.length;
 		setChannelLayout(identityChannels(count), positions, gains, filters,
-			occlusionGains, lateSendGains);
+			occlusionGains, lateSendGains, null);
 	}
 
 	/**
@@ -445,6 +470,24 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	public void setChannelLayout(int[] sourceChannels, float[][] positions,
 								 float[] gains, MinimumPhaseFir[] filters,
 								 float[] occlusionGains, float[] lateSendGains) {
+		setChannelLayout(sourceChannels, positions, gains, filters,
+			occlusionGains, lateSendGains, null);
+	}
+
+	/**
+	 * Full layout including the per-source direct propagation delay.
+	 *
+	 * <p>{@code delays[i]} is the extra flight time of that physical speaker
+	 * relative to the nearest speaker of the current selection, in seconds. The
+	 * engine reads the delayed raw channel instead of the current block, so
+	 * several speakers on the same 5.1 channel keep their physical phase
+	 * relationship instead of arriving in lockstep. The earliest speaker keeps
+	 * delay 0, which preserves the existing media/A-V alignment.
+	 */
+	public void setChannelLayout(int[] sourceChannels, float[][] positions,
+								 float[] gains, MinimumPhaseFir[] filters,
+								 float[] occlusionGains, float[] lateSendGains,
+								 float[] delays) {
 		int count = sourceChannels == null ? DEFAULT_DIRECT_SOURCES
 			: sourceChannels.length;
 		count = Math.min(MAX_DIRECT_SOURCES, Math.max(0, count));
@@ -453,7 +496,9 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		MinimumPhaseFir[] nextFilters = new MinimumPhaseFir[count];
 		float[] nextOcclusionGains = new float[count];
 		float[] nextLateSendGains = new float[count];
+		float[] nextDelays = new float[count];
 		int[] nextChannels = new int[count];
+		double maxDelay = historySafeDelaySeconds();
 		for (int i = 0; i < count; i++) {
 			int channel = sourceChannels != null && i < sourceChannels.length
 				? sourceChannels[i] : i;
@@ -477,9 +522,12 @@ public final class CinemaAudioEngine implements AutoCloseable {
 				? lateSendGains[i] : 1.0f;
 			nextLateSendGains[i] = Float.isFinite(lateSend)
 				? Math.max(0.0f, Math.min(8.0f, lateSend)) : 1.0f;
+			float delay = delays != null && i < delays.length ? delays[i] : 0.0f;
+			nextDelays[i] = Float.isFinite(delay)
+				? (float) Math.max(0.0, Math.min(maxDelay, delay)) : 0.0f;
 		}
 		if (sameLayout(nextChannels, nextPositions, nextGains, nextFilters,
-			nextOcclusionGains, nextLateSendGains)) {
+			nextOcclusionGains, nextLateSendGains, nextDelays)) {
 			return;
 		}
 		directSourceChannels = nextChannels;
@@ -488,6 +536,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		channelFilters = nextFilters;
 		channelOcclusionGains = nextOcclusionGains;
 		channelLateSendGains = nextLateSendGains;
+		channelDelays = nextDelays;
 		layoutVersion.incrementAndGet();
 	}
 
@@ -502,12 +551,14 @@ public final class CinemaAudioEngine implements AutoCloseable {
 
 	private boolean sameLayout(int[] sourceChannels, float[][] positions,
 							   float[] gains, MinimumPhaseFir[] filters,
-							   float[] occlusionGains, float[] lateSendGains) {
+							   float[] occlusionGains, float[] lateSendGains,
+							   float[] delays) {
 		float[][] currentPositions = channelPositions;
 		float[] currentGains = channelGains;
 		MinimumPhaseFir[] currentFilters = channelFilters;
 		float[] currentOcclusionGains = channelOcclusionGains;
 		float[] currentLateSendGains = channelLateSendGains;
+		float[] currentDelays = channelDelays;
 		int[] currentChannels = directSourceChannels;
 		if (sourceChannels.length != currentChannels.length
 			|| positions.length != currentPositions.length) {
@@ -532,6 +583,10 @@ public final class CinemaAudioEngine implements AutoCloseable {
 				return false;
 			}
 			if (Math.abs(lateSendGains[i] - currentLateSendGains[i]) > 1.0e-4f) {
+				return false;
+			}
+			if (i >= currentDelays.length
+				|| Math.abs(delays[i] - currentDelays[i]) > 1.0e-5f) {
 				return false;
 			}
 		}
@@ -581,6 +636,17 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	 * reflection FIR level, so the bus only adds delay and damping.
 	 */
 	public void setLateReflectionTaps(List<LateReflectionBus.Tap> taps) {
+		setLateReflectionTaps(taps, lateBusMaxDelaySeconds(), 0.0f);
+	}
+
+	/**
+	 * Publishes the tap set together with the playback acceptance limits: a
+	 * maximum delay and a minimum gain amplitude. The playback layer derives
+	 * both from the room RT60 and the listener-relative direct level; the bus
+	 * only enforces them on the audio thread.
+	 */
+	public void setLateReflectionTaps(List<LateReflectionBus.Tap> taps,
+									  double maxDelaySeconds, float minGain) {
 		List<LateReflectionBus.Tap> next;
 		if (taps == null || taps.isEmpty()) {
 			next = List.of();
@@ -593,7 +659,14 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			}
 			next = List.copyOf(copy);
 		}
-		if (next.equals(lateReflectionTargets)) {
+		double delay = Double.isFinite(maxDelaySeconds)
+			? Math.max(0.0, maxDelaySeconds) : lateBusMaxDelaySeconds();
+		float floor = Float.isNaN(minGain) ? 0.0f : Math.max(0.0f, minGain);
+		boolean limitsChanged = floor != lateTapMinGain
+			|| Math.abs(delay - lateTapMaxDelaySeconds) > 1.0e-9;
+		lateTapMaxDelaySeconds = delay;
+		lateTapMinGain = floor;
+		if (next.equals(lateReflectionTargets) && !limitsChanged) {
 			return;
 		}
 		lateReflectionTargets = next;
@@ -640,10 +713,9 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		return reflectionSourceBudget;
 	}
 
-	/** Hard playback cap; the room-aware budget is normally lower. */
+	/** History-capacity playback cap. There is no separate geometric ceiling. */
 	public static double maxReflectionDelaySeconds() {
-		return Math.min(MAX_GEOMETRIC_DELAY_SECONDS,
-			historySafeDelaySeconds());
+		return historySafeDelaySeconds();
 	}
 
 	private static boolean sameReflections(ReflectionSource[] first,
@@ -773,6 +845,16 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	private static double reflectionDelayFrames(double seconds) {
 		return Math.max(0.0,
 			Math.min(maxReflectionDelaySeconds(), seconds)) * SAMPLE_RATE;
+	}
+
+	/**
+	 * Direct propagation delay in frames. Uses the raw-history capacity (not
+	 * the room reflection budget) because the direct path is not a geometric
+	 * excess path.
+	 */
+	private static double directDelayFramesFor(double seconds) {
+		return Math.max(0.0,
+			Math.min(historySafeDelaySeconds(), seconds)) * SAMPLE_RATE;
 	}
 
 	private static float[][] copyDefaultPositions() {
@@ -1016,6 +1098,8 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		appliedGains[index] = Float.NaN;
 		Arrays.fill(directPeakHistory[index], 0.0f);
 		firProcessors[index].reset();
+		directDelayFrames[index] = 0.0;
+		directTargetDelayFrames[index] = 0.0;
 		return true;
 	}
 
@@ -1037,6 +1121,8 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		appliedGains[index] = Float.NaN;
 		Arrays.fill(directPeakHistory[index], 0.0f);
 		firProcessors[index].reset();
+		directDelayFrames[index] = 0.0;
+		directTargetDelayFrames[index] = 0.0;
 	}
 
 	private void setupReflectionSources() {
@@ -1275,6 +1361,17 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		Arrays.fill(activeOutputChannels, false);
 		for (int i = 0; i < count; i++) {
 			activeOutputChannels[mappings[i]] = true;
+		}
+		float[] delays = channelDelays;
+		for (int i = 0; i < count; i++) {
+			double target = directDelayFramesFor(
+				delays != null && i < delays.length ? delays[i] : 0.0f);
+			if (firstLayout || i >= previousCount) {
+				// Snap on allocation/restart: gliding from an unrelated
+				// speaker's delay would sweep the direct sound for 150 ms.
+				directDelayFrames[i] = target;
+			}
+			directTargetDelayFrames[i] = target;
 		}
 		appliedWetGain = Float.NaN;
 		if (firstLayout) {
@@ -1574,11 +1671,11 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			predictedPeaks[slot.channel] += slot.peak() * slot.nextTarget;
 		}
 		// The send carries speaker trim/distance/occlusion but not the receiver
-		// master. The smoothed late trim and receiver master are applied through
-		// the wet source AL_GAIN so trim/volume/mute also affect already queued
-		// blocks on the next mixer update. AL_MAX_GAIN is raised to 64 on every
-		// source, so the wet path no longer bakes positive trim into samples and
-		// the output limiter can scale it like the direct and reflection paths.
+		// master. The receiver master is applied through the wet source AL_GAIN
+		// so volume/mute also affect already queued blocks on the next mixer
+		// update. There is no user late trim: the wet level comes from room
+		// calibration. AL_MAX_GAIN stays raised to 64 for the extended receiver
+		// range, and the output limiter scales this path like direct/reflection.
 		LateReflectionSettings settings = lateSettings;
 		float lateGain = settings.enabled()
 			? (float) Math.pow(10.0, settings.wetGainDb() / 20.0) : 0.0f;
@@ -1603,7 +1700,8 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			}
 		}
 		limiterGain = OutputLimiter.advance(limiterGain,
-			OutputLimiter.gainFor(predictedPeak), dt);
+			OutputLimiter.gainFor(predictedPeak, limiterCeilingDb), dt,
+			limiterReleaseSeconds);
 		boolean limiterChanged = Float.isNaN(appliedLimiterGain)
 			|| Math.abs(limiterGain - appliedLimiterGain) >= 0.0001f;
 		float limiter = limiterGain;
@@ -1717,7 +1815,8 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		if (version == appliedLateReflectionVersion) {
 			return;
 		}
-		lateBus.setTaps(lateReflectionTargets);
+		lateBus.setTaps(lateReflectionTargets, lateTapMaxDelaySeconds,
+			lateTapMinGain);
 		appliedLateReflectionVersion = version;
 	}
 
@@ -1833,13 +1932,30 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			}
 		}
 		int[] mappings = directSourceChannels;
+		long startFrame = rawHistoryWriteFrame - frames;
 		for (int source = 0; source < directSourceCount; source++) {
 			if (sources[source] == 0 || source >= mappings.length) {
 				continue;
 			}
 			int channel = mappings[source];
-			firProcessors[source].process(samples, CHANNELS, channel, frameOffset,
-				frames, blockScratch);
+			// Direct propagation delay: read the raw ring at the speaker's
+			// flight-time offset instead of the current block. The offset is
+			// relative to the nearest selected speaker, so the earliest direct
+			// sound still lands on the media clock. Glide within the block to
+			// keep the read pointer continuous when the listener moves.
+			double startDelay = directDelayFrames[source];
+			double endDelay = startDelay
+				+ (directTargetDelayFrames[source] - startDelay)
+					* delaySmoothing(frames);
+			directDelayFrames[source] = endDelay;
+			float[] input = directInputScratch;
+			for (int i = 0; i < frames; i++) {
+				double delay = startDelay
+					+ (endDelay - startDelay) * ((i + 1.0) / frames);
+				input[i] = rawSample(channel, startFrame + i - delay);
+			}
+			firProcessors[source].process(input, 1, 0, 0, frames,
+				blockScratch);
 			directPeakHistory[source][directPeakIndex] =
 				OutputLimiter.blockPeak(blockScratch, frames, !float32Buffers);
 			int buffer = freeBuffers[source].removeFirst();
@@ -2302,6 +2418,8 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		for (FirProcessor processor : firProcessors) {
 			processor.reset();
 		}
+		Arrays.fill(directDelayFrames, 0.0);
+		Arrays.fill(directTargetDelayFrames, 0.0);
 		for (ReflectionSlot slot : reflectionSlots) {
 			if (slot == null) {
 				continue;

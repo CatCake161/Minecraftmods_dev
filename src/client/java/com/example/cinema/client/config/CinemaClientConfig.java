@@ -58,16 +58,57 @@ public final class CinemaClientConfig {
 	public static final double MIN_AIR_HUMIDITY_PERCENT = 0.0;
 	public static final double MAX_AIR_HUMIDITY_PERCENT = 100.0;
 	public static final double DEFAULT_AIR_HUMIDITY_PERCENT = 50.0;
-	/** Debug only; early reflection level. */
-	public static final double MIN_EARLY_GAIN_DB = -24.0;
-	public static final double MAX_EARLY_GAIN_DB = 12.0;
-	public static final double DEFAULT_EARLY_GAIN_DB = 0.0;
-	/** Full-band statistical late field; low-frequency modes remain A5's concern. */
+	/** Geometric order-2/3/4 reflections; low-frequency modes remain A5's concern. */
 	public static final boolean DEFAULT_LATE_REVERB = false;
-	/** User trim added to the computed source-power late gain. */
-	public static final double MIN_LATE_TRIM_DB = -24.0;
-	public static final double MAX_LATE_TRIM_DB = 6.0;
-	public static final double DEFAULT_LATE_TRIM_DB = 0.0;
+	/**
+	 * Late-bus audibility floor relative to the direct sound at the listener.
+	 * -60 dB means the bus stops one RT60 after the direct arrival.
+	 */
+	public static final double MIN_LATE_FLOOR_DB = -80.0;
+	public static final double MAX_LATE_FLOOR_DB = -20.0;
+	public static final double DEFAULT_LATE_FLOOR_DB = -60.0;
+
+	/** Reflection solver cadence and movement thresholds. */
+	public static final int MIN_REFLECTION_UPDATE_MILLIS = 50;
+	public static final int MAX_REFLECTION_UPDATE_MILLIS = 1000;
+	public static final int DEFAULT_REFLECTION_UPDATE_MILLIS = 200;
+	public static final int REFLECTION_UPDATE_MILLIS_STEP = 10;
+	public static final double MIN_REFLECTION_MOVE_THRESHOLD_METERS = 0.05;
+	public static final double MAX_REFLECTION_MOVE_THRESHOLD_METERS = 2.0;
+	public static final double DEFAULT_REFLECTION_MOVE_THRESHOLD_METERS = 0.5;
+	public static final double REFLECTION_MOVE_THRESHOLD_STEP = 0.05;
+
+	/** Higher-order late-path solver cadence, step budget and stability window. */
+	public static final int MIN_LATE_REFLECTION_UPDATE_MILLIS = 20;
+	public static final int MAX_LATE_REFLECTION_UPDATE_MILLIS = 500;
+	public static final int DEFAULT_LATE_REFLECTION_UPDATE_MILLIS = 50;
+	public static final int LATE_REFLECTION_UPDATE_MILLIS_STEP = 10;
+	public static final double MIN_LATE_PATH_MOVE_THRESHOLD_METERS = 0.05;
+	public static final double MAX_LATE_PATH_MOVE_THRESHOLD_METERS = 1.0;
+	public static final double DEFAULT_LATE_PATH_MOVE_THRESHOLD_METERS = 0.15;
+	public static final double LATE_PATH_MOVE_THRESHOLD_STEP = 0.05;
+	public static final int MIN_LATE_PATH_STEP_BUDGET_MILLIS = 1;
+	public static final int MAX_LATE_PATH_STEP_BUDGET_MILLIS = 16;
+	public static final int DEFAULT_LATE_PATH_STEP_BUDGET_MILLIS = 4;
+	public static final int LATE_PATH_STEP_BUDGET_MILLIS_STEP = 1;
+	public static final int MIN_LATE_PATH_MIN_STABLE_MILLIS = 50;
+	public static final int MAX_LATE_PATH_MIN_STABLE_MILLIS = 500;
+	public static final int DEFAULT_LATE_PATH_MIN_STABLE_MILLIS = 150;
+	public static final int LATE_PATH_MIN_STABLE_MILLIS_STEP = 10;
+	public static final int MIN_LATE_PATH_MAX_STABLE_MILLIS = 100;
+	public static final int MAX_LATE_PATH_MAX_STABLE_MILLIS = 1500;
+	public static final int DEFAULT_LATE_PATH_MAX_STABLE_MILLIS = 600;
+	public static final int LATE_PATH_MAX_STABLE_MILLIS_STEP = 10;
+
+	/** Feed-forward output limiter shared by the direct, reflection and wet buses. */
+	public static final double MIN_LIMITER_CEILING_DB = -6.0;
+	public static final double MAX_LIMITER_CEILING_DB = 0.0;
+	public static final double DEFAULT_LIMITER_CEILING_DB = -0.3;
+	public static final double LIMITER_CEILING_STEP_DB = 0.1;
+	public static final double MIN_LIMITER_RELEASE_SECONDS = 0.05;
+	public static final double MAX_LIMITER_RELEASE_SECONDS = 2.0;
+	public static final double DEFAULT_LIMITER_RELEASE_SECONDS = 0.4;
+	public static final double LIMITER_RELEASE_STEP_SECONDS = 0.05;
 
 	/** 0 means "keep the source height"; values snap to 120-pixel steps. */
 	public static final int MIN_VIDEO_MAX_HEIGHT = 0;
@@ -93,9 +134,19 @@ public final class CinemaClientConfig {
 	private boolean airAbsorption = DEFAULT_AIR_ABSORPTION;
 	private double airTemperatureC = DEFAULT_AIR_TEMPERATURE_C;
 	private double airHumidityPercent = DEFAULT_AIR_HUMIDITY_PERCENT;
-	private double earlyGainDb = DEFAULT_EARLY_GAIN_DB;
 	private boolean lateReverb = DEFAULT_LATE_REVERB;
-	private double lateTrimDb = DEFAULT_LATE_TRIM_DB;
+	private double lateFloorDb = DEFAULT_LATE_FLOOR_DB;
+	private int reflectionUpdateMillis = DEFAULT_REFLECTION_UPDATE_MILLIS;
+	private double reflectionMoveThresholdMeters =
+		DEFAULT_REFLECTION_MOVE_THRESHOLD_METERS;
+	private int lateReflectionUpdateMillis = DEFAULT_LATE_REFLECTION_UPDATE_MILLIS;
+	private double latePathMoveThresholdMeters =
+		DEFAULT_LATE_PATH_MOVE_THRESHOLD_METERS;
+	private int latePathStepBudgetMillis = DEFAULT_LATE_PATH_STEP_BUDGET_MILLIS;
+	private int latePathMinStableMillis = DEFAULT_LATE_PATH_MIN_STABLE_MILLIS;
+	private int latePathMaxStableMillis = DEFAULT_LATE_PATH_MAX_STABLE_MILLIS;
+	private double limiterCeilingDb = DEFAULT_LIMITER_CEILING_DB;
+	private double limiterReleaseSeconds = DEFAULT_LIMITER_RELEASE_SECONDS;
 	private int videoMaxHeightSdr = DEFAULT_VIDEO_MAX_HEIGHT_SDR;
 	private int videoMaxHeightHdr = DEFAULT_VIDEO_MAX_HEIGHT_HDR;
 	private boolean hardwareDecode = DEFAULT_HARDWARE_DECODE;
@@ -186,14 +237,6 @@ public final class CinemaClientConfig {
 			MAX_AIR_HUMIDITY_PERCENT);
 	}
 
-	public double earlyGainDb() {
-		return earlyGainDb;
-	}
-
-	public void setEarlyGainDb(double value) {
-		earlyGainDb = clamp(value, MIN_EARLY_GAIN_DB, MAX_EARLY_GAIN_DB);
-	}
-
 	public boolean lateReverb() {
 		return lateReverb;
 	}
@@ -202,12 +245,95 @@ public final class CinemaClientConfig {
 		lateReverb = value;
 	}
 
-	public double lateTrimDb() {
-		return lateTrimDb;
+	public double lateFloorDb() {
+		return lateFloorDb;
 	}
 
-	public void setLateTrimDb(double value) {
-		lateTrimDb = clamp(value, MIN_LATE_TRIM_DB, MAX_LATE_TRIM_DB);
+	public void setLateFloorDb(double value) {
+		lateFloorDb = clamp(value, MIN_LATE_FLOOR_DB, MAX_LATE_FLOOR_DB);
+	}
+
+	public int reflectionUpdateMillis() {
+		return reflectionUpdateMillis;
+	}
+
+	public void setReflectionUpdateMillis(int value) {
+		reflectionUpdateMillis = clamp(value, MIN_REFLECTION_UPDATE_MILLIS,
+			MAX_REFLECTION_UPDATE_MILLIS);
+	}
+
+	public double reflectionMoveThresholdMeters() {
+		return reflectionMoveThresholdMeters;
+	}
+
+	public void setReflectionMoveThresholdMeters(double value) {
+		reflectionMoveThresholdMeters = clamp(value,
+			MIN_REFLECTION_MOVE_THRESHOLD_METERS,
+			MAX_REFLECTION_MOVE_THRESHOLD_METERS);
+	}
+
+	public int lateReflectionUpdateMillis() {
+		return lateReflectionUpdateMillis;
+	}
+
+	public void setLateReflectionUpdateMillis(int value) {
+		lateReflectionUpdateMillis = clamp(value,
+			MIN_LATE_REFLECTION_UPDATE_MILLIS, MAX_LATE_REFLECTION_UPDATE_MILLIS);
+	}
+
+	public double latePathMoveThresholdMeters() {
+		return latePathMoveThresholdMeters;
+	}
+
+	public void setLatePathMoveThresholdMeters(double value) {
+		latePathMoveThresholdMeters = clamp(value,
+			MIN_LATE_PATH_MOVE_THRESHOLD_METERS,
+			MAX_LATE_PATH_MOVE_THRESHOLD_METERS);
+	}
+
+	public int latePathStepBudgetMillis() {
+		return latePathStepBudgetMillis;
+	}
+
+	public void setLatePathStepBudgetMillis(int value) {
+		latePathStepBudgetMillis = clamp(value,
+			MIN_LATE_PATH_STEP_BUDGET_MILLIS, MAX_LATE_PATH_STEP_BUDGET_MILLIS);
+	}
+
+	public int latePathMinStableMillis() {
+		return latePathMinStableMillis;
+	}
+
+	public void setLatePathMinStableMillis(int value) {
+		latePathMinStableMillis = clamp(value, MIN_LATE_PATH_MIN_STABLE_MILLIS,
+			MAX_LATE_PATH_MIN_STABLE_MILLIS);
+	}
+
+	public int latePathMaxStableMillis() {
+		return latePathMaxStableMillis;
+	}
+
+	public void setLatePathMaxStableMillis(int value) {
+		latePathMaxStableMillis = clamp(value, MIN_LATE_PATH_MAX_STABLE_MILLIS,
+			MAX_LATE_PATH_MAX_STABLE_MILLIS);
+	}
+
+	public double limiterCeilingDb() {
+		return limiterCeilingDb;
+	}
+
+	public void setLimiterCeilingDb(double value) {
+		limiterCeilingDb = clamp(value, MIN_LIMITER_CEILING_DB,
+			MAX_LIMITER_CEILING_DB);
+	}
+
+	public double limiterReleaseSeconds() {
+		return limiterReleaseSeconds;
+	}
+
+	public void setLimiterReleaseSeconds(double value) {
+		limiterReleaseSeconds = clamp(value, MIN_LIMITER_RELEASE_SECONDS,
+			MAX_LIMITER_RELEASE_SECONDS);
 	}
 
 	public int videoMaxHeightSdr() {
@@ -273,9 +399,19 @@ public final class CinemaClientConfig {
 		root.addProperty("airAbsorption", airAbsorption);
 		root.addProperty("airTemperatureC", airTemperatureC);
 		root.addProperty("airHumidityPercent", airHumidityPercent);
-		root.addProperty("earlyGainDb", earlyGainDb);
 		root.addProperty("lateReverb", lateReverb);
-		root.addProperty("lateTrimDb", lateTrimDb);
+		root.addProperty("lateFloorDb", lateFloorDb);
+		root.addProperty("reflectionUpdateMillis", reflectionUpdateMillis);
+		root.addProperty("reflectionMoveThresholdMeters",
+			reflectionMoveThresholdMeters);
+		root.addProperty("lateReflectionUpdateMillis", lateReflectionUpdateMillis);
+		root.addProperty("latePathMoveThresholdMeters",
+			latePathMoveThresholdMeters);
+		root.addProperty("latePathStepBudgetMillis", latePathStepBudgetMillis);
+		root.addProperty("latePathMinStableMillis", latePathMinStableMillis);
+		root.addProperty("latePathMaxStableMillis", latePathMaxStableMillis);
+		root.addProperty("limiterCeilingDb", limiterCeilingDb);
+		root.addProperty("limiterReleaseSeconds", limiterReleaseSeconds);
 		root.addProperty("videoMaxHeightSdr", videoMaxHeightSdr);
 		root.addProperty("videoMaxHeightHdr", videoMaxHeightHdr);
 		root.addProperty("hardwareDecode", hardwareDecode);
@@ -290,15 +426,25 @@ public final class CinemaClientConfig {
 			CinemaLog.info(CinemaLog.CONFIG, "saved {} (screenMaxSize={}, "
 					+ "pauseGameInDeviceGuis={}, emptyHandOpensDeviceGuis={}, "
 					+ "spikeModifiesWorld={}, metersPerBlock={}, airAbsorption={}, "
-					+ "airTemperatureC={}, airHumidityPercent={}, earlyGainDb={}, "
-					+ "lateReverb={}, lateTrimDb={}, videoMaxHeightSdr={}, "
-					+ "videoMaxHeightHdr={}, hardwareDecode={}, ffmpegShowInfo={}, "
-					+ "videoGlFinish={}, ffmpegPath={})",
+					+ "airTemperatureC={}, airHumidityPercent={}, lateReverb={}, "
+					+ "lateFloorDb={}, reflectionUpdateMillis={}, "
+					+ "reflectionMoveThresholdMeters={}, "
+					+ "lateReflectionUpdateMillis={}, "
+					+ "latePathMoveThresholdMeters={}, latePathStepBudgetMillis={}, "
+					+ "latePathMinStableMillis={}, latePathMaxStableMillis={}, "
+					+ "limiterCeilingDb={}, limiterReleaseSeconds={}, "
+					+ "videoMaxHeightSdr={}, videoMaxHeightHdr={}, hardwareDecode={}, "
+					+ "ffmpegShowInfo={}, videoGlFinish={}, ffmpegPath={})",
 				file, screenMaxSize, pauseGameInDeviceGuis,
 				emptyHandOpensDeviceGuis, spikeModifiesWorld, metersPerBlock,
-				airAbsorption, airTemperatureC, airHumidityPercent, earlyGainDb,
-				lateReverb, lateTrimDb, videoMaxHeightSdr, videoMaxHeightHdr,
-				hardwareDecode, ffmpegShowInfo, videoGlFinish, ffmpegPath);
+				airAbsorption, airTemperatureC, airHumidityPercent, lateReverb,
+				lateFloorDb, reflectionUpdateMillis,
+				reflectionMoveThresholdMeters, lateReflectionUpdateMillis,
+				latePathMoveThresholdMeters, latePathStepBudgetMillis,
+				latePathMinStableMillis, latePathMaxStableMillis,
+				limiterCeilingDb, limiterReleaseSeconds, videoMaxHeightSdr,
+				videoMaxHeightHdr, hardwareDecode, ffmpegShowInfo,
+				videoGlFinish, ffmpegPath);
 		} catch (IOException e) {
 			CinemaLog.warn(CinemaLog.CONFIG, "could not save {}: {}", file, e.getMessage());
 		}
@@ -359,6 +505,10 @@ public final class CinemaClientConfig {
 		return System.getProperty(VIDEO_GL_FINISH_PROPERTY) != null;
 	}
 
+	private static int clamp(int value, int min, int max) {
+		return Math.max(min, Math.min(max, value));
+	}
+
 	private static double clamp(double value, double min, double max) {
 		if (!Double.isFinite(value)) {
 			return min;
@@ -409,10 +559,6 @@ public final class CinemaClientConfig {
 					root.get("airHumidityPercent").getAsDouble(),
 					MIN_AIR_HUMIDITY_PERCENT, MAX_AIR_HUMIDITY_PERCENT);
 			}
-			if (root.has("earlyGainDb")) {
-				config.earlyGainDb = clamp(root.get("earlyGainDb").getAsDouble(),
-					MIN_EARLY_GAIN_DB, MAX_EARLY_GAIN_DB);
-			}
 			if (version < 2) {
 				// The former FDN late reverb failed listening acceptance.
 				// Existing configs are migrated to the new default once; the
@@ -421,12 +567,48 @@ public final class CinemaClientConfig {
 			} else if (root.has("lateReverb")) {
 				config.lateReverb = root.get("lateReverb").getAsBoolean();
 			}
-			if (root.has("lateTrimDb")) {
-				config.lateTrimDb = clamp(root.get("lateTrimDb").getAsDouble(),
-					MIN_LATE_TRIM_DB, MAX_LATE_TRIM_DB);
-			} else if (root.has("lateGainDb")) {
-				CinemaLog.info(CinemaLog.CONFIG, "legacy lateGainDb is ignored; late level is "
-						+ "now computed from the room and the lateTrimDb offset is 0 dB");
+			if (root.has("lateGainDb")) {
+				CinemaLog.info(CinemaLog.CONFIG, "legacy lateGainDb is ignored; "
+					+ "late level is computed from the room");
+			}
+			if (root.has("lateFloorDb")) {
+				config.setLateFloorDb(root.get("lateFloorDb").getAsDouble());
+			}
+			if (root.has("reflectionUpdateMillis")) {
+				config.setReflectionUpdateMillis(
+					root.get("reflectionUpdateMillis").getAsInt());
+			}
+			if (root.has("reflectionMoveThresholdMeters")) {
+				config.setReflectionMoveThresholdMeters(
+					root.get("reflectionMoveThresholdMeters").getAsDouble());
+			}
+			if (root.has("lateReflectionUpdateMillis")) {
+				config.setLateReflectionUpdateMillis(
+					root.get("lateReflectionUpdateMillis").getAsInt());
+			}
+			if (root.has("latePathMoveThresholdMeters")) {
+				config.setLatePathMoveThresholdMeters(
+					root.get("latePathMoveThresholdMeters").getAsDouble());
+			}
+			if (root.has("latePathStepBudgetMillis")) {
+				config.setLatePathStepBudgetMillis(
+					root.get("latePathStepBudgetMillis").getAsInt());
+			}
+			if (root.has("latePathMinStableMillis")) {
+				config.setLatePathMinStableMillis(
+					root.get("latePathMinStableMillis").getAsInt());
+			}
+			if (root.has("latePathMaxStableMillis")) {
+				config.setLatePathMaxStableMillis(
+					root.get("latePathMaxStableMillis").getAsInt());
+			}
+			if (root.has("limiterCeilingDb")) {
+				config.setLimiterCeilingDb(
+					root.get("limiterCeilingDb").getAsDouble());
+			}
+			if (root.has("limiterReleaseSeconds")) {
+				config.setLimiterReleaseSeconds(
+					root.get("limiterReleaseSeconds").getAsDouble());
 			}
 			if (root.has("videoMaxHeightSdr")) {
 				config.videoMaxHeightSdr = snapVideoMaxHeight(
@@ -459,16 +641,27 @@ public final class CinemaClientConfig {
 			CinemaLog.info(CinemaLog.CONFIG, "loaded {} (screenMaxSize={}, "
 					+ "pauseGameInDeviceGuis={}, emptyHandOpensDeviceGuis={}, "
 					+ "spikeModifiesWorld={}, metersPerBlock={}, airAbsorption={}, "
-					+ "airTemperatureC={}, airHumidityPercent={}, earlyGainDb={}, "
-					+ "lateReverb={}, lateTrimDb={}, videoMaxHeightSdr={}, "
-					+ "videoMaxHeightHdr={}, hardwareDecode={}, ffmpegShowInfo={}, "
-					+ "videoGlFinish={}, ffmpegPath={})",
+					+ "airTemperatureC={}, airHumidityPercent={}, lateReverb={}, "
+					+ "lateFloorDb={}, reflectionUpdateMillis={}, "
+					+ "reflectionMoveThresholdMeters={}, "
+					+ "lateReflectionUpdateMillis={}, "
+					+ "latePathMoveThresholdMeters={}, latePathStepBudgetMillis={}, "
+					+ "latePathMinStableMillis={}, latePathMaxStableMillis={}, "
+					+ "limiterCeilingDb={}, limiterReleaseSeconds={}, "
+					+ "videoMaxHeightSdr={}, videoMaxHeightHdr={}, hardwareDecode={}, "
+					+ "ffmpegShowInfo={}, videoGlFinish={}, ffmpegPath={})",
 				file, config.screenMaxSize, config.pauseGameInDeviceGuis,
 				config.emptyHandOpensDeviceGuis, config.spikeModifiesWorld,
 				config.metersPerBlock, config.airAbsorption,
 				config.airTemperatureC,
-				config.airHumidityPercent, config.earlyGainDb,
-				config.lateReverb, config.lateTrimDb, config.videoMaxHeightSdr,
+				config.airHumidityPercent, config.lateReverb,
+				config.lateFloorDb, config.reflectionUpdateMillis,
+				config.reflectionMoveThresholdMeters,
+				config.lateReflectionUpdateMillis,
+				config.latePathMoveThresholdMeters,
+				config.latePathStepBudgetMillis, config.latePathMinStableMillis,
+				config.latePathMaxStableMillis, config.limiterCeilingDb,
+				config.limiterReleaseSeconds, config.videoMaxHeightSdr,
 				config.videoMaxHeightHdr, config.hardwareDecode,
 				config.ffmpegShowInfo, config.videoGlFinish, config.ffmpegPath);
 		} catch (Exception e) {

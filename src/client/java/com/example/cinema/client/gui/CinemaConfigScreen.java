@@ -5,6 +5,7 @@ import com.example.cinema.client.media.audio.acoustics.scene.AcousticScene;
 import com.example.cinema.client.media.ffmpeg.Ffmpeg;
 import com.example.cinema.client.render.ProjectorOptics;
 import com.example.cinema.client.render.ScreenLimits;
+import com.sun.management.OperatingSystemMXBean;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.AbstractSliderButton;
@@ -14,6 +15,7 @@ import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 
+import java.lang.management.ManagementFactory;
 import java.util.IdentityHashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -72,9 +74,17 @@ public final class CinemaConfigScreen extends Screen {
 	private boolean draftAirAbsorption;
 	private double draftAirTemperatureC;
 	private double draftAirHumidityPercent;
-	private double draftEarlyGainDb;
 	private boolean draftLateReverb;
-	private double draftLateTrimDb;
+	private double draftLateFloorDb;
+	private int draftReflectionUpdateMillis;
+	private double draftReflectionMoveThresholdMeters;
+	private int draftLateReflectionUpdateMillis;
+	private double draftLatePathMoveThresholdMeters;
+	private int draftLatePathStepBudgetMillis;
+	private int draftLatePathMinStableMillis;
+	private int draftLatePathMaxStableMillis;
+	private double draftLimiterCeilingDb;
+	private double draftLimiterReleaseSeconds;
 	private int draftVideoMaxHeightSdr;
 	private int draftVideoMaxHeightHdr;
 	private boolean draftHardwareDecode;
@@ -83,6 +93,12 @@ public final class CinemaConfigScreen extends Screen {
 	private String draftFfmpegPath;
 
 	private EditBox ffmpegPathBox;
+
+	/** Process CPU sampling for the Performance page; ~2 Hz. */
+	private long cpuSampleNanos;
+	private long cpuProcessNanos;
+	private double cpuPercent = Double.NaN;
+	private boolean cpuUnavailable;
 
 	public CinemaConfigScreen(Screen parent) {
 		super(Component.literal("Cinema Settings"));
@@ -96,9 +112,19 @@ public final class CinemaConfigScreen extends Screen {
 		draftAirAbsorption = config.airAbsorption();
 		draftAirTemperatureC = config.airTemperatureC();
 		draftAirHumidityPercent = config.airHumidityPercent();
-		draftEarlyGainDb = config.earlyGainDb();
 		draftLateReverb = config.lateReverb();
-		draftLateTrimDb = config.lateTrimDb();
+		draftLateFloorDb = config.lateFloorDb();
+		draftReflectionUpdateMillis = config.reflectionUpdateMillis();
+		draftReflectionMoveThresholdMeters =
+			config.reflectionMoveThresholdMeters();
+		draftLateReflectionUpdateMillis = config.lateReflectionUpdateMillis();
+		draftLatePathMoveThresholdMeters =
+			config.latePathMoveThresholdMeters();
+		draftLatePathStepBudgetMillis = config.latePathStepBudgetMillis();
+		draftLatePathMinStableMillis = config.latePathMinStableMillis();
+		draftLatePathMaxStableMillis = config.latePathMaxStableMillis();
+		draftLimiterCeilingDb = config.limiterCeilingDb();
+		draftLimiterReleaseSeconds = config.limiterReleaseSeconds();
 		draftVideoMaxHeightSdr = config.videoMaxHeightSdr();
 		draftVideoMaxHeightHdr = config.videoMaxHeightHdr();
 		draftHardwareDecode = config.hardwareDecode();
@@ -134,6 +160,7 @@ public final class CinemaConfigScreen extends Screen {
 		switch (tab) {
 			case SCREEN -> buildScreenTab();
 			case AUDIO -> buildAudioTab();
+			case PERFORMANCE -> buildPerformanceTab();
 			case VIDEO -> buildVideoTab();
 			case BEHAVIOR -> buildBehaviorTab();
 			case ADVANCED -> buildAdvancedTab();
@@ -182,7 +209,8 @@ public final class CinemaConfigScreen extends Screen {
 		Button air = toggle(contentLeft, y, contentWidth, "Air absorption",
 			() -> draftAirAbsorption, value -> draftAirAbsorption = value);
 		tooltip(air, "ISO 9613-1 frequency-dependent air absorption on the direct "
-			+ "path. Temperature and humidity below set the absorption curve.");
+			+ "and reflected paths. Temperature and humidity below set the "
+			+ "absorption curve.");
 		y += ROW_SPACING;
 		ValueSlider temperature = valueSlider(contentLeft, y, contentWidth,
 			"Temperature: %.1f °C", CinemaClientConfig.MIN_AIR_TEMPERATURE_C,
@@ -198,24 +226,120 @@ public final class CinemaConfigScreen extends Screen {
 		tooltip(humidity, "Relative humidity used by ISO 9613-1. Higher humidity "
 			+ "moves absorption toward higher frequencies.");
 		y += ROW_SPACING;
-		ValueSlider early = valueSlider(contentLeft, y, contentWidth,
-			"Early gain (debug): %+.1f dB", CinemaClientConfig.MIN_EARLY_GAIN_DB,
-			CinemaClientConfig.MAX_EARLY_GAIN_DB, 0.5, draftEarlyGainDb,
-			value -> draftEarlyGainDb = value);
-		tooltip(early, "Debug-only early reflection gain. The physical "
-			+ "early-reflection level comes from distance, material and directivity.");
-		y += ROW_SPACING;
-		Button late = toggle(contentLeft, y, contentWidth, "Late reflections",
+		Button late = toggle(contentLeft, y, contentWidth, "Order 2-4 reflections",
 			() -> draftLateReverb, value -> draftLateReverb = value);
-		tooltip(late, "Eight-line full-band late field. Only a 20 Hz DC high-pass is "
-			+ "applied; LFE is included, and room modes remain A5's concern.");
+		tooltip(late, "Order 1 is always active. Order 2/3/4 are geometric "
+			+ "reflections: the strongest paths run through a per-tap FIR and the "
+			+ "rest feed the late bus. Off disables order 2-4 only.");
 		y += ROW_SPACING;
-		ValueSlider lateTrim = valueSlider(contentLeft, y, contentWidth,
-			"Late trim: %+.1f dB", CinemaClientConfig.MIN_LATE_TRIM_DB,
-			CinemaClientConfig.MAX_LATE_TRIM_DB, 0.5, draftLateTrimDb,
-			value -> draftLateTrimDb = value);
-		tooltip(lateTrim, "Trim added to the computed source-power late gain. "
-			+ "The dry and early-reflection paths are unchanged.");
+		ValueSlider lateFloor = valueSlider(contentLeft, y, contentWidth,
+			"Order 2-4 floor: %+.0f dB re direct",
+			CinemaClientConfig.MIN_LATE_FLOOR_DB,
+			CinemaClientConfig.MAX_LATE_FLOOR_DB, 1.0, draftLateFloorDb,
+			value -> draftLateFloorDb = value);
+		tooltip(lateFloor, "Order-2/3/4 paths below this level relative to the "
+			+ "total direct sound at the listener are dropped. -60 dB stops the "
+			+ "tail after one RT60, which is also used as the higher-order delay "
+			+ "cap.");
+	}
+
+	private void buildPerformanceTab() {
+		int y = contentTop;
+		ValueSlider reflectionUpdate = valueSlider(contentLeft, y, contentWidth,
+			"Reflection update: %.0f ms",
+			CinemaClientConfig.MIN_REFLECTION_UPDATE_MILLIS,
+			CinemaClientConfig.MAX_REFLECTION_UPDATE_MILLIS,
+			CinemaClientConfig.REFLECTION_UPDATE_MILLIS_STEP,
+			draftReflectionUpdateMillis,
+			value -> draftReflectionUpdateMillis = (int) Math.round(value));
+		tooltip(reflectionUpdate, "Minimum interval between reflection rebuilds. "
+			+ "Lower values react faster to room or listener changes and cost "
+			+ "more CPU; the solver still runs immediately when the listener "
+			+ "moves more than the move threshold.");
+		y += ROW_SPACING;
+		ValueSlider reflectionMove = valueSlider(contentLeft, y, contentWidth,
+			"Reflection move: %.2f m",
+			CinemaClientConfig.MIN_REFLECTION_MOVE_THRESHOLD_METERS,
+			CinemaClientConfig.MAX_REFLECTION_MOVE_THRESHOLD_METERS,
+			CinemaClientConfig.REFLECTION_MOVE_THRESHOLD_STEP,
+			draftReflectionMoveThresholdMeters,
+			value -> draftReflectionMoveThresholdMeters = value);
+		tooltip(reflectionMove, "Listener movement that forces an order-1 "
+			+ "reflection rebuild before the update interval elapses. Smaller "
+			+ "values keep taps aligned while walking but cost more CPU.");
+		y += ROW_SPACING;
+		ValueSlider lateUpdate = valueSlider(contentLeft, y, contentWidth,
+			"Order 2-4 update: %.0f ms",
+			CinemaClientConfig.MIN_LATE_REFLECTION_UPDATE_MILLIS,
+			CinemaClientConfig.MAX_LATE_REFLECTION_UPDATE_MILLIS,
+			CinemaClientConfig.LATE_REFLECTION_UPDATE_MILLIS_STEP,
+			draftLateReflectionUpdateMillis,
+			value -> draftLateReflectionUpdateMillis = (int) Math.round(value));
+		tooltip(lateUpdate, "Minimum interval for the room-constant calibration "
+			+ "that drives the order-2/3/4 wet bus.");
+		y += ROW_SPACING;
+		ValueSlider lateMove = valueSlider(contentLeft, y, contentWidth,
+			"Order 2-4 move: %.2f m",
+			CinemaClientConfig.MIN_LATE_PATH_MOVE_THRESHOLD_METERS,
+			CinemaClientConfig.MAX_LATE_PATH_MOVE_THRESHOLD_METERS,
+			CinemaClientConfig.LATE_PATH_MOVE_THRESHOLD_STEP,
+			draftLatePathMoveThresholdMeters,
+			value -> draftLatePathMoveThresholdMeters = value);
+		tooltip(lateMove, "Listener movement that invalidates the incremental "
+			+ "order-2/3/4 path build and republishes order 2 immediately.");
+		y += ROW_SPACING;
+		ValueSlider stepBudget = valueSlider(contentLeft, y, contentWidth,
+			"Order 2-4 step budget: %.0f ms",
+			CinemaClientConfig.MIN_LATE_PATH_STEP_BUDGET_MILLIS,
+			CinemaClientConfig.MAX_LATE_PATH_STEP_BUDGET_MILLIS,
+			CinemaClientConfig.LATE_PATH_STEP_BUDGET_MILLIS_STEP,
+			draftLatePathStepBudgetMillis,
+			value -> draftLatePathStepBudgetMillis = (int) Math.round(value));
+		tooltip(stepBudget, "Per-tick time slice for the incremental order-3/4 "
+			+ "path solver. Larger slices finish the upgrade sooner but cost "
+			+ "more frame time.");
+		y += ROW_SPACING;
+		ValueSlider minStable = valueSlider(contentLeft, y, contentWidth,
+			"Order 2-4 min stable: %.0f ms",
+			CinemaClientConfig.MIN_LATE_PATH_MIN_STABLE_MILLIS,
+			CinemaClientConfig.MAX_LATE_PATH_MIN_STABLE_MILLIS,
+			CinemaClientConfig.LATE_PATH_MIN_STABLE_MILLIS_STEP,
+			draftLatePathMinStableMillis,
+			value -> draftLatePathMinStableMillis = (int) Math.round(value));
+		tooltip(minStable, "Shortest listener-still time before the order-3/4 "
+			+ "upgrade starts. The actual window grows with walking speed.");
+		y += ROW_SPACING;
+		ValueSlider maxStable = valueSlider(contentLeft, y, contentWidth,
+			"Order 2-4 max stable: %.0f ms",
+			CinemaClientConfig.MIN_LATE_PATH_MAX_STABLE_MILLIS,
+			CinemaClientConfig.MAX_LATE_PATH_MAX_STABLE_MILLIS,
+			CinemaClientConfig.LATE_PATH_MAX_STABLE_MILLIS_STEP,
+			draftLatePathMaxStableMillis,
+			value -> draftLatePathMaxStableMillis = (int) Math.round(value));
+		tooltip(maxStable, "Upper bound of the speed-scaled still window. "
+			+ "Values below the minimum stable window are treated as the "
+			+ "minimum.");
+		y += ROW_SPACING;
+		ValueSlider ceiling = valueSlider(contentLeft, y, contentWidth,
+			"Limiter ceiling: %+.1f dBFS",
+			CinemaClientConfig.MIN_LIMITER_CEILING_DB,
+			CinemaClientConfig.MAX_LIMITER_CEILING_DB,
+			CinemaClientConfig.LIMITER_CEILING_STEP_DB, draftLimiterCeilingDb,
+			value -> draftLimiterCeilingDb = value);
+		tooltip(ceiling, "Digital peak ceiling for the mixed direct, reflection "
+			+ "and order-2-4 buses. Lower values leave more headroom before "
+			+ "OpenAL and the device; it is not a measured SPL.");
+		y += ROW_SPACING;
+		ValueSlider release = valueSlider(contentLeft, y, contentWidth,
+			"Limiter release: %.2f s",
+			CinemaClientConfig.MIN_LIMITER_RELEASE_SECONDS,
+			CinemaClientConfig.MAX_LIMITER_RELEASE_SECONDS,
+			CinemaClientConfig.LIMITER_RELEASE_STEP_SECONDS,
+			draftLimiterReleaseSeconds,
+			value -> draftLimiterReleaseSeconds = value);
+		tooltip(release, "Time constant for recovering gain after a peak. "
+			+ "Shorter releases follow the programme faster but can pump; "
+			+ "longer releases are smoother.");
 	}
 
 	private void buildVideoTab() {
@@ -356,9 +480,25 @@ public final class CinemaConfigScreen extends Screen {
 		draftAirAbsorption = CinemaClientConfig.DEFAULT_AIR_ABSORPTION;
 		draftAirTemperatureC = CinemaClientConfig.DEFAULT_AIR_TEMPERATURE_C;
 		draftAirHumidityPercent = CinemaClientConfig.DEFAULT_AIR_HUMIDITY_PERCENT;
-		draftEarlyGainDb = CinemaClientConfig.DEFAULT_EARLY_GAIN_DB;
 		draftLateReverb = CinemaClientConfig.DEFAULT_LATE_REVERB;
-		draftLateTrimDb = CinemaClientConfig.DEFAULT_LATE_TRIM_DB;
+		draftLateFloorDb = CinemaClientConfig.DEFAULT_LATE_FLOOR_DB;
+		draftReflectionUpdateMillis =
+			CinemaClientConfig.DEFAULT_REFLECTION_UPDATE_MILLIS;
+		draftReflectionMoveThresholdMeters =
+			CinemaClientConfig.DEFAULT_REFLECTION_MOVE_THRESHOLD_METERS;
+		draftLateReflectionUpdateMillis =
+			CinemaClientConfig.DEFAULT_LATE_REFLECTION_UPDATE_MILLIS;
+		draftLatePathMoveThresholdMeters =
+			CinemaClientConfig.DEFAULT_LATE_PATH_MOVE_THRESHOLD_METERS;
+		draftLatePathStepBudgetMillis =
+			CinemaClientConfig.DEFAULT_LATE_PATH_STEP_BUDGET_MILLIS;
+		draftLatePathMinStableMillis =
+			CinemaClientConfig.DEFAULT_LATE_PATH_MIN_STABLE_MILLIS;
+		draftLatePathMaxStableMillis =
+			CinemaClientConfig.DEFAULT_LATE_PATH_MAX_STABLE_MILLIS;
+		draftLimiterCeilingDb = CinemaClientConfig.DEFAULT_LIMITER_CEILING_DB;
+		draftLimiterReleaseSeconds =
+			CinemaClientConfig.DEFAULT_LIMITER_RELEASE_SECONDS;
 		draftVideoMaxHeightSdr = CinemaClientConfig.DEFAULT_VIDEO_MAX_HEIGHT_SDR;
 		draftVideoMaxHeightHdr = CinemaClientConfig.DEFAULT_VIDEO_MAX_HEIGHT_HDR;
 		draftHardwareDecode = CinemaClientConfig.DEFAULT_HARDWARE_DECODE;
@@ -410,9 +550,19 @@ public final class CinemaConfigScreen extends Screen {
 		config.setAirAbsorption(draftAirAbsorption);
 		config.setAirTemperatureC(draftAirTemperatureC);
 		config.setAirHumidityPercent(draftAirHumidityPercent);
-		config.setEarlyGainDb(draftEarlyGainDb);
 		config.setLateReverb(draftLateReverb);
-		config.setLateTrimDb(draftLateTrimDb);
+		config.setLateFloorDb(draftLateFloorDb);
+		config.setReflectionUpdateMillis(draftReflectionUpdateMillis);
+		config.setReflectionMoveThresholdMeters(
+			draftReflectionMoveThresholdMeters);
+		config.setLateReflectionUpdateMillis(draftLateReflectionUpdateMillis);
+		config.setLatePathMoveThresholdMeters(
+			draftLatePathMoveThresholdMeters);
+		config.setLatePathStepBudgetMillis(draftLatePathStepBudgetMillis);
+		config.setLatePathMinStableMillis(draftLatePathMinStableMillis);
+		config.setLatePathMaxStableMillis(draftLatePathMaxStableMillis);
+		config.setLimiterCeilingDb(draftLimiterCeilingDb);
+		config.setLimiterReleaseSeconds(draftLimiterReleaseSeconds);
 		config.setVideoMaxHeightSdr(draftVideoMaxHeightSdr);
 		config.setVideoMaxHeightHdr(draftVideoMaxHeightHdr);
 		config.setHardwareDecode(draftHardwareDecode);
@@ -435,6 +585,49 @@ public final class CinemaConfigScreen extends Screen {
 		if (savePending && System.currentTimeMillis() >= saveAtMillis) {
 			saveNow();
 		}
+		if (tab == Tab.PERFORMANCE) {
+			sampleProcessCpu();
+		} else {
+			cpuSampleNanos = 0L;
+			cpuPercent = Double.NaN;
+		}
+	}
+
+	/**
+	 * Samples JVM process CPU time against wall time so the Performance page
+	 * can show "percent of one core". {@code getProcessCpuTime()} is optional;
+	 * a missing bean or a negative reading leaves the page at "n/a".
+	 */
+	private void sampleProcessCpu() {
+		if (cpuUnavailable) {
+			return;
+		}
+		java.lang.management.OperatingSystemMXBean bean =
+			ManagementFactory.getOperatingSystemMXBean();
+		if (!(bean instanceof OperatingSystemMXBean os)) {
+			cpuUnavailable = true;
+			return;
+		}
+		long processNanos = os.getProcessCpuTime();
+		if (processNanos < 0L) {
+			cpuUnavailable = true;
+			return;
+		}
+		long now = System.nanoTime();
+		if (cpuSampleNanos == 0L) {
+			cpuSampleNanos = now;
+			cpuProcessNanos = processNanos;
+			return;
+		}
+		long wallNanos = now - cpuSampleNanos;
+		if (wallNanos < 500_000_000L) {
+			return;
+		}
+		long processDelta = processNanos - cpuProcessNanos;
+		cpuPercent = processDelta <= 0L ? 0.0
+			: processDelta / (double) wallNanos * 100.0;
+		cpuSampleNanos = now;
+		cpuProcessNanos = processNanos;
 	}
 
 	@Override
@@ -472,15 +665,38 @@ public final class CinemaConfigScreen extends Screen {
 				}
 			}
 			case AUDIO -> {
-				int y = contentTop + ROW_SPACING * 7 + 4;
-				graphics.drawString(font, truncate("Air absorption uses ISO 9613-1 "
-					+ "at the listener position.", contentWidth),
+				int y = contentTop + ROW_SPACING * 6 + 4;
+				graphics.drawString(font, truncate("Order 1 is always active; "
+					+ "order 2-4 add geometric reflections.", contentWidth),
 					contentLeft, y, 0x9A9A9A, false);
-				graphics.drawString(font, truncate("Late level is computed from the "
-					+ "room; the slider is a trim.", contentWidth),
+				graphics.drawString(font, truncate("Levels come from the room "
+					+ "calibration; there are no user gain trims.", contentWidth),
 					contentLeft, y + 11, 0x9A9A9A, false);
+				graphics.drawString(font, truncate("Order 2-4 floor is relative to "
+					+ "direct sound; RT60 caps the delay.", contentWidth),
+					contentLeft, y + 22, 0x9A9A9A, false);
 				graphics.drawString(font, truncate("World scale only changes "
 					+ "acoustics; geometry and rendering stay in blocks.", contentWidth),
+					contentLeft, y + 33, 0x9A9A9A, false);
+			}
+			case PERFORMANCE -> {
+				int y = contentTop + ROW_SPACING * 9 + 4;
+				String cpu;
+				if (cpuUnavailable) {
+					cpu = "Process CPU: n/a";
+				} else if (Double.isNaN(cpuPercent)) {
+					cpu = "Process CPU: sampling...";
+				} else {
+					cpu = String.format(Locale.ROOT,
+						"Process CPU: %.1f%% of one core", cpuPercent);
+				}
+				graphics.drawString(font, truncate(cpu, contentWidth),
+					contentLeft, y, 0xFFD54F, false);
+				graphics.drawString(font, truncate("JVM process CPU, sampled every "
+					+ "0.5 s; not an acoustic result.", contentWidth),
+					contentLeft, y + 11, 0x9A9A9A, false);
+				graphics.drawString(font, truncate("Solver and limiter settings "
+					+ "apply live; no restart needed.", contentWidth),
 					contentLeft, y + 22, 0x9A9A9A, false);
 			}
 			case VIDEO -> {
@@ -707,6 +923,7 @@ public final class CinemaConfigScreen extends Screen {
 	private enum Tab {
 		SCREEN("Screen"),
 		AUDIO("Audio"),
+		PERFORMANCE("Performance"),
 		VIDEO("Video"),
 		BEHAVIOR("Behavior"),
 		ADVANCED("Advanced");

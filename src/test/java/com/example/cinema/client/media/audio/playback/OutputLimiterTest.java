@@ -30,6 +30,36 @@ class OutputLimiterTest {
 	}
 
 	@Test
+	void customCeilingScalesTheMixToThatCeiling() {
+		float predicted = 2.0f;
+		float ceilingDb = -6.0f;
+		float ceilingLinear = (float) Math.pow(10.0, ceilingDb / 20.0);
+		float gain = OutputLimiter.gainFor(predicted, ceilingDb);
+		assertEquals(ceilingLinear, predicted * gain, 1.0e-6f);
+		assertEquals(1.0f, OutputLimiter.gainFor(ceilingLinear * 0.5f, ceilingDb),
+			EPS);
+	}
+
+	@Test
+	void invalidCeilingFallsBackToTheDefault() {
+		assertEquals(OutputLimiter.gainFor(2.0f),
+			OutputLimiter.gainFor(2.0f, Float.NaN), EPS);
+		assertEquals(OutputLimiter.gainFor(2.0f),
+			OutputLimiter.gainFor(2.0f, 3.0f), EPS);
+	}
+
+	@Test
+	void releaseTimeChangesTheRecoveryRate() {
+		float fast = OutputLimiter.advance(0.5f, 1.0f, 0.005, 0.1);
+		float slow = OutputLimiter.advance(0.5f, 1.0f, 0.005, 0.8);
+		assertTrue(fast > slow);
+		assertTrue(slow > 0.5f);
+		assertEquals(OutputLimiter.advance(0.5f, 1.0f, 0.005),
+			OutputLimiter.advance(0.5f, 1.0f, 0.005, Double.NaN), EPS);
+		assertEquals(0.5f, OutputLimiter.advance(1.0f, 0.5f, 0.005, 0.1), EPS);
+	}
+
+	@Test
 	void attackIsInstantAndReleaseIsSmooth() {
 		assertEquals(0.5f, OutputLimiter.advance(1.0f, 0.5f, 0.005), EPS);
 		float released = OutputLimiter.advance(0.5f, 1.0f, 0.005);

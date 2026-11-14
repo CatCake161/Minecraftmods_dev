@@ -4,7 +4,7 @@
 
 当前版本：**Alpha 0.0.1**。
 
-当前状态：核心 P1 链路已可玩并通过游戏内验收：投影仪光学与 GUI、屏幕渲染/尺寸配置（含 64×64）、AV Receiver M1–M4、四种扬声器、物理 5.1 路由、线材配对、设备命名、可乘坐座位、Mod Menu 设置、遥控器扫描/远程访问与设备配对菜单。剩余重点：多屏/LAN、媒体轨/字幕、可变声道布局与房间声学。听者始终使用玩家实际位置/朝向，不使用皇帝位或声场校正。
+当前状态：核心 P1 链路已可玩并通过游戏内验收：投影仪光学与 GUI、屏幕渲染/尺寸配置（含 64×64）、AV Receiver M1–M4、四种扬声器、物理 5.1 路由、线材配对、设备命名、可乘坐座位、Mod Menu 设置、遥控器扫描/远程访问与设备配对菜单。房间声学核心（A2 直达声、A2b 反射、A2c-R 统一 FIR、A3 几何晚期总线、世界尺度、输出限幅、多扬声器路由）也已通过游戏内验收；FDN 晚期混响为历史不通过并已删除。剩余重点：多屏/LAN、媒体轨/字幕、可变声道布局、接收器声学 GUI（A4）与低频管理（A5）。听者始终使用玩家实际位置/朝向，不使用皇帝位或声场校正。
 
 ## 环境要求
 
@@ -16,11 +16,11 @@
 | Java（游戏 / 编译） | 21 |
 | Java（Gradle） | 25+ |
 | Gradle | 9.8.2（wrapper） |
-| FFmpeg | **必须安装**，full build |
+| FFmpeg | **必须安装**，6.0+ full build |
 
 ## 安装 FFmpeg（必须）
 
-模组不内置 FFmpeg。请从 [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) 下载 **full build**，把二进制放到：
+模组不内置 FFmpeg。请从 [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) 下载 **6.0+ full build**，把二进制放到：
 
 ```text
 .minecraft/mods/ffmpeg/bin/ffmpeg.exe
@@ -69,6 +69,7 @@ $env:JAVA_HOME='<JDK-25+>'
 - [客户端架构与目录边界](docs/design/ARCHITECTURE.md)
 - [待办列表](docs/TODO.md)
 - [游戏内指令说明](docs/COMMANDS.md)
+- [第三方组件与许可](docs/THIRD-PARTY.md)
 - [P0 技术验证报告（历史）](docs/design/P0-SPIKE-REPORT.md)
 - [P0.5 投影/扬声器设计（历史）](docs/design/P05-DESIGN.md)
 - [投影仪 GUI 开发大纲](docs/design/PROJECTOR-GUI.md)

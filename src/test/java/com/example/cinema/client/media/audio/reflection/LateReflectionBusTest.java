@@ -94,6 +94,25 @@ class LateReflectionBusTest {
 	}
 
 	@Test
+	void setTapsAppliesGainFloorAndDelayCap() {
+		LateReflectionBus bus = new LateReflectionBus(SAMPLE_RATE, 1024, 8);
+		bus.setTaps(List.of(
+			new LateReflectionBus.Tap(0, 0.005, 0.50, 48_000.0),
+			new LateReflectionBus.Tap(1, 0.005, 0.05, 48_000.0),
+			new LateReflectionBus.Tap(2, 0.900, 1.00, 48_000.0)), 0.500, 0.10);
+		assertEquals(1, bus.tapCount());
+	}
+
+	@Test
+	void setTapsWithoutFloorKeepsAllPositiveGains() {
+		LateReflectionBus bus = new LateReflectionBus(SAMPLE_RATE, 1024, 8);
+		bus.setTaps(List.of(
+			new LateReflectionBus.Tap(0, 0.005, 0.50, 48_000.0),
+			new LateReflectionBus.Tap(1, 0.005, 0.05, 48_000.0)), 0.500, 0.0);
+		assertEquals(2, bus.tapCount());
+	}
+
+	@Test
 	void denseTapRenderStaysFiniteAndMeasuresRealtime() {
 		int history = 8192;
 		int tapCount = 418;

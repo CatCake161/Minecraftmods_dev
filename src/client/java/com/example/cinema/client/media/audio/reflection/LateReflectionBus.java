@@ -252,14 +252,26 @@ public final class LateReflectionBus {
 	 * is still the hard upper bound.
 	 */
 	public void setTaps(List<Tap> taps, double maxDelaySeconds) {
+		setTaps(taps, maxDelaySeconds, 0.0);
+	}
+
+	/**
+	 * Keeps taps inside both the delay cap and the gain floor. The floor is an
+	 * amplitude in the same domain as {@link Tap#gain()} and normally comes
+	 * from the listener-relative direct level. A non-finite or non-positive
+	 * floor disables gain filtering except for the existing {@code gain > 0}
+	 * validity check.
+	 */
+	public void setTaps(List<Tap> taps, double maxDelaySeconds, double minGain) {
 		double historyLimit = historyFrames / (double) sampleRate;
 		double limit = Double.isFinite(maxDelaySeconds)
 			? Math.max(0.0, Math.min(maxDelaySeconds, historyLimit))
 			: historyLimit;
+		double floor = Double.isNaN(minGain) ? 0.0 : Math.max(0.0, minGain);
 		List<Tap> valid = new ArrayList<>();
 		if (taps != null) {
 			for (Tap tap : taps) {
-				if (tap != null && tap.gain() > 0.0
+				if (tap != null && tap.gain() > 0.0 && tap.gain() >= floor
 					&& tap.delaySeconds() < limit) {
 					valid.add(tap);
 				}
