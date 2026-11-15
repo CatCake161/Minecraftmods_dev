@@ -13,7 +13,7 @@ import net.minecraft.world.phys.Vec3;
  * connected air volume.
  *
  * <p>Only air cells whose centres lie inside the detected box are visited. A
- * solid neighbour contributes one square meter of surface; a passable
+ * solid neighbour contributes one block face of internal surface; a passable
  * neighbour outside the box is treated as an opening (doorway or missing
  * wall). Ignored devices such as speakers, seats, projectors and receivers are
  * traversed so they do not split the room. The fill stops at

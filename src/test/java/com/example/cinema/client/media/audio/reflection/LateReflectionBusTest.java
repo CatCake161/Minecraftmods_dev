@@ -113,6 +113,51 @@ class LateReflectionBusTest {
 	}
 
 	@Test
+	void repeatedSetTapsWithSameKeyKeepsStateAndFade() {
+		LateReflectionBus bus = new LateReflectionBus(SAMPLE_RATE, 2_048, 8,
+			0.010);
+		LateReflectionBus.Tap tap = new LateReflectionBus.Tap(0, 0.0, 1.0,
+			48_000.0, new float[]{0.0f, 0.0f, 0.0f}, new int[]{0},
+			new float[]{1.0f}, "stable");
+		bus.setTaps(List.of(tap));
+		float[][] input = buffers(256);
+		float[][] outputs = buffers(256);
+		java.util.Arrays.fill(input[0], 0, 256, 1.0f);
+		for (int block = 0; block < 4; block++) {
+			bus.process(input, 256, outputs);
+		}
+		float steady = outputs[0][255];
+		bus.setTaps(List.of(tap));
+		bus.process(input, 256, outputs);
+		assertEquals(steady, outputs[0][0], 0.02f);
+	}
+
+	@Test
+	void removedTapFadesOutInsteadOfStoppingInstantly() {
+		LateReflectionBus bus = new LateReflectionBus(SAMPLE_RATE, 2_048, 8,
+			0.010);
+		LateReflectionBus.Tap tap = new LateReflectionBus.Tap(0, 0.0, 1.0,
+			48_000.0, new float[]{0.0f, 0.0f, 0.0f}, new int[]{0},
+			new float[]{1.0f}, "removed");
+		bus.setTaps(List.of(tap));
+		float[][] input = buffers(256);
+		float[][] outputs = buffers(256);
+		java.util.Arrays.fill(input[0], 0, 256, 1.0f);
+		for (int block = 0; block < 4; block++) {
+			bus.process(input, 256, outputs);
+		}
+		bus.setTaps(List.of());
+		assertEquals(1, bus.tapCount());
+		bus.process(input, 256, outputs);
+		assertTrue(outputs[0][0] > 0.5f);
+		assertTrue(outputs[0][255] < outputs[0][0]);
+		for (int block = 0; block < 2; block++) {
+			bus.process(input, 256, outputs);
+		}
+		assertEquals(0.0f, outputs[0][255], 1.0e-5f);
+	}
+
+	@Test
 	void denseTapRenderStaysFiniteAndMeasuresRealtime() {
 		int history = 8192;
 		int tapCount = 418;
@@ -259,6 +304,7 @@ class LateReflectionBusTest {
 			new float[]{0.7071f, 0.7071f});
 
 		assertEquals(2, tap.channel());
+		assertEquals("2:test", tap.key());
 		assertEquals(0.0f, tap.direction()[0], 1.0e-6);
 		assertEquals(0.0f, tap.direction()[1], 1.0e-6);
 		assertEquals(1.0f, tap.direction()[2], 1.0e-6);

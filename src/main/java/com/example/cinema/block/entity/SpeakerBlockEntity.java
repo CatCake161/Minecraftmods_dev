@@ -75,7 +75,7 @@ public class SpeakerBlockEntity extends BlockEntity {
 		return new Vec3(-Math.sin(radians), 0.0, -Math.cos(radians));
 	}
 
-	/** Tweeter/driver centre above the block's lower Y. */
+	/** Tweeter/driver centre above the block's lower Y, in block units. */
 	public Vec3 acousticCenter() {
 		double offset = switch (type()) {
 			case FLOORSTANDING -> 1.31;
@@ -87,7 +87,7 @@ public class SpeakerBlockEntity extends BlockEntity {
 		return new Vec3(pos.getX() + 0.5, pos.getY() + offset, pos.getZ() + 0.5);
 	}
 
-	/** Acoustic centre shifted forward to the baffle reference. */
+	/** Acoustic centre shifted forward to the baffle reference, in block units. */
 	public Vec3 acousticFrontPosition() {
 		return acousticCenter().add(acousticForward().scale(ACOUSTIC_FRONT_OFFSET));
 	}

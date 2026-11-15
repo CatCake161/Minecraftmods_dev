@@ -286,7 +286,8 @@ public final class CinemaConfigScreen extends Screen {
 			draftLatePathMoveThresholdMeters,
 			value -> draftLatePathMoveThresholdMeters = value);
 		tooltip(lateMove, "Listener movement that invalidates the incremental "
-			+ "order-2/3/4 path build and republishes order 2 immediately.");
+			+ "order-2/3/4 path build and republishes order 2 immediately. The "
+			+ "bus enforces a 200 ms minimum rebuild interval.");
 		y += ROW_SPACING;
 		ValueSlider stepBudget = valueSlider(contentLeft, y, contentWidth,
 			"Order 2-4 step budget: %.0f ms",

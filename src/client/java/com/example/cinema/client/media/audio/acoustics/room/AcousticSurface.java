@@ -5,7 +5,8 @@ import net.minecraft.world.phys.Vec3;
 /**
  * One of the six room planes. {@code axis} is the plane normal axis;
  * {@code normal} is +1 or -1 toward the room interior. The u/v tangential
- * bounds are in the other two axes, in world meters.
+ * bounds and coordinates are internal world block units; acoustic accessors
+ * convert areas/lengths to metres only at the formula boundary.
  */
 public record AcousticSurface(Axis axis, double coordinate, double normal,
 							  double minU, double maxU, double minV, double maxV,

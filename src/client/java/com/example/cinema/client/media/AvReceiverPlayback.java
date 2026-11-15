@@ -146,6 +146,8 @@ public final class AvReceiverPlayback {
 	private long lastLatePathSampleMillis;
 	private long lastLatePathMoveMillis;
 	private long latePathRequestRoomVersion = Long.MIN_VALUE;
+	private long lastLatePathResetMillis;
+	private boolean latePathResetPending;
 	private ReflectionDelayLimit latePathDelayLimit =
 		ImageSourcePathSolver.DEFAULT_DELAY_LIMIT;
 	private boolean latePathBuildActive;
@@ -637,8 +639,9 @@ public final class AvReceiverPlayback {
 		directDelayBySource.putAll(delaysBySource);
 		directReferencePower = LateReflectionAudibility.directPower(
 			directAmplitudes);
-		lateBusFloorPower = LateReflectionAudibility.floorPower(
-			directReferencePower, config.lateFloorDb());
+		lateBusFloorPower = quantizePowerDb(
+			LateReflectionAudibility.floorPower(
+				directReferencePower, config.lateFloorDb()), 0.25);
 
 		float[][] speakerPositions = new float[selected.size()][];
 		int[] speakerChannels = new int[selected.size()];
@@ -868,19 +871,26 @@ public final class AvReceiverPlayback {
 		lateBusMaxDelaySeconds = LateReflectionAudibility.maxDelaySeconds(
 			lateBusRt60Seconds, config.lateFloorDb(),
 			CinemaAudioEngine.maxReflectionDelaySeconds());
+		lateBusMaxDelaySeconds = Math.round(lateBusMaxDelaySeconds * 1_000.0)
+			/ 1_000.0;
 		ReflectionDelayLimit lateDelayLimit =
 			ReflectionDelayLimit.constant(lateBusMaxDelaySeconds);
 		boolean floorChanged = config.lateFloorDb() != lastLateFloorDb;
 		boolean moved = lastReflectionListener == null
 			|| listener.distanceToSqr(lastReflectionListener)
-				> sq(config.reflectionMoveThresholdMeters());
+				> thresholdSqrBlocks(config.reflectionMoveThresholdMeters());
 		boolean speakerSettingsChanged = updateSpeakerSettingsHash(speakers);
 		boolean lateReflectionToggled =
 			config.lateReverb() != lastLateReflectionEnabled;
-		if (now - lastReflectionUpdateMillis < config.reflectionUpdateMillis()
-			&& roomVersion == lastReflectionRoomVersion && !moved
-			&& !speakerSettingsChanged && !lateReflectionToggled
-			&& !floorChanged) {
+		boolean force = roomVersion != lastReflectionRoomVersion
+			|| speakerSettingsChanged || lateReflectionToggled || floorChanged;
+		long interval = config.reflectionUpdateMillis();
+		if (moved) {
+			// Movement can react sooner than a slow user cadence, but never
+			// faster than 5-10 Hz; otherwise walking rebuilds every tick.
+			interval = Math.max(100L, Math.min(interval, 200L));
+		}
+		if (now - lastReflectionUpdateMillis < interval && !force) {
 			return;
 		}
 		lastLateFloorDb = config.lateFloorDb();
@@ -922,7 +932,7 @@ public final class AvReceiverPlayback {
 		boolean lateOrder2Stable = config.lateReverb() && latePathFastApplied
 			&& lastLatePathListener != null
 			&& listener.distanceToSqr(lastLatePathListener)
-				<= sq(config.latePathMoveThresholdMeters())
+				<= thresholdSqrBlocks(config.latePathMoveThresholdMeters())
 			&& roomVersion == latePathRequestRoomVersion;
 		Arrays.fill(latePathRequests, null);
 		Map<String, SpeakerRoute> routesByKey = new HashMap<>();
@@ -1103,7 +1113,7 @@ public final class AvReceiverPlayback {
 		}
 		return new LateReflectionBus.Tap(tap.channel(), delay, tap.gain(),
 			tap.dampingHz(), tap.direction(), tap.outputChannels(),
-			tap.outputWeights());
+			tap.outputWeights(), tap.key());
 	}
 
 	private static List<ReflectionTap> selectFirstOrderTaps(
@@ -1292,24 +1302,37 @@ public final class AvReceiverPlayback {
 		}
 		if (!config.lateReverb()) {
 			resetLatePathBuild();
+			premiumOrder3Sources = List.of();
+			latePathResetPending = false;
 			currentLateTaps = List.of();
 			engineTaps(currentLateTaps);
 			return;
 		}
 		long now = System.currentTimeMillis();
 		updateLatePathMovement(listener, now);
-		boolean moved = lastLatePathListener == null
+		boolean roomChanged = roomVersion != latePathRequestRoomVersion;
+		boolean moved = latePathResetPending || lastLatePathListener == null
 			|| listener.distanceToSqr(lastLatePathListener)
-				> sq(config.latePathMoveThresholdMeters())
-			|| roomVersion != latePathRequestRoomVersion;
-		if (moved) {
+				> thresholdSqrBlocks(config.latePathMoveThresholdMeters())
+			|| roomChanged;
+		// Even when the threshold is smaller than one tick of walking, do not
+		// rebuild the bus more often than this. The old taps keep playing until
+		// the replacement is published and crossfaded.
+		long minResetMillis = Math.max(200L, config.reflectionUpdateMillis());
+		boolean canReset = roomChanged || lastLatePathResetMillis == 0L
+			|| now - lastLatePathResetMillis >= minResetMillis;
+		if (moved && canReset) {
+			latePathResetPending = false;
 			lastLatePathListener = listener;
 			lastLatePathMoveMillis = now;
+			lastLatePathResetMillis = now;
 			latePathRequestRoomVersion = roomVersion;
 			latePathDelayLimit = lateDelayLimit;
 			resetLatePathBuild();
 			currentLateTaps = List.copyOf(order2Taps);
 			engineTaps(currentLateTaps);
+		} else if (moved) {
+			latePathResetPending = true;
 		}
 		// Fast/deep sessions are advanced in small per-tick slices by
 		// stepLatePhase().
@@ -1621,7 +1644,6 @@ public final class AvReceiverPlayback {
 		latePathDeepNextSource = 0;
 		latePathDeepSession = null;
 		latePathDeepRequest = null;
-		premiumOrder3Sources = List.of();
 		latePathBuildStartMillis = 0L;
 		latePathBuildNanos = 0L;
 		latePathDeepStartMillis = 0L;
@@ -1720,6 +1742,21 @@ public final class AvReceiverPlayback {
 
 	private static double sq(double value) {
 		return value * value;
+	}
+
+	/** Converts a metre threshold to the squared block distance used by Vec3. */
+	private static double thresholdSqrBlocks(double meters) {
+		return sq(AcousticScale.metersToBlocks(meters));
+	}
+
+	/** Quantises a power value to a dB grid to avoid limit-only republishes. */
+	private static double quantizePowerDb(double power, double stepDb) {
+		if (!(power > 0.0) || !Double.isFinite(power)
+			|| !(stepDb > 0.0) || !Double.isFinite(stepDb)) {
+			return power;
+		}
+		double db = 10.0 * Math.log10(power);
+		return Math.pow(10.0, Math.round(db / stepDb) * stepDb / 10.0);
 	}
 
 	private static double expectedPosition(ClientLevel level, AvReceiverBlockEntity receiver) {

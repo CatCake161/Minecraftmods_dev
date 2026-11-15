@@ -7,7 +7,11 @@ import com.example.cinema.client.media.audio.acoustics.room.AcousticMaterial;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Six-channel geometric late-reflection bus.
@@ -39,13 +43,15 @@ public final class LateReflectionBus {
 	private final float[][] history = new float[CHANNELS][];
 
 	private int writeIndex;
-	private int fadeInRemaining;
 	private int tapCount;
+	private String[] tapKeys = new String[0];
 	private int[] tapChannels = new int[0];
 	private double[] tapDelays = new double[0];
 	private double[] tapGains = new double[0];
 	private double[] tapAlphas = new double[0];
 	private double[] tapStates = new double[0];
+	private float[] tapFadeGains = new float[0];
+	private float[] tapFadeTargets = new float[0];
 	private int[] tapOutputStarts = new int[0];
 	private int[] tapOutputCounts = new int[0];
 	private int[] tapOutputChannels = new int[0];
@@ -89,10 +95,12 @@ public final class LateReflectionBus {
 	 */
 	public record Tap(int channel, double delaySeconds, double gain,
 					  double dampingHz, float[] direction,
-					  int[] outputChannels, float[] outputWeights) {
+					  int[] outputChannels, float[] outputWeights,
+					  String key) {
 		private static final float MIN_WEIGHT = 1.0e-6f;
 
 		public Tap {
+			key = key == null ? "" : key;
 			channel = Math.max(0, Math.min(CHANNELS - 1, channel));
 			delaySeconds = Double.isFinite(delaySeconds)
 				? Math.max(0.0, delaySeconds) : 0.0;
@@ -147,10 +155,17 @@ public final class LateReflectionBus {
 		}
 
 		public Tap(int channel, double delaySeconds, double gain,
+				   double dampingHz, float[] direction, int[] outputChannels,
+				   float[] outputWeights) {
+			this(channel, delaySeconds, gain, dampingHz, direction,
+				outputChannels, outputWeights, "");
+		}
+
+		public Tap(int channel, double delaySeconds, double gain,
 				   double dampingHz) {
 			this(channel, delaySeconds, gain, dampingHz,
 				new float[]{0.0f, 0.0f, 0.0f},
-				new int[]{channel}, new float[]{1.0f});
+				new int[]{channel}, new float[]{1.0f}, "");
 		}
 
 		public Tap(int channel, double delaySeconds, double gain,
@@ -158,7 +173,7 @@ public final class LateReflectionBus {
 				   float[] outputWeights) {
 			this(channel, delaySeconds, gain, dampingHz,
 				new float[]{0.0f, 0.0f, 0.0f},
-				outputChannels, outputWeights);
+				outputChannels, outputWeights, "");
 		}
 
 		public static Tap fromPath(ReflectionPathTap path) {
@@ -193,7 +208,8 @@ public final class LateReflectionBus {
 				? Math.max(0.0, gainMultiplier) : 0.0;
 			return new Tap(path.channel(), path.delaySeconds(),
 				path.gain() * multiplier, Math.max(2_000.0, cutoff),
-				direction, outputChannels, outputWeights);
+				direction, outputChannels, outputWeights,
+				path.sourcePathKey());
 		}
 
 		@Override
@@ -208,6 +224,7 @@ public final class LateReflectionBus {
 				&& Double.compare(delaySeconds, other.delaySeconds) == 0
 				&& Double.compare(gain, other.gain) == 0
 				&& Double.compare(dampingHz, other.dampingHz) == 0
+				&& key.equals(other.key)
 				&& Arrays.equals(direction, other.direction)
 				&& Arrays.equals(outputChannels, other.outputChannels)
 				&& Arrays.equals(outputWeights, other.outputWeights);
@@ -219,6 +236,7 @@ public final class LateReflectionBus {
 			result = 31 * result + Double.hashCode(delaySeconds);
 			result = 31 * result + Double.hashCode(gain);
 			result = 31 * result + Double.hashCode(dampingHz);
+			result = 31 * result + key.hashCode();
 			result = 31 * result + Arrays.hashCode(direction);
 			result = 31 * result + Arrays.hashCode(outputChannels);
 			result = 31 * result + Arrays.hashCode(outputWeights);
@@ -278,32 +296,127 @@ public final class LateReflectionBus {
 			}
 		}
 		valid.sort(Comparator.comparingDouble(Tap::gain).reversed());
-		int count = Math.min(maxTaps, valid.size());
-		int outputCount = 0;
-		for (int i = 0; i < count; i++) {
-			outputCount += valid.get(i).outputChannels().length;
-		}
-		ensureCapacity(count, outputCount);
-		tapCount = count;
-		int outputIndex = 0;
-		for (int i = 0; i < count; i++) {
+		int newCount = Math.min(maxTaps, valid.size());
+
+		// Keep the previous generation around long enough to fade out removed
+		// taps. The audio thread only rewrites the live arrays after every old
+		// value needed for matching has been copied here.
+		int oldCount = tapCount;
+		String[] oldKeys = Arrays.copyOf(tapKeys, oldCount);
+		int[] oldChannels = Arrays.copyOf(tapChannels, oldCount);
+		double[] oldDelays = Arrays.copyOf(tapDelays, oldCount);
+		double[] oldGains = Arrays.copyOf(tapGains, oldCount);
+		double[] oldAlphas = Arrays.copyOf(tapAlphas, oldCount);
+		double[] oldStates = Arrays.copyOf(tapStates, oldCount);
+		float[] oldFades = Arrays.copyOf(tapFadeGains, oldCount);
+		int[] oldOutputStarts = Arrays.copyOf(tapOutputStarts, oldCount);
+		int[] oldOutputCounts = Arrays.copyOf(tapOutputCounts, oldCount);
+		int[] oldOutputChannels = Arrays.copyOf(tapOutputChannels,
+			tapOutputChannels.length);
+		float[] oldOutputWeights = Arrays.copyOf(tapOutputWeights,
+			tapOutputWeights.length);
+
+		Set<String> newKeys = new HashSet<>();
+		int newOutputCount = 0;
+		for (int i = 0; i < newCount; i++) {
 			Tap tap = valid.get(i);
-			tapChannels[i] = tap.channel();
-			tapDelays[i] = tap.delaySeconds() * sampleRate;
-			tapGains[i] = tap.gain();
-			tapAlphas[i] = dampingAlpha(tap.dampingHz());
-			tapStates[i] = 0.0;
-			int[] channels = tap.outputChannels();
-			float[] weights = tap.outputWeights();
-			tapOutputStarts[i] = outputIndex;
-			tapOutputCounts[i] = channels.length;
-			for (int j = 0; j < channels.length; j++) {
-				tapOutputChannels[outputIndex] = channels[j];
-				tapOutputWeights[outputIndex] = weights[j];
-				outputIndex++;
+			if (!tap.key().isEmpty()) {
+				newKeys.add(tap.key());
+			}
+			newOutputCount += tap.outputChannels().length;
+		}
+		Map<String, Integer> oldByKey = new HashMap<>();
+		for (int i = 0; i < oldCount; i++) {
+			if (!oldKeys[i].isEmpty()) {
+				oldByKey.putIfAbsent(oldKeys[i], i);
 			}
 		}
-		fadeInRemaining = count > 0 ? fadeInFrames : 0;
+		boolean[] matched = new boolean[oldCount];
+		int capacity = maxTaps + Math.min(maxTaps, oldCount);
+		int keepBudget = Math.max(0, capacity - newCount);
+		int keepCount = 0;
+		int oldKeptOutputCount = 0;
+		for (int i = 0; i < oldCount; i++) {
+			boolean keep = !oldKeys[i].isEmpty()
+				&& !newKeys.contains(oldKeys[i]) && oldFades[i] > 0.0f;
+			if (keep && keepCount < keepBudget) {
+				keepCount++;
+				oldKeptOutputCount += oldOutputCounts[i];
+			}
+		}
+		ensureCapacity(newCount + keepCount,
+			newOutputCount + oldKeptOutputCount);
+
+		int outputIndex = 0;
+		int write = 0;
+		for (int i = 0; i < newCount; i++) {
+			Tap tap = valid.get(i);
+			int old = -1;
+			if (!tap.key().isEmpty()) {
+				Integer found = oldByKey.get(tap.key());
+				if (found != null) {
+					old = found;
+				}
+			} else if (i < oldCount && oldKeys[i].isEmpty()) {
+				// Tests and legacy callers without keys: preserve state by
+				// position instead of forcing a fade-in on every update.
+				old = i;
+			}
+			double state = old >= 0 ? oldStates[old] : 0.0;
+			float fade = old >= 0 ? oldFades[old]
+				: (fadeInFrames > 0 ? 0.0f : 1.0f);
+			if (old >= 0) {
+				matched[old] = true;
+			}
+			writeTap(write, tap, state, fade, 1.0f, outputIndex);
+			outputIndex += tap.outputChannels().length;
+			write++;
+		}
+		for (int i = 0; i < oldCount && write < newCount + keepCount; i++) {
+			if (matched[i] || oldKeys[i].isEmpty()
+				|| newKeys.contains(oldKeys[i]) || oldFades[i] <= 0.0f) {
+				continue;
+			}
+			tapKeys[write] = oldKeys[i];
+			tapChannels[write] = oldChannels[i];
+			tapDelays[write] = oldDelays[i];
+			tapGains[write] = oldGains[i];
+			tapAlphas[write] = oldAlphas[i];
+			tapStates[write] = oldStates[i];
+			tapFadeGains[write] = oldFades[i];
+			tapFadeTargets[write] = 0.0f;
+			tapOutputStarts[write] = outputIndex;
+			tapOutputCounts[write] = oldOutputCounts[i];
+			int oldStart = oldOutputStarts[i];
+			for (int j = 0; j < oldOutputCounts[i]; j++) {
+				tapOutputChannels[outputIndex] = oldOutputChannels[oldStart + j];
+				tapOutputWeights[outputIndex] = oldOutputWeights[oldStart + j];
+				outputIndex++;
+			}
+			write++;
+		}
+		tapCount = write;
+	}
+
+	private void writeTap(int index, Tap tap, double state, float fade,
+						  float fadeTarget, int outputIndex) {
+		tapKeys[index] = tap.key();
+		tapChannels[index] = tap.channel();
+		tapDelays[index] = tap.delaySeconds() * sampleRate;
+		tapGains[index] = tap.gain();
+		tapAlphas[index] = dampingAlpha(tap.dampingHz());
+		tapStates[index] = state;
+		tapFadeGains[index] = fade;
+		tapFadeTargets[index] = fadeTarget;
+		int[] channels = tap.outputChannels();
+		float[] weights = tap.outputWeights();
+		tapOutputStarts[index] = outputIndex;
+		tapOutputCounts[index] = channels.length;
+		for (int j = 0; j < channels.length; j++) {
+			tapOutputChannels[outputIndex] = channels[j];
+			tapOutputWeights[outputIndex] = weights[j];
+			outputIndex++;
+		}
 	}
 
 	public void setOutputGain(float gain) {
@@ -353,6 +466,9 @@ public final class LateReflectionBus {
 			double alpha = tapAlphas[tap];
 			double gain = tapGains[tap] * outputGain;
 			double state = tapStates[tap];
+			float fade = tapFadeGains[tap];
+			float fadeTarget = tapFadeTargets[tap];
+			float fadeStep = fadeInFrames > 0 ? 1.0f / fadeInFrames : 1.0f;
 			int outputStart = tapOutputStarts[tap];
 			int outputCount = tapOutputCounts[tap];
 			if (outputCount == 1) {
@@ -369,7 +485,9 @@ public final class LateReflectionBus {
 							+ ring[previous] * delayFraction;
 					}
 					state += alpha * (sample - state);
-					output[i] += (float) (gain * state) * weight;
+					float value = (float) (gain * state) * fade;
+					output[i] += value * weight;
+					fade = advanceFade(fade, fadeTarget, fadeStep);
 				}
 			} else {
 				for (int i = 0; i < frames; i++) {
@@ -383,18 +501,29 @@ public final class LateReflectionBus {
 							+ ring[previous] * delayFraction;
 					}
 					state += alpha * (sample - state);
-					float value = (float) (gain * state);
+					float value = (float) (gain * state) * fade;
 					for (int output = 0; output < outputCount; output++) {
 						int indexOut = outputStart + output;
 						outputs[tapOutputChannels[indexOut]][i] +=
 							value * tapOutputWeights[indexOut];
 					}
+					fade = advanceFade(fade, fadeTarget, fadeStep);
 				}
 			}
 			tapStates[tap] = state;
+			tapFadeGains[tap] = fade;
 		}
-		applyFadeIn(outputs, frames);
 		writeIndex = (start + frames) & historyMask;
+	}
+
+	private static float advanceFade(float fade, float target, float step) {
+		if (fade < target) {
+			return Math.min(target, fade + step);
+		}
+		if (fade > target) {
+			return Math.max(target, fade - step);
+		}
+		return fade;
 	}
 
 	/** Clears the raw history and all per-tap filter states. */
@@ -403,32 +532,21 @@ public final class LateReflectionBus {
 			Arrays.fill(ring, 0.0f);
 		}
 		Arrays.fill(tapStates, 0.0);
-		fadeInRemaining = 0;
+		Arrays.fill(tapFadeGains, 0.0f);
+		Arrays.fill(tapFadeTargets, 0.0f);
 		writeIndex = 0;
-	}
-
-	private void applyFadeIn(float[][] outputs, int frames) {
-		if (fadeInRemaining <= 0) {
-			return;
-		}
-		int total = Math.max(1, fadeInFrames);
-		for (int i = 0; i < frames; i++) {
-			double remaining = Math.max(0, fadeInRemaining - i);
-			float gain = (float) (1.0 - remaining / total);
-			for (int channel = 0; channel < CHANNELS; channel++) {
-				outputs[channel][i] *= gain;
-			}
-		}
-		fadeInRemaining = Math.max(0, fadeInRemaining - frames);
 	}
 
 	private void ensureCapacity(int count, int outputs) {
 		if (tapChannels.length < count) {
+			tapKeys = new String[count];
 			tapChannels = new int[count];
 			tapDelays = new double[count];
 			tapGains = new double[count];
 			tapAlphas = new double[count];
 			tapStates = new double[count];
+			tapFadeGains = new float[count];
+			tapFadeTargets = new float[count];
 		}
 		if (tapOutputStarts.length < count) {
 			tapOutputStarts = new int[count];

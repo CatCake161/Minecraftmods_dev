@@ -10,9 +10,9 @@ import java.util.List;
  * <p>The fill measures the air actually reachable from the listener inside the
  * detected box. {@code surfaceArea} is the total air/boundary contact area and
  * {@code openArea} is the part of that boundary that leads back into open air
- * (a doorway, a missing wall, or an open side). Volume and area use one cubic
- * meter per block cell and one square meter per block face, so partial blocks
- * are approximated. {@code reflectionSurfaces} contains the solid boundary
+ * (a doorway, a missing wall, or an open side). Volume and area use block
+ * cells/faces as the internal geometry unit; {@link AcousticRoom} converts them
+ * to cubic/square metres at the formula boundary. {@code reflectionSurfaces} contains the solid boundary
  * faces greedily merged into larger bounded patches for mirror discovery.
  * {@code xAxis}, {@code yAxis} and {@code zAxis} split the same boundary into
  * the three wall pairs used by the Fitzroy RT60 formula.

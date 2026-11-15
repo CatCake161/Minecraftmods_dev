@@ -94,8 +94,8 @@ public record MirrorPlane(Axis axis, double coordinate, double normal,
 
 	/** Stable identity used for dedupe and reflection-tap keys. */
 	public String key() {
-		long millimetres = Math.round(coordinate * 1000.0);
-		return axis.name() + (normal > 0.0 ? "+" : "-") + millimetres;
+		long milliBlocks = Math.round(coordinate * 1000.0);
+		return axis.name() + (normal > 0.0 ? "+" : "-") + milliBlocks;
 	}
 
 	/** Short room-style label, e.g. {@code x+} for a wall at max X. */

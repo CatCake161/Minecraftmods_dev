@@ -141,7 +141,7 @@
 - `SpeakerBlockEntity`：有 `role`、`levelDb`、`type`；`SpeakerBlock` 有 `FACING`；落地式为两格高，block entity 在下半格。M4 接收器→扬声器路由已接入。
 - `Seat` 方块已实现（`SeatBlock`/`SeatBlockEntity`/不可见 `SeatEntity`），可右键乘坐；**不提供皇帝位/听者参考，不参与声学**。
 - `AvReceiverPlaybackManager`：M3 每个接收器独立持有音频引擎/OpenAL context；停止或移除接收器时释放对应 context。
-- direct source 均为 `AL_SOURCE_RELATIVE = AL_TRUE`；M4 每个 sync 把物理扬声器世界坐标转换为听者相对坐标并通过 `setChannelLayout()` 快照更新，音频线程在 30 ms 时间常数内对半径和球面方向（slerp）插值到目标位置，不读世界/玩家状态。A2 起该渲染半径同时用于 Java 距离衰减。世界坐标源迁移评审见 §4.2.1，当前暂不迁移。
+- direct source 均为 `AL_SOURCE_RELATIVE = AL_TRUE`；M4 每个 sync 把物理扬声器世界坐标转换为听者相对坐标并通过 `setChannelLayout()` 快照更新，音频线程在 30 ms 时间常数内对半径和球面方向（slerp）插值到目标位置，不读世界/玩家状态。A2 起该渲染半径同时用于 Java 距离衰减。**写入 OpenAL 的 `AL_POSITION` 前统一经 `setOpenAlPosition` 用 `AcousticScale.blocksToMeters` 把内部 block 坐标转成米**；`AL_NONE` 下位置只影响声像/HRTF，距离衰减仍由 Java 按米计算。世界坐标源迁移评审见 §4.2.1，当前暂不迁移。
 - `StreamingAudioDecoder` 的 FFmpeg stderr 没有单独消费（`redirectErrorStream(false)`，靠 `-loglevel error` 降低输出）；极端情况下仍可能因 stderr 管道填满而阻塞，后续可加 drain 线程。
 - `CinemaPlayer` 的 A/V 时钟使用音频设备时钟/PTS；声学处理不得改变 chunk 的 `startPtsSeconds` 或引入不可控 lookahead。
 - **声学增益归属（A2 直达声已实现，L2a 多扬声器）**：当前 5.1 每声道一只扬声器时，直达声由 6 个 direct source 播放；L2a 起每个声道可以接多只扬声器，每只扬声器都有独立 direct source。OpenAL 距离模型为 `AL_NONE`，距离衰减由 Java 按平滑后的渲染半径 `1/max(r,1)` 计算；on-axis/指向性、空气吸收和遮挡低通合并进单个 4096-tap 直达 FIR；遮挡宽带衰减和整体 `overallGain` 进入 source gain。每个早期反射 tap 使用独立 OpenAL source，位置为镜像源；A2b 的距离也由 Java 按 `1/max(L,1)` 计算（与直达声同一规则），反射 4096-tap FIR 携带反射角指向性、空气、材质和遮挡低通（A2c-R；散射仍为 1；一阶反射全频带）。反射 tap 不混入 5.1 直达声道。
@@ -363,7 +363,7 @@ RT60_Fitzroy = 0.161 · V / S² · Σ_i S_i / (-ln(1 - α_i))
   - metal `0.02/0.03/0.04`，`0.05`（估计）
   - default `0.05/0.05/0.05`，`0.10`
   - 主要来源：CDC/NIOSH《Compendium of Materials for Noise Control》Table 5、`acoustic.ua` absorption coefficients；screen/vegetation/snow/porous/metal 缺少直接对应项，为估计值。
-- 扬声器声学中心：落地 **+1.31 m**（上层高音）、书架 **+0.77 m**、中置 **+0.33 m**、低音炮 **+0.48 m**（相对方块 y，来自方块模型）；声学中心再沿朝向向前面板偏移 **0.45 m**。
+- 扬声器声学中心：落地 **+1.31 block**（上层高音）、书架 **+0.77 block**、中置 **+0.33 block**、低音炮 **+0.48 block**（相对方块 y，来自方块模型；默认 1.00 m/block 时数值等于米）；声学中心再沿朝向向前面板偏移 **0.45 block**。这些是**方块模型偏移**，随世界尺度整体缩放；写入声学公式前再由 `AcousticScale.blocksToMeters` 转成米。
 - 扬声器朝向：新增 **36 档 10° 声学 yaw**（0=N，9=W，18=S，27=E；正方向 = 面向扬声器时玩家的右侧，符合 CTA 角度方向），不再受方块四向 `FACING` 限制；方块模型通过 `SpeakerBlockEntityRenderer` 同步旋转到同一物理朝向。
 - 朝向校准物品：**Speaker Alignment Tool**（`cinema:speaker_alignment_tool`，铁锭+指南针合成）；右键 +10°，潜行右键 -10°，action bar 显示当前角度。
 - 缓存：移动/转头时约 5 Hz 更新，静止时每 20 tick 更新；断线/退出清空。A1 只生成快照，不改变任何音频。
@@ -629,7 +629,7 @@ f_s = 2000 * sqrt(RT60_mid / V_eff)
 - **on-axis 聆听**：D=0，FIR 仍保留 `onAxisEqGainDb(f) - onAxisEqGainDb(1k)`，所以听到的是该型号实测轴向曲线（以全频段能量平均归一化），不再是平直参考。未测量/omni profile 的 on-axis EQ 为 0，仍为直通。
 - **缓存**：角度量化到 **5°**，按 profile、角度、路径、空气、遮挡 cutoff/order、`f_s` 组合缓存；直达 4096-tap / 反射 4096-tap FIR 在单个 daemon worker 上异步设计，设计期间沿用上一个 FIR，避免卡渲染线程。缓存上限 2048 条，超限按批淘汰；直达设计为 12 次 burst + 20 次/秒，反射为 24 次 burst + 30 次/秒。
 - **音频路径**：每个扬声器通道在 `CinemaAudioEngine` 中用 overlap-add FFT 卷积应用单个 4096-tap 直达 FIR；引擎按 **2048 frame**（≈42.7 ms）小块排队，4 个缓冲 ≈171 ms 前瞻，使更新不必等 0.5 s 解码块。卷积核 4096 taps 的 tail 跨块保留；FIR 改变时旧/新滤波器并行运行 **1024 frame（≈21 ms）**线性交叉淡化，旧路径淡出后丢弃，避免块边界换系数产生 click；seek/flush 时清空。FIR 输出保持 **32-bit float**（`AL_FORMAT_MONO_FLOAT32`），允许目标形状在 source gain 之前超过 0 dBFS；只有 `AL_EXT_FLOAT32` 不可用时才回退 16-bit 并在最终转换处钳位。旧实现直接把 FIR 输出写成 short，导致 JBL A180 正轴 +2.48 dB、垂直 20° +9.87 dB 的峰被硬削，是实测过载失真的原因。
-- **声学中心**：source 位置改用 `SpeakerBlockEntity.acousticFrontPosition()`（类型高度 + 0.45 m 前面板偏移）；直达角、Java 距离衰减和遮挡扫描都用该位置。
+- **声学中心**：source 位置使用 `SpeakerBlockEntity.acousticFrontPosition()`（block 模型偏移 + 0.45 block 前面板偏移；默认 1.00 m/block 时等于米）；直达角、Java 距离衰减和遮挡扫描都用该位置，距离公式在边界处转米。
 - **声像更新**：20 Hz 的 listener-relative 位置跳变在音频线程内用 **30 ms** 时间常数、约 200 Hz 分别插值半径和球面方向（slerp）；不动 OpenAL listener，不增加解码/视频延迟。视角 yaw 直接取 `getViewYRot()`，俯仰到 ±90° 时不会退回固定北方。
 - **反射**：A2c-R 使用独立 **4096-tap** 最小相位 FIR，角度为“扬声器 → 反射点”，目标幅度为
   `onAxisEqGainDb(f) + gainDb(θh, θv, f) - airAbsorption(L, f) + materialRelativeDb(f) + occlusionLowPassDb(f) `；
@@ -833,6 +833,8 @@ maxDelay      = min(historySafe,
 - 修改 `lateFloorDb` 会作废 fast/deep 稳态并重新发布 order-2/3/4 taps；房间/听者变化仍按原有 5 Hz / 移动阈值处理。
 - 诊断：`/cinema_acoustics` 输出 `late floor`、`direct`、`tapFloor`、`RT60`、`lateMaxDelay`；接收器日志输出 `lateMaxDelay`、`rt60`、`floor`、`busDroppedFloor`、`busDroppedDelay`。
 - 测试：`LateReflectionAudibilityTest`（-12 dB 直达 → -72 dB 门限、相对/绝对、RT60 推导、无直达）、`LateReflectionBusTest`（gain floor + delay cap）、`DirectPropagationDelayTest`（直达 δ 与反射 offset 一致性）。
+
+**2026-11-15 移动 pop 修复**：`LateReflectionBus` 的 `Tap` 增加稳定 `sourcePathKey`；`setTaps` 按 key 匹配，保留仍存在的 tap 的阻尼状态和淡变包络，新增 tap 淡入，删除 tap 做 30 ms 淡出，不再每次替换都清空 `tapStates` 或让整条总线从 0 重启。移动阈值统一用 `AcousticScale.metersToBlocks` 转成 block 后再与 `distanceToSqr` 比较；纯移动触发反射更新的间隔限制在 100–200 ms，late path reset 另有 **200 ms 最小间隔**；移动 reset 不再立即清空 `premiumOrder3Sources`，避免 order-3 premium 8→0→8 的空窗。`lateBusFloorPower` 量化到 0.25 dB、`lateBusMaxDelaySeconds` 量化到 1 ms，引擎 `limitsChanged` 使用 `1e-4` / `1e-3` epsilon，避免限值微抖触发硬重置。新增测试覆盖“同 key 重复 setTaps 不重启淡入”和“删除 tap 淡出”。
 
 **待实现 A3-N1：噪波阈值 / 自适应 late bus 深度**：当前 fast/deep 固定到 order-3/4 结束。计划按每阶新增路径的能量继续 order-5/6…，直到低于阈值或触达安全上限：
 

@@ -85,7 +85,7 @@ public final class CinemaClientConfig {
 	public static final int LATE_REFLECTION_UPDATE_MILLIS_STEP = 10;
 	public static final double MIN_LATE_PATH_MOVE_THRESHOLD_METERS = 0.05;
 	public static final double MAX_LATE_PATH_MOVE_THRESHOLD_METERS = 1.0;
-	public static final double DEFAULT_LATE_PATH_MOVE_THRESHOLD_METERS = 0.15;
+	public static final double DEFAULT_LATE_PATH_MOVE_THRESHOLD_METERS = 0.5;
 	public static final double LATE_PATH_MOVE_THRESHOLD_STEP = 0.05;
 	public static final int MIN_LATE_PATH_STEP_BUDGET_MILLIS = 1;
 	public static final int MAX_LATE_PATH_STEP_BUDGET_MILLIS = 16;

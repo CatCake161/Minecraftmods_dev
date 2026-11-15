@@ -231,6 +231,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	private final float[][] channelAnchorPositions = copyDefaultPositions();
 	private final double[] slerpScratch = new double[3];
 	private long lastPositionUpdateNanos;
+	private double appliedMetersPerBlock = Double.NaN;
 	private volatile float[] channelGains = new float[0];
 	private volatile float[] channelLateSendGains = new float[0];
 	private volatile MinimumPhaseFir[] channelFilters = new MinimumPhaseFir[0];
@@ -662,8 +663,8 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		double delay = Double.isFinite(maxDelaySeconds)
 			? Math.max(0.0, maxDelaySeconds) : lateBusMaxDelaySeconds();
 		float floor = Float.isNaN(minGain) ? 0.0f : Math.max(0.0f, minGain);
-		boolean limitsChanged = floor != lateTapMinGain
-			|| Math.abs(delay - lateTapMaxDelaySeconds) > 1.0e-9;
+		boolean limitsChanged = Math.abs(floor - lateTapMinGain) > 1.0e-4f
+			|| Math.abs(delay - lateTapMaxDelaySeconds) > 1.0e-3;
 		lateTapMaxDelaySeconds = delay;
 		lateTapMinGain = floor;
 		if (next.equals(lateReflectionTargets) && !limitsChanged) {
@@ -792,9 +793,8 @@ public final class CinemaAudioEngine implements AutoCloseable {
 				slot.position[0] = target.x();
 				slot.position[1] = target.y();
 				slot.position[2] = target.z();
-				alSource3f(slot.source, AL_POSITION, target.x(), target.y(),
-					target.z());
-			} else if (slot.fadingOut) {
+				setOpenAlPosition(slot.source, target.x(), target.y(),
+					target.z());			} else if (slot.fadingOut) {
 				// The same tap reappeared while fading out; reverse the fade.
 				slot.envelopeStep = 1.0f / REFLECTION_FADE_FRAMES;
 			}
@@ -1234,7 +1234,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			alSourcef(wetSources[channel], AL_MIN_GAIN, 0.0f);
 			alSourcef(wetSources[channel], AL_GAIN, 0.0f);
 			float[] position = DEFAULT_POSITIONS[channel];
-			alSource3f(wetSources[channel], AL_POSITION,
+			setOpenAlPosition(wetSources[channel],
 				position[0], position[1], position[2]);
 		}
 		wetSourcesAllocated = true;
@@ -1347,7 +1347,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 				? MinimumPhaseFir.FLAT : filter);
 			if (firstLayout || i >= previousCount) {
 				System.arraycopy(positions[i], 0, renderedPositions[i], 0, 3);
-				alSource3f(sources[i], AL_POSITION,
+				setOpenAlPosition(sources[i],
 					renderedPositions[i][0], renderedPositions[i][1],
 					renderedPositions[i][2]);
 				renderedOcclusionGains[i] = i < occlusionGains.length
@@ -1422,6 +1422,12 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	 */
 	private void updateSourcePositions() {
 		long now = System.nanoTime();
+		double metersPerBlock = AcousticScale.metersPerBlock();
+		if (metersPerBlock != appliedMetersPerBlock) {
+			appliedMetersPerBlock = metersPerBlock;
+			snapSourcePositions();
+			return;
+		}
 		if (lastPositionUpdateNanos == 0L) {
 			lastPositionUpdateNanos = now;
 			return;
@@ -1442,7 +1448,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			}
 			if (smoothPosition(renderedPositions[source], target[source], alpha)) {
 				float[] position = renderedPositions[source];
-				alSource3f(sources[source], AL_POSITION,
+				setOpenAlPosition(sources[source],
 					position[0], position[1], position[2]);
 			}
 		}
@@ -1451,14 +1457,14 @@ public final class CinemaAudioEngine implements AutoCloseable {
 				continue;
 			}
 			if (smoothPosition(slot.position, slot.targetPosition, alpha)) {
-				alSource3f(slot.source, AL_POSITION, slot.position[0],
+				setOpenAlPosition(slot.source, slot.position[0],
 					slot.position[1], slot.position[2]);
 			}
 		}
 		if (wetSourcesAllocated) {
 			for (int channel = 0; channel < WET_SOURCES; channel++) {
 				float[] position = channelAnchorPositions[channel];
-				alSource3f(wetSources[channel], AL_POSITION,
+				setOpenAlPosition(wetSources[channel],
 					position[0], position[1], position[2]);
 			}
 		}
@@ -1578,17 +1584,38 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			}
 			System.arraycopy(target[source], 0, renderedPositions[source], 0, 3);
 			float[] position = renderedPositions[source];
-			alSource3f(sources[source], AL_POSITION,
+			setOpenAlPosition(sources[source],
 				position[0], position[1], position[2]);
 		}
 		if (wetSourcesAllocated) {
 			for (int channel = 0; channel < WET_SOURCES; channel++) {
 				float[] position = channelAnchorPositions[channel];
-				alSource3f(wetSources[channel], AL_POSITION,
+				setOpenAlPosition(wetSources[channel],
 					position[0], position[1], position[2]);
 			}
 		}
+		for (ReflectionSlot slot : reflectionSlots) {
+			if (slot == null || slot.key.isEmpty()) {
+				continue;
+			}
+			System.arraycopy(slot.targetPosition, 0, slot.position, 0, 3);
+			setOpenAlPosition(slot.source, slot.position[0], slot.position[1],
+				slot.position[2]);
+		}
 		lastPositionUpdateNanos = System.nanoTime();
+	}
+
+	/**
+	 * Internal source positions are in blocks; OpenAL listener/source positions
+	 * are metres. Distance attenuation is computed in Java with the same
+	 * conversion, so this keeps HRTF/near-field geometry consistent with the
+	 * acoustic model without changing the block-based smoothing state.
+	 */
+	private static void setOpenAlPosition(int source, float x, float y, float z) {
+		alSource3f(source, AL_POSITION,
+			(float) AcousticScale.blocksToMeters(x),
+			(float) AcousticScale.blocksToMeters(y),
+			(float) AcousticScale.blocksToMeters(z));
 	}
 
 	/**
