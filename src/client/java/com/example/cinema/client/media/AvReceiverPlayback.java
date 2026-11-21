@@ -565,7 +565,8 @@ public final class AvReceiverPlayback {
 		}
 
 		CinemaClientConfig config = CinemaClientConfig.get();
-		engine.setLimiterSettings((float) config.limiterCeilingDb(),
+		engine.setLimiterSettings(config.limiterEnabled(),
+			(float) config.limiterCeilingDb(),
 			config.limiterReleaseSeconds());
 		boolean airAbsorption = config.airAbsorption();
 		double temperatureC = config.airTemperatureC();

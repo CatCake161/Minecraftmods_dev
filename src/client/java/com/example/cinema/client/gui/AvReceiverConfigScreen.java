@@ -719,8 +719,14 @@ public final class AvReceiverConfigScreen extends Screen {
 			line2 = video + "  |  " + audio;
 		}
 		float reduction = playback == null ? 0.0f : playback.limiterReductionDb();
-		String limiter = reduction > 0.05f
-			? String.format(Locale.ROOT, "Limiter -%.1f dB", reduction) : "";
+		boolean limiterEnabled = CinemaClientConfig.get().limiterEnabled();
+		String limiter;
+		if (!limiterEnabled) {
+			limiter = "Limiter bypass";
+		} else {
+			limiter = reduction > 0.05f
+				? String.format(Locale.ROOT, "Limiter -%.1f dB", reduction) : "";
+		}
 		int limiterWidth = limiter.isEmpty() ? 0 : font.width(limiter);
 		int line2Width = Math.max(0, contentWidth
 			- (limiterWidth == 0 ? 0 : limiterWidth + 8));
@@ -904,7 +910,12 @@ public final class AvReceiverConfigScreen extends Screen {
 
 	private static String limiterLine(AvReceiverPlayback playback) {
 		float reduction = playback == null ? 0.0f : playback.limiterReductionDb();
-		double ceiling = CinemaClientConfig.get().limiterCeilingDb();
+		CinemaClientConfig config = CinemaClientConfig.get();
+		double ceiling = config.limiterCeilingDb();
+		if (!config.limiterEnabled()) {
+			return String.format(Locale.ROOT, "bypassed  (ceiling %.1f dBFS)",
+				ceiling);
+		}
 		if (reduction > 0.05f) {
 			return String.format(Locale.ROOT, "-%.1f dB  (ceiling %.1f dBFS)",
 				reduction, ceiling);

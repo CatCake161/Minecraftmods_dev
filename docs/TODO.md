@@ -6,6 +6,12 @@
 ## 现在：剩余验收 / 已知问题
 
 - 暂无阻塞项。视频上传默认策略已定为 `glFenceSync` + 延迟回收，并已通过用户游戏内长测。
+- 待游戏内验收（2026-11-15 之后新增，均已 `check` 通过）：
+  - [ ] 限幅器 `Output` 页 bypass + 3 ms attack：bypass 开/关时无爆音、释放平滑，状态行/Signal 页指示正确，16-bit 回退与多接收器回归。
+  - [ ] A3-R4 48 m 大房间 order-3/4 延迟预算听感。
+  - [ ] A3 late bus 相对门限 / RT60 延迟上限 / 直达传播延迟听感。
+  - [ ] 移动 pop 修复 A/B（阈值单位、tap 淡入淡出、200 ms reset 间隔）。
+  - [ ] 声学单位审计回归：`scale` 0.25 / 2.00 下的 OpenAL 米制位置、反射延迟与距离衰减。
 
 ## P1：投影仪 / 配对 / 遥控
 
@@ -66,8 +72,8 @@
 - [x] A2d 直达声 A/B/CPU：单个 4096-tap 联合 FIR 的听感、移动/转头更新、约 ±1 dB 实测确认；32-bit float source buffer（`AL_EXT_FLOAT32`）、30 ms 半径 + 球面方向（slerp）声像平滑、30 ms 遮挡增益平滑已接入；游戏内复测通过：快速转头/移动无爆音或削波，遮挡切换正常，距离/空气/遮挡/指向性各只应用一次
 - [x] A2e Mod Menu 声学设置：空气吸收开关/温度/湿度；已持久化到 `config/cinema.json`。早期反射/晚期电平不再提供用户 gain trim，完全由物理模拟与房间校准决定
 - [x] A2f 声学世界尺度（2026-11-12）：Mod Menu `Audio` 页 `World scale` **0.25–2.00 m/block**（默认 1.00，步进 0.05，`metersPerBlock`，`CONFIG_VERSION = 4`）；新增 `AcousticScale` 统一方块↔米换算，接入房间米制尺寸/面积/体积/RT60/Schroeder、ISO 9613-1 空气吸收、距离衰减 `1/max(1 m, r)`、一阶/高阶反射延迟与 `1/max(L,1 m)` 增益、遮挡 dB/m、late bus damping；方块几何/渲染/投影与反射发现容差保持方块单位；尺度变化 `AcousticScene.invalidate()`，`reflectionKey()` 纳入尺度使反射/晚期缓存重建；`/cinema_acoustics` 输出 `scale` 与米制值；`AcousticScaleTest` + 完整 `check` 通过；游戏内 **0.25 / 0.50 / 1.00 / 2.00** 听感 A/B 已通过（米制尺寸/RT60/反射延迟/距离衰减随尺度同向变化）
-- [x] A2g 输出上限与限幅（2026-11-12）：主音量 `-60..+18 dBFS`、扬声器 Level `-60..+12 dB`；`CinemaAudioEngine` 把 `AL_MAX_GAIN` 提到 **64**，修复 OpenAL 默认 1.0 上限导致正增益被钳；新增 `OutputLimiter`，按 4 × 2048 frame 队列（≈171 ms 前瞻）统计 direct/reflection/wet 峰值，按当前增益求每声道最坏混合峰值并统一缩放所有 `AL_GAIN`（预测在 `queueBlock` 之后运行）；ceiling 默认 **-0.3 dBFS**（Performance 页可调 -6..0）、瞬时 attack、release 默认 400 ms（可调 0.05..2.0 s）；wet 正 trim 直接走 `AL_GAIN`，不预乘样本；接收器状态行/Signal 页显示 `Limiter -x.x dB`，ceiling 读取当前配置；`OutputLimiterTest` 覆盖默认与自定义 ceiling/release 重载 + 完整 `check` 通过；**已通过游戏内验收**：远距离听感、限幅指示、`AL_FORMAT_MONO16` 16-bit 回退路径、多接收器同时播放
-- [x] A2h Mod Menu Performance 页（2026-11-14）：新增 `Performance` 分页（位于 Audio 之后），配置 `reflectionUpdateMillis`、`reflectionMoveThresholdMeters`、`lateReflectionUpdateMillis`、`latePathMoveThresholdMeters`、`latePathStepBudgetMillis`、`latePathMinStableMillis`、`latePathMaxStableMillis`、`limiterCeilingDb`、`limiterReleaseSeconds`；全部持久化并实时接入 `AvReceiverPlayback`/`CinemaAudioEngine`，无需重启（max stable < min stable 时按 min 处理）；只读显示 `Process CPU: xx.x% of one core`（`OperatingSystemMXBean#getProcessCpuTime()`，约 500 ms 采样，不可用显示 `n/a`），不显示声学计算结果
+- [x] A2g 输出上限与限幅（2026-11-12）：主音量 `-60..+18 dBFS`、扬声器 Level `-60..+12 dB`；`CinemaAudioEngine` 把 `AL_MAX_GAIN` 提到 **64**，修复 OpenAL 默认 1.0 上限导致正增益被钳；新增 `OutputLimiter`，按 4 × 2048 frame 队列（≈171 ms 前瞻）统计 direct/reflection/wet 峰值，按当前增益求每声道最坏混合峰值并统一缩放所有 `AL_GAIN`（预测在 `queueBlock` 之后运行）；ceiling 默认 **-0.3 dBFS**（Output 页可调 -6..0、可 bypass）、**3 ms attack**、release 默认 400 ms（可调 0.05..2.0 s）；wet 正 trim 直接走 `AL_GAIN`，不预乘样本；接收器状态行/Signal 页显示 `Limiter -x.x dB`，ceiling 读取当前配置；`OutputLimiterTest` 覆盖默认与自定义 ceiling/release 重载 + 完整 `check` 通过；**已通过游戏内验收**：远距离听感、限幅指示、`AL_FORMAT_MONO16` 16-bit 回退路径、多接收器同时播放。2026-11-21 新增 bypass 开关与 3 ms attack（`check` 通过，**bypass/attack 游戏内验收待做**）
+- [x] A2h Mod Menu Performance/Output 页（2026-11-14）：新增 `Output` 分页（位于 Audio 之后）和 `Performance` 分页，配置 `reflectionUpdateMillis`、`reflectionMoveThresholdMeters`、`lateReflectionUpdateMillis`、`latePathMoveThresholdMeters`、`latePathStepBudgetMillis`、`latePathMinStableMillis`、`latePathMaxStableMillis`；`Output` 分页配置 `limiterEnabled` bypass、`limiterCeilingDb`、`limiterReleaseSeconds`；全部持久化并实时接入 `AvReceiverPlayback`/`CinemaAudioEngine`，无需重启（max stable < min stable 时按 min 处理）；Performance 页只读显示 `Process CPU: xx.x% of one core`（`OperatingSystemMXBean#getProcessCpuTime()`，约 500 ms 采样，不可用显示 `n/a`），不显示声学计算结果；`Output` 页的 bypass/3 ms attack 待游戏内验收
 
 - [x] A3 FDN 已删除（2026-11-12）：2026-11-08 的 Java 64-line FDN 听感验收不通过（高频“沙沙”、低频不足、整体音色不平衡），且几何 `LateReflectionBus` 已接管晚期场。已删除 `LateReverb` / `LateReverbSettings` / `LateReverbTarget`、FDN DSP（输入扩散、调制、RT60 low/mid/high、DC 高通、pre-delay、Hadamard 去相关、mid-band 归一化）及相关测试；不再保留 inactive 代码。
 - [x] A3 默认关闭（2026-11-08，方案 B）：`DEFAULT_LATE_REVERB=false`；`CinemaAudioEngine` 在启用时才创建 6 个 wet source，禁用时释放 source/buffer 并跳过 late send。配置版本 2，旧配置迁移一次并把 `lateReverb` 置为 false，仍可在 Mod Menu 重新开启。默认路径只保留直达 4096-tap FIR + 一阶反射 4096-tap FIR。低频模态/SBIR 仍归 A5。
@@ -97,7 +103,7 @@
   - 频率相关散射（low/mid/high）需要扩展 `AcousticMaterial` 与材质表；第一版可先用单值 scattering。
   - 测试：`scattering=0` 与现有 tap 完全一致、`scattering=1` 无镜面 tap、能量不超入射、无 NaN；`/cinema_acoustics` 输出每 tap 的 specular/scatter 分量和每材质散射系数；游戏内 A/B（fabric/carpet/vegetation vs glass/metal/water）
 - [ ] A3-D1 late tap damping 材质化（未来）：把当前 single damping 改为按材质 low/mid/high 三段；low 用低架滤波器、high 用低通滤波器，全部用 PEQ 实现，并与现有每 tap FIR/材质吸收共用同一数字域。本次不实现，仅记录方案。
-- [ ] A4 接收器集成：Speakers/Settings 页声学总开关、按阶数反射开关/floor、房间预设/重扫；服务端字段/网络包；性能与限幅器设置留在 Mod Menu Performance 页，不进接收器 GUI
+- [ ] A4 接收器集成：Speakers/Settings 页声学总开关、按阶数反射开关/floor、房间预设/重扫；服务端字段/网络包；求解设置留在 Mod Menu Performance 页，限幅器设置留在 Output 页，不进接收器 GUI
 - [ ] A4b 听者策略（决策已定，待 A4 接入）：始终使用玩家实际耳朵位置/朝向；不做 Seat 皇帝位、固定监听点或声场校正
 - [ ] A5 低频管理与模态（原 A6 提前，排在 A4 之后）：LFE 分频/低频管理、多低音炮路由与校准（增益/延迟）、低频模态计算与模态 EQ、测量；依赖 A4 的接收器设置与同步
 - [ ] A6 调试/验收：dump 房间/RT60/taps/late 参数；A/B 开关；矩形房间、材质、旋转、移动、5.1、4K/BSL、设备切换；A2c-R 直达单 FIR/反射 4096-tap 全频带 FIR（材质/遮挡/空气）/flood-fill 补丁种子/多接收器 CPU，部分墙/柱子/开放空间/玻璃/屏幕/门洞；A3 几何晚期总线：order-2/3/4 增量、premium per-tap、LFE 反射、VBAP 方向/权重、按阶数 UI 与电平、seek/reset 清空、多接收器 CPU；声学世界尺度 0.25/0.50/1.00/2.00 的 RT60/`f_s`/反射延迟/距离衰减与听感 A/B；输出限幅 -0.3 dBFS 的远距离电平、限幅指示、多接收器同时播放与 16-bit 回退路径；同一声道接多只扬声器时的直达声、限幅峰值累加、反射/late bus 行为，以及 L2a direct source 动态增减、反射池收缩/恢复、GUI/Signal 源计数

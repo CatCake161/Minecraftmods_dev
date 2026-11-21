@@ -222,6 +222,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	private final boolean[] activeOutputChannels = new boolean[CHANNELS];
 	private float wetNextTarget;
 	private volatile float limiterGain = 1.0f;
+	private volatile boolean limiterEnabled = true;
 	private volatile float limiterCeilingDb = OutputLimiter.CEILING_DB;
 	private volatile double limiterReleaseSeconds = OutputLimiter.RELEASE_SECONDS;
 	private float appliedLimiterGain = Float.NaN;
@@ -382,10 +383,16 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	}
 
 	/**
-	 * Configurable limiter ceiling/release. Both values are read by the audio
-	 * thread on every gain update, so changes apply without restarting
+	 * Configurable limiter bypass/ceiling/release. All values are read by the
+	 * audio thread on every gain update, so changes apply without restarting
 	 * playback. Out-of-range inputs fall back to the limiter defaults.
 	 */
+	public void setLimiterSettings(boolean enabled, float ceilingDb,
+								   double releaseSeconds) {
+		limiterEnabled = enabled;
+		setLimiterSettings(ceilingDb, releaseSeconds);
+	}
+
 	public void setLimiterSettings(float ceilingDb, double releaseSeconds) {
 		limiterCeilingDb = Float.isFinite(ceilingDb) && ceilingDb <= 0.0f
 			? ceilingDb : OutputLimiter.CEILING_DB;
@@ -1727,8 +1734,8 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			}
 		}
 		limiterGain = OutputLimiter.advance(limiterGain,
-			OutputLimiter.gainFor(predictedPeak, limiterCeilingDb), dt,
-			limiterReleaseSeconds);
+			OutputLimiter.targetGain(predictedPeak, limiterCeilingDb,
+				limiterEnabled), dt, limiterReleaseSeconds);
 		boolean limiterChanged = Float.isNaN(appliedLimiterGain)
 			|| Math.abs(limiterGain - appliedLimiterGain) >= 0.0001f;
 		float limiter = limiterGain;

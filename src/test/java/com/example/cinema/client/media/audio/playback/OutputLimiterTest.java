@@ -49,6 +49,13 @@ class OutputLimiterTest {
 	}
 
 	@Test
+	void bypassTargetsUnityGain() {
+		assertEquals(1.0f, OutputLimiter.targetGain(10.0f, -6.0f, false), EPS);
+		assertEquals(OutputLimiter.gainFor(10.0f, -6.0f),
+			OutputLimiter.targetGain(10.0f, -6.0f, true), EPS);
+	}
+
+	@Test
 	void releaseTimeChangesTheRecoveryRate() {
 		float fast = OutputLimiter.advance(0.5f, 1.0f, 0.005, 0.1);
 		float slow = OutputLimiter.advance(0.5f, 1.0f, 0.005, 0.8);
@@ -56,12 +63,22 @@ class OutputLimiterTest {
 		assertTrue(slow > 0.5f);
 		assertEquals(OutputLimiter.advance(0.5f, 1.0f, 0.005),
 			OutputLimiter.advance(0.5f, 1.0f, 0.005, Double.NaN), EPS);
-		assertEquals(0.5f, OutputLimiter.advance(1.0f, 0.5f, 0.005, 0.1), EPS);
+		assertEquals(OutputLimiter.advance(1.0f, 0.5f, 0.005, 0.1),
+			OutputLimiter.advance(1.0f, 0.5f, 0.005, 0.8), EPS);
 	}
 
 	@Test
-	void attackIsInstantAndReleaseIsSmooth() {
-		assertEquals(0.5f, OutputLimiter.advance(1.0f, 0.5f, 0.005), EPS);
+	void attackUsesThreeMillisecondTimeConstant() {
+		float attacked = OutputLimiter.advance(1.0f, 0.5f, 0.003);
+		assertEquals(1.0f - 0.5 * (1.0 - Math.exp(-1.0)), attacked, 1.0e-4f);
+		assertTrue(attacked > 0.5f && attacked < 1.0f);
+		assertEquals(0.5f, OutputLimiter.advance(1.0f, 0.5f, 0.015), 0.005f);
+	}
+
+	@Test
+	void attackIsFastAndReleaseIsSmooth() {
+		float attacked = OutputLimiter.advance(1.0f, 0.5f, 0.005);
+		assertTrue(attacked > 0.5f && attacked < 1.0f);
 		float released = OutputLimiter.advance(0.5f, 1.0f, 0.005);
 		assertTrue(released > 0.5f);
 		assertTrue(released < 1.0f);

@@ -83,6 +83,7 @@ public final class CinemaConfigScreen extends Screen {
 	private int draftLatePathStepBudgetMillis;
 	private int draftLatePathMinStableMillis;
 	private int draftLatePathMaxStableMillis;
+	private boolean draftLimiterEnabled;
 	private double draftLimiterCeilingDb;
 	private double draftLimiterReleaseSeconds;
 	private int draftVideoMaxHeightSdr;
@@ -123,6 +124,7 @@ public final class CinemaConfigScreen extends Screen {
 		draftLatePathStepBudgetMillis = config.latePathStepBudgetMillis();
 		draftLatePathMinStableMillis = config.latePathMinStableMillis();
 		draftLatePathMaxStableMillis = config.latePathMaxStableMillis();
+		draftLimiterEnabled = config.limiterEnabled();
 		draftLimiterCeilingDb = config.limiterCeilingDb();
 		draftLimiterReleaseSeconds = config.limiterReleaseSeconds();
 		draftVideoMaxHeightSdr = config.videoMaxHeightSdr();
@@ -160,6 +162,7 @@ public final class CinemaConfigScreen extends Screen {
 		switch (tab) {
 			case SCREEN -> buildScreenTab();
 			case AUDIO -> buildAudioTab();
+			case OUTPUT -> buildOutputTab();
 			case PERFORMANCE -> buildPerformanceTab();
 			case VIDEO -> buildVideoTab();
 			case BEHAVIOR -> buildBehaviorTab();
@@ -320,6 +323,15 @@ public final class CinemaConfigScreen extends Screen {
 		tooltip(maxStable, "Upper bound of the speed-scaled still window. "
 			+ "Values below the minimum stable window are treated as the "
 			+ "minimum.");
+	}
+
+	private void buildOutputTab() {
+		int y = contentTop;
+		Button limiter = toggle(contentLeft, y, contentWidth, "Limiter",
+			() -> draftLimiterEnabled, value -> draftLimiterEnabled = value);
+		tooltip(limiter, "Feed-forward output limiter. Off bypasses gain "
+			+ "reduction (a recovering gain is released smoothly). It is not "
+			+ "a measured SPL.");
 		y += ROW_SPACING;
 		ValueSlider ceiling = valueSlider(contentLeft, y, contentWidth,
 			"Limiter ceiling: %+.1f dBFS",
@@ -339,8 +351,8 @@ public final class CinemaConfigScreen extends Screen {
 			draftLimiterReleaseSeconds,
 			value -> draftLimiterReleaseSeconds = value);
 		tooltip(release, "Time constant for recovering gain after a peak. "
-			+ "Shorter releases follow the programme faster but can pump; "
-			+ "longer releases are smoother.");
+			+ "Attack is fixed at 3 ms; shorter releases follow the programme "
+			+ "faster but can pump.");
 	}
 
 	private void buildVideoTab() {
@@ -497,6 +509,7 @@ public final class CinemaConfigScreen extends Screen {
 			CinemaClientConfig.DEFAULT_LATE_PATH_MIN_STABLE_MILLIS;
 		draftLatePathMaxStableMillis =
 			CinemaClientConfig.DEFAULT_LATE_PATH_MAX_STABLE_MILLIS;
+		draftLimiterEnabled = CinemaClientConfig.DEFAULT_LIMITER_ENABLED;
 		draftLimiterCeilingDb = CinemaClientConfig.DEFAULT_LIMITER_CEILING_DB;
 		draftLimiterReleaseSeconds =
 			CinemaClientConfig.DEFAULT_LIMITER_RELEASE_SECONDS;
@@ -562,6 +575,7 @@ public final class CinemaConfigScreen extends Screen {
 		config.setLatePathStepBudgetMillis(draftLatePathStepBudgetMillis);
 		config.setLatePathMinStableMillis(draftLatePathMinStableMillis);
 		config.setLatePathMaxStableMillis(draftLatePathMaxStableMillis);
+		config.setLimiterEnabled(draftLimiterEnabled);
 		config.setLimiterCeilingDb(draftLimiterCeilingDb);
 		config.setLimiterReleaseSeconds(draftLimiterReleaseSeconds);
 		config.setVideoMaxHeightSdr(draftVideoMaxHeightSdr);
@@ -680,8 +694,20 @@ public final class CinemaConfigScreen extends Screen {
 					+ "acoustics; geometry and rendering stay in blocks.", contentWidth),
 					contentLeft, y + 33, 0x9A9A9A, false);
 			}
+			case OUTPUT -> {
+				int y = contentTop + ROW_SPACING * 3 + 4;
+				graphics.drawString(font, truncate("Feed-forward gain limiter; "
+					+ "not a measured SPL.", contentWidth),
+					contentLeft, y, 0x9A9A9A, false);
+				graphics.drawString(font, truncate("Attack is fixed at 3 ms; "
+					+ "ceiling and release apply live.", contentWidth),
+					contentLeft, y + 11, 0x9A9A9A, false);
+				graphics.drawString(font, truncate("Bypass releases the current "
+					+ "reduction smoothly; timing is unchanged.", contentWidth),
+					contentLeft, y + 22, 0x9A9A9A, false);
+			}
 			case PERFORMANCE -> {
-				int y = contentTop + ROW_SPACING * 9 + 4;
+				int y = contentTop + ROW_SPACING * 7 + 4;
 				String cpu;
 				if (cpuUnavailable) {
 					cpu = "Process CPU: n/a";
@@ -696,8 +722,8 @@ public final class CinemaConfigScreen extends Screen {
 				graphics.drawString(font, truncate("JVM process CPU, sampled every "
 					+ "0.5 s; not an acoustic result.", contentWidth),
 					contentLeft, y + 11, 0x9A9A9A, false);
-				graphics.drawString(font, truncate("Solver and limiter settings "
-					+ "apply live; no restart needed.", contentWidth),
+				graphics.drawString(font, truncate("Solver settings apply live; "
+					+ "no restart needed.", contentWidth),
 					contentLeft, y + 22, 0x9A9A9A, false);
 			}
 			case VIDEO -> {
@@ -924,6 +950,7 @@ public final class CinemaConfigScreen extends Screen {
 	private enum Tab {
 		SCREEN("Screen"),
 		AUDIO("Audio"),
+		OUTPUT("Output"),
 		PERFORMANCE("Performance"),
 		VIDEO("Video"),
 		BEHAVIOR("Behavior"),

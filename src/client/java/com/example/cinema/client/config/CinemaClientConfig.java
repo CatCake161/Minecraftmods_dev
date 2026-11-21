@@ -101,6 +101,7 @@ public final class CinemaClientConfig {
 	public static final int LATE_PATH_MAX_STABLE_MILLIS_STEP = 10;
 
 	/** Feed-forward output limiter shared by the direct, reflection and wet buses. */
+	public static final boolean DEFAULT_LIMITER_ENABLED = true;
 	public static final double MIN_LIMITER_CEILING_DB = -6.0;
 	public static final double MAX_LIMITER_CEILING_DB = 0.0;
 	public static final double DEFAULT_LIMITER_CEILING_DB = -0.3;
@@ -145,6 +146,7 @@ public final class CinemaClientConfig {
 	private int latePathStepBudgetMillis = DEFAULT_LATE_PATH_STEP_BUDGET_MILLIS;
 	private int latePathMinStableMillis = DEFAULT_LATE_PATH_MIN_STABLE_MILLIS;
 	private int latePathMaxStableMillis = DEFAULT_LATE_PATH_MAX_STABLE_MILLIS;
+	private boolean limiterEnabled = DEFAULT_LIMITER_ENABLED;
 	private double limiterCeilingDb = DEFAULT_LIMITER_CEILING_DB;
 	private double limiterReleaseSeconds = DEFAULT_LIMITER_RELEASE_SECONDS;
 	private int videoMaxHeightSdr = DEFAULT_VIDEO_MAX_HEIGHT_SDR;
@@ -318,6 +320,14 @@ public final class CinemaClientConfig {
 			MAX_LATE_PATH_MAX_STABLE_MILLIS);
 	}
 
+	public boolean limiterEnabled() {
+		return limiterEnabled;
+	}
+
+	public void setLimiterEnabled(boolean value) {
+		limiterEnabled = value;
+	}
+
 	public double limiterCeilingDb() {
 		return limiterCeilingDb;
 	}
@@ -410,6 +420,7 @@ public final class CinemaClientConfig {
 		root.addProperty("latePathStepBudgetMillis", latePathStepBudgetMillis);
 		root.addProperty("latePathMinStableMillis", latePathMinStableMillis);
 		root.addProperty("latePathMaxStableMillis", latePathMaxStableMillis);
+		root.addProperty("limiterEnabled", limiterEnabled);
 		root.addProperty("limiterCeilingDb", limiterCeilingDb);
 		root.addProperty("limiterReleaseSeconds", limiterReleaseSeconds);
 		root.addProperty("videoMaxHeightSdr", videoMaxHeightSdr);
@@ -432,7 +443,8 @@ public final class CinemaClientConfig {
 					+ "lateReflectionUpdateMillis={}, "
 					+ "latePathMoveThresholdMeters={}, latePathStepBudgetMillis={}, "
 					+ "latePathMinStableMillis={}, latePathMaxStableMillis={}, "
-					+ "limiterCeilingDb={}, limiterReleaseSeconds={}, "
+					+ "limiterEnabled={}, limiterCeilingDb={}, "
+					+ "limiterReleaseSeconds={}, "
 					+ "videoMaxHeightSdr={}, videoMaxHeightHdr={}, hardwareDecode={}, "
 					+ "ffmpegShowInfo={}, videoGlFinish={}, ffmpegPath={})",
 				file, screenMaxSize, pauseGameInDeviceGuis,
@@ -442,7 +454,8 @@ public final class CinemaClientConfig {
 				reflectionMoveThresholdMeters, lateReflectionUpdateMillis,
 				latePathMoveThresholdMeters, latePathStepBudgetMillis,
 				latePathMinStableMillis, latePathMaxStableMillis,
-				limiterCeilingDb, limiterReleaseSeconds, videoMaxHeightSdr,
+				limiterEnabled, limiterCeilingDb, limiterReleaseSeconds,
+				videoMaxHeightSdr,
 				videoMaxHeightHdr, hardwareDecode, ffmpegShowInfo,
 				videoGlFinish, ffmpegPath);
 		} catch (IOException e) {
@@ -602,6 +615,9 @@ public final class CinemaClientConfig {
 				config.setLatePathMaxStableMillis(
 					root.get("latePathMaxStableMillis").getAsInt());
 			}
+			if (root.has("limiterEnabled")) {
+				config.limiterEnabled = root.get("limiterEnabled").getAsBoolean();
+			}
 			if (root.has("limiterCeilingDb")) {
 				config.setLimiterCeilingDb(
 					root.get("limiterCeilingDb").getAsDouble());
@@ -647,7 +663,8 @@ public final class CinemaClientConfig {
 					+ "lateReflectionUpdateMillis={}, "
 					+ "latePathMoveThresholdMeters={}, latePathStepBudgetMillis={}, "
 					+ "latePathMinStableMillis={}, latePathMaxStableMillis={}, "
-					+ "limiterCeilingDb={}, limiterReleaseSeconds={}, "
+					+ "limiterEnabled={}, limiterCeilingDb={}, "
+					+ "limiterReleaseSeconds={}, "
 					+ "videoMaxHeightSdr={}, videoMaxHeightHdr={}, hardwareDecode={}, "
 					+ "ffmpegShowInfo={}, videoGlFinish={}, ffmpegPath={})",
 				file, config.screenMaxSize, config.pauseGameInDeviceGuis,
@@ -660,7 +677,8 @@ public final class CinemaClientConfig {
 				config.lateReflectionUpdateMillis,
 				config.latePathMoveThresholdMeters,
 				config.latePathStepBudgetMillis, config.latePathMinStableMillis,
-				config.latePathMaxStableMillis, config.limiterCeilingDb,
+				config.latePathMaxStableMillis, config.limiterEnabled,
+				config.limiterCeilingDb,
 				config.limiterReleaseSeconds, config.videoMaxHeightSdr,
 				config.videoMaxHeightHdr, config.hardwareDecode,
 				config.ffmpegShowInfo, config.videoGlFinish, config.ffmpegPath);

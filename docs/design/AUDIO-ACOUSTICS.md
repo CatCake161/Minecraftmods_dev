@@ -147,7 +147,7 @@
 - **声学增益归属（A2 直达声已实现，L2a 多扬声器）**：当前 5.1 每声道一只扬声器时，直达声由 6 个 direct source 播放；L2a 起每个声道可以接多只扬声器，每只扬声器都有独立 direct source。OpenAL 距离模型为 `AL_NONE`，距离衰减由 Java 按平滑后的渲染半径 `1/max(r,1)` 计算；on-axis/指向性、空气吸收和遮挡低通合并进单个 4096-tap 直达 FIR；遮挡宽带衰减和整体 `overallGain` 进入 source gain。每个早期反射 tap 使用独立 OpenAL source，位置为镜像源；A2b 的距离也由 Java 按 `1/max(L,1)` 计算（与直达声同一规则），反射 4096-tap FIR 携带反射角指向性、空气、材质和遮挡低通（A2c-R；散射仍为 1；一阶反射全频带）。反射 tap 不混入 5.1 直达声道。
 - **反射 source 池（A2b 已实现，A3 扩展，L2a 动态化）**：当前 5.1 且每声道一只扬声器时，每接收器最多 **116** 个反射 source/buffer（每引擎 source 预算 **128**：6 direct + 116 reflection + 6 lazy wet），独立于直达 source，也不参与 `setChannelLayout()` 的物理扬声器布局。**L2a 已实现多扬声器直达路由**：每只已连接扬声器各占一个 direct source，同一声道通过 `directSourceChannels[]` 映射多只 source；direct 增加时反射池按 `128 - direct - 6 wet`（并受 OpenAL source limit 限制）动态收缩，direct 减少时恢复。例如 12 只扬声器 → 12 direct + 110 reflection + 6 wet。**反射与 late bus 已按每只扬声器生成**：一阶 reflection tap key 包含 stable `sourceKey`，每只扬声器独立求解并保留 top 5，全局上限 64；late bus order-2/3/4 路径按每只扬声器求解，VBAP 使用全部物理扬声器 + 实际 5.1 声道映射，不再只取每声道 anchor。A3 premium 路径占用反射池的一部分：一阶最多 64 + 最强 16 条二阶 + 8 条三阶；其余槽位当前空闲，保留给后续扩展。所有反射 source 与直达 source 同时启动、每块各喂一个 buffer（空闲槽喂静音），保持媒体时钟对齐；**262144-frame** 原始声道历史环提供几何反射延迟，每阶上限按房间对角线动态计算：`min((order + 1) · roomDiagonal / 343, historySafe)`，超出上限的路径直接丢弃。`historySafe = min((262144 - 2048) / 48000, 262144 / 48000) ≈ 5.419 s`；48 m 立方房间的 order-1/2/3/4 上限约为 485/727/970/1212 ms。延迟变化 150 ms 平滑，tap 出现/消失 30 ms 采样淡变，每个 per-tap 反射仍使用 4096-tap 全频带 FIR（on-axis/指向性 + 空气 + 材质 + 遮挡低通）。
 - **晚期反射 source 池（A3 几何总线，默认关闭）**：仅当 `lateReverb` 启用时，每接收器创建 6 个 mono source/buffer，与直达/反射 source 同时启动、每块各喂一个 buffer；禁用时停止并释放 source/buffer，`queueBlock` 跳过 late send 和 bus 处理。`LateReflectionBus` 按 VBAP 权重生成 6 个 5.1 wet 输出（LFE 作为源声道参与路径，LFE 扬声器不作为 VBAP 输出目标；LFE wet 输出有效）；各 source 位置跟随当前渲染的扬声器位置。wet source 的 `AL_GAIN` 承担 receiver master（衰减/静音对已排队 wet block 立即生效），不再有用户电平 trim，湿声电平完全由房间校准决定。FDN 及其 RT60/pre-delay/高通/阻尼状态已删除。
-- **输出电平与限幅（2026-11-12）**：主音量 `-60..+18 dBFS`、扬声器 Level `-60..+12 dB`；所有 source 设置 `AL_MAX_GAIN = 64`，否则 OpenAL 默认 1.0 会钳掉正增益。`OutputLimiter` 在音频线程用 4 × 2048 frame 队列（≈171 ms 前瞻）统计 direct/reflection/wet 每个 source 的 block 峰值，按当前 master/channel/reflection/wet 增益求每声道最坏混合峰值 `Σ peak_i × gain_i`（三角不等式给出的硬上界），再取一个全局 `limiterGain` 乘到所有 `AL_GAIN`。**同一输出声道接多只扬声器时，该声道的预测峰值必须累加所有映射到该声道的 direct source，而不是只算一只。** ceiling **-0.3 dBFS**，瞬时 attack、400 ms release，下限 -60 dB。wet 正 trim 也直接由 `AL_GAIN` 承担，不再预乘到样本，避免 16-bit 路径在限幅前削波。它限制的是 OpenAL 最终混音前的数字信号，不是听者位置的 SPL；16-bit 上传路径仍会先把单 source 钳到 [-1,1]，限幅器无法恢复该级削波；HRTF/声像增益若总和大于 1，硬上界会偏乐观。接收器状态行/Signal 页显示 `Limiter -x.x dB`。
+- **输出电平与限幅（2026-11-12）**：主音量 `-60..+18 dBFS`、扬声器 Level `-60..+12 dB`；所有 source 设置 `AL_MAX_GAIN = 64`，否则 OpenAL 默认 1.0 会钳掉正增益。`OutputLimiter` 在音频线程用 4 × 2048 frame 队列（≈171 ms 前瞻）统计 direct/reflection/wet 每个 source 的 block 峰值，按当前 master/channel/reflection/wet 增益求每声道最坏混合峰值 `Σ peak_i × gain_i`（三角不等式给出的硬上界），再取一个全局 `limiterGain` 乘到所有 `AL_GAIN`。**同一输出声道接多只扬声器时，该声道的预测峰值必须累加所有映射到该声道的 direct source，而不是只算一只。** ceiling **-0.3 dBFS**（Output 页可调 -6..0 dB，可 bypass）、**3 ms attack**、release 默认 400 ms（可调 0.05..2.0 s），下限 -60 dB。wet 正 trim 也直接由 `AL_GAIN` 承担，不再预乘到样本，避免 16-bit 路径在限幅前削波。它限制的是 OpenAL 最终混音前的数字信号，不是听者位置的 SPL；16-bit 上传路径仍会先把单 source 钳到 [-1,1]，限幅器无法恢复该级削波；HRTF/声像增益若总和大于 1，硬上界会偏乐观。接收器状态行/Signal 页显示 `Limiter -x.x dB`。
 
 ### 4.2.1 定位模型评审：相对源 vs 世界坐标源（暂不迁移）
 
@@ -982,17 +982,19 @@ latePathMoveThresholdM      0.15         // Mod Menu Performance
 latePathStepBudgetMillis    4            // Mod Menu Performance
 latePathMinStableMillis     150          // Mod Menu Performance
 latePathMaxStableMillis     600          // Mod Menu Performance
-limiterCeilingDb       -0.3              // Mod Menu Performance, -6..0 dBFS
-limiterReleaseSeconds  0.4               // Mod Menu Performance, 0.05..2.0 s
+limiterEnabled         true              // Mod Menu Output, bypass switch
+limiterCeilingDb       -0.3              // Mod Menu Output, -6..0 dBFS
+limiterReleaseSeconds  0.4               // Mod Menu Output, 0.05..2.0 s; attack fixed 3 ms
 ```
 
-UI 不提供 `earlyGainDb` 或 `lateTrimDb`：早期反射和晚期场的电平完全由 7.3 / 7.5 的物理链路与房间校准决定。`lateReverb` / `lateFloorDb` 先在 Mod Menu，A4 再迁入接收器设置；`lateFloorDb` 是相对听者位置直达声的 tap 门限（默认 -60 dB），同时决定 RT60 推导的 late 延迟上限。旧的 `lateGainDb` 键会被忽略。Mod Menu `Performance` 页的求解参数与限幅器设置实时生效；`latePathMaxStableMillis < latePathMinStableMillis` 时按最小值处理。页面还只读显示 JVM 进程 CPU（约 500 ms 采样，`Process CPU: xx.x% of one core`，不可用显示 `n/a`），不显示 RT60/maxDelay/direct/floor dB。
+UI 不提供 `earlyGainDb` 或 `lateTrimDb`：早期反射和晚期场的电平完全由 7.3 / 7.5 的物理链路与房间校准决定。`lateReverb` / `lateFloorDb` 先在 Mod Menu，A4 再迁入接收器设置；`lateFloorDb` 是相对听者位置直达声的 tap 门限（默认 -60 dB），同时决定 RT60 推导的 late 延迟上限。旧的 `lateGainDb` 键会被忽略。Mod Menu `Performance` 页的求解参数实时生效；`latePathMaxStableMillis < latePathMinStableMillis` 时按最小值处理。`Output` 页提供 limiter bypass、ceiling 和 release（attack 固定 3 ms），也实时生效。Performance 页还只读显示 JVM 进程 CPU（约 500 ms 采样，`Process CPU: xx.x% of one core`，不可用显示 `n/a`），不显示 RT60/maxDelay/direct/floor dB。
 
 UI 归属：
 
 - Mod Menu（客户端，`CinemaClientConfig` / `CinemaConfigScreen`）：
   - Audio 页：空气吸收开关、温度、湿度、`Order 2-4 reflections` 开关、`Order 2-4 floor`（相对直达声 dB）。Order 1 始终参与；Order 2/3/4 最强路径走 per-tap FIR，其余进入 late bus。
-  - Performance 页：反射/高阶路径更新间隔、移动阈值、step budget、稳定窗口，以及限幅器 ceiling/release；只读 JVM 进程 CPU。
+  - Performance 页：反射/高阶路径更新间隔、移动阈值、step budget、稳定窗口；只读 JVM 进程 CPU。
+  - Output 页：limiter bypass 开关、ceiling、release；attack 固定 3 ms。
   - 这些是客户端本地设置，不写入接收器。
 - AV Receiver 的 Speakers/Settings 页：声学总开关、按阶数反射开关/floor、房间预设、重新扫描房间、调试信息；不放求解/限幅器参数。
 - Speakers 页显示每只扬声器的 speaker data profile（品牌/型号/测量来源/许可证），允许切换 profile 或恢复默认。
@@ -1015,7 +1017,7 @@ UI 归属：
 | A2e | Mod Menu 声学设置：空气吸收开关/温度/湿度、`Order 2-4 reflections` 开关、`Order 2-4 floor` | A2 | 已实现；设置持久化并即时影响直达/反射 FIR；不提供 early/late gain trim |
 | A2h | Mod Menu `Performance` 页：反射/高阶路径求解参数、限幅器 ceiling/release、只读 JVM 进程 CPU | A2/A3 | 已实现；配置持久化并实时接入 `AvReceiverPlayback`/`CinemaAudioEngine`；完整 `check` 通过 |
 | A3 | 几何晚期总线：order-2/3/4 路径、premium per-tap（4096-tap FIR）与 lazy `LateReflectionBus`、VBAP、6 个 wet source（含 LFE）、unity source-power send、`R/r_c` 校准；FDN 已删除 | A1/A2b | 几何 bus/VBAP 已实现；**已通过游戏内听感验收（2026-11-14）**；默认 `lateReverb=false`；电平完全由物理模拟/房间校准决定 |
-| A4 | 接收器 GUI 开关/校准/预设 + 服务端字段/同步 | M4/M3 已完成 | 声学总开关/按阶数反射开关/floor/预设可用；求解与限幅器设置留在 Mod Menu Performance 页；4K/BSL 无掉帧 |
+| A4 | 接收器 GUI 开关/校准/预设 + 服务端字段/同步 | M4/M3 已完成 | 声学总开关/按阶数反射开关/floor/预设可用；求解设置留在 Mod Menu Performance 页，限幅器留在 Output 页；4K/BSL 无掉帧 |
 | A5 | 低频管理与模态（原 A6 提前，排在 A4 之后）：LFE 分频/低频管理、多低音炮路由与校准、低频模态计算与模态 EQ | A4 | 多低音炮可独立管理与校准；房间低频峰谷可按尺寸/座位预测并用 EQ 改善；不破坏 A2/A3 |
 | A6 | 调试/验收：dump 房间/RT60/taps；A/B 开关；多房间/材质/设备切换 | A2–A5 | 用户游戏内听感验收通过 |
 | A7 | 后续：衍射/散射、测量 RIR、HRTF | — | 另行设计 |

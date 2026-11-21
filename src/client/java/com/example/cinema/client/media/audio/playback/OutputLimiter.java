@@ -12,9 +12,9 @@ package com.example.cinema.client.media.audio.playback;
  * not a measured SPL: distance, air absorption, speaker sensitivity, room gain
  * and the listener's own volume control remain part of the acoustic model.
  *
- * <p>The limiter has an instant attack and an exponential release. A gain
- * reduction can be applied immediately because the affected block is still
- * queued; recovery is slowed down so quiet passages do not pump.
+ * <p>The limiter has a 3 ms attack and an exponential release. A gain
+ * reduction is applied over a few milliseconds so a new peak does not click;
+ * recovery is slowed down so quiet passages do not pump.
  */
 public final class OutputLimiter {
 	/** Output ceiling in dBFS. */
@@ -24,6 +24,8 @@ public final class OutputLimiter {
 		(float) Math.pow(10.0, CEILING_DB / 20.0);
 	/** Time constant for recovering gain after a peak. */
 	public static final double RELEASE_SECONDS = 0.4;
+	/** Time constant for applying gain reduction after a new peak. */
+	public static final double ATTACK_SECONDS = 0.003;
 	/** Never attenuate more than 60 dB; below this the output is effectively off. */
 	private static final float MIN_GAIN = 0.001f;
 
@@ -52,8 +54,19 @@ public final class OutputLimiter {
 	}
 
 	/**
-	 * Advances the limiter gain. A lower target is applied immediately; a
-	 * higher target is approached with {@link #RELEASE_SECONDS}.
+	 * Ceiling-aware target including the bypass switch. Disabled limiting
+	 * targets unity gain; the engine still releases any existing reduction
+	 * smoothly instead of jumping.
+	 */
+	public static float targetGain(float predictedPeak, float ceilingDb,
+								   boolean enabled) {
+		return enabled ? gainFor(predictedPeak, ceilingDb) : 1.0f;
+	}
+
+	/**
+	 * Advances the limiter gain. A lower target is approached with
+	 * {@link #ATTACK_SECONDS}; a higher target is approached with
+	 * {@link #RELEASE_SECONDS}.
 	 */
 	public static float advance(float current, float target, double dt) {
 		return advance(current, target, dt, RELEASE_SECONDS);
@@ -62,7 +75,7 @@ public final class OutputLimiter {
 	/**
 	 * Release-time aware variant used by the configurable limiter. A
 	 * non-positive or non-finite release time falls back to
-	 * {@link #RELEASE_SECONDS}.
+	 * {@link #RELEASE_SECONDS}. Attack is fixed at {@link #ATTACK_SECONDS}.
 	 */
 	public static float advance(float current, float target, double dt,
 								double releaseSeconds) {
@@ -73,13 +86,15 @@ public final class OutputLimiter {
 			target = 1.0f;
 		}
 		target = Math.min(1.0f, target);
-		if (target < current) {
-			return target;
+		double seconds = target < current ? ATTACK_SECONDS : releaseSeconds;
+		if (!Double.isFinite(seconds) || seconds <= 0.0) {
+			seconds = target < current ? ATTACK_SECONDS : RELEASE_SECONDS;
 		}
-		double release = Double.isFinite(releaseSeconds) && releaseSeconds > 0.0
-			? releaseSeconds : RELEASE_SECONDS;
-		double alpha = 1.0 - Math.exp(-Math.max(0.0, dt) / release);
+		double alpha = 1.0 - Math.exp(-Math.max(0.0, dt) / seconds);
 		float next = current + (target - current) * (float) alpha;
+		if (target < current) {
+			return Math.max(target, next);
+		}
 		return Math.min(target, next);
 	}
 
