@@ -254,7 +254,7 @@ public final class RoomDetector {
 				minV, maxV));
 		} else {
 			surfaces.add(new AcousticSurface(axis, coordinate, normal, minU, maxU,
-				minV, maxV, AcousticMaterials.DEFAULT, 0));
+				minV, maxV, AcousticMaterials.defaultMaterial(), 0));
 		}
 	}
 
@@ -312,7 +312,9 @@ public final class RoomDetector {
 		double low = 0.0;
 		double mid = 0.0;
 		double high = 0.0;
-		double scattering = 0.0;
+		double scatteringLow = 0.0;
+		double scatteringMid = 0.0;
+		double scatteringHigh = 0.0;
 		int samples = 0;
 		for (int du = -MATERIAL_SAMPLE_RADIUS; du <= MATERIAL_SAMPLE_RADIUS; du++) {
 			for (int dv = -MATERIAL_SAMPLE_RADIUS; dv <= MATERIAL_SAMPLE_RADIUS; dv++) {
@@ -332,7 +334,9 @@ public final class RoomDetector {
 				low += material.low();
 				mid += material.mid();
 				high += material.high();
-				scattering += material.scattering();
+				scatteringLow += material.scatteringLow();
+				scatteringMid += material.scatteringMid();
+				scatteringHigh += material.scatteringHigh();
 				samples++;
 			}
 		}
@@ -341,7 +345,7 @@ public final class RoomDetector {
 			return new MaterialSample(material, 1);
 		}
 		return new MaterialSample(AcousticMaterial.mix("mixed", low, mid, high,
-			scattering, samples), samples);
+			scatteringLow, scatteringMid, scatteringHigh, samples), samples);
 	}
 
 	private static boolean insidePlane(BlockPos pos, AcousticSurface.Axis axis,

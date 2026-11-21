@@ -66,7 +66,8 @@ final class ReflectionSurfaceMerger {
 		Key key = new Key(axis, Math.round(coordinate * 1000.0), normal);
 		Grid grid = grids.computeIfAbsent(key, ignored -> new Grid(axis, coordinate,
 			normal));
-		if (grid.put(u, v, material == null ? AcousticMaterials.DEFAULT : material)) {
+		if (grid.put(u, v, material == null
+			? AcousticMaterials.defaultMaterial() : material)) {
 			faces++;
 		}
 	}
@@ -137,7 +138,9 @@ final class ReflectionSurfaceMerger {
 				double low = 0.0;
 				double mid = 0.0;
 				double high = 0.0;
-				double scattering = 0.0;
+				double scatteringLow = 0.0;
+				double scatteringMid = 0.0;
+				double scatteringHigh = 0.0;
 				for (int du = 0; du < width; du++) {
 					for (int dv = 0; dv < height; dv++) {
 						int u = cell.u() + du;
@@ -150,13 +153,16 @@ final class ReflectionSurfaceMerger {
 						low += material.low();
 						mid += material.mid();
 						high += material.high();
-						scattering += material.scattering();
+						scatteringLow += material.scatteringLow();
+						scatteringMid += material.scatteringMid();
+						scatteringHigh += material.scatteringHigh();
 					}
 				}
 				patches.add(new AcousticSurface(axis, coordinate, normal,
 					cell.u(), cell.u() + width, cell.v(), cell.v() + height,
-					AcousticMaterial.mix("reflection", low, mid, high, scattering,
-						count), count));
+					AcousticMaterial.mix("reflection", low, mid, high,
+						scatteringLow, scatteringMid, scatteringHigh, count),
+					count));
 			}
 		}
 

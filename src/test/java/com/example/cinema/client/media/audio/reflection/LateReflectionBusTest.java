@@ -1,9 +1,11 @@
 package com.example.cinema.client.media.audio.reflection;
 
+import com.example.cinema.client.media.audio.acousticfir.MaterialReflectionFilter;
 import com.example.cinema.client.media.audio.acoustics.geometry.Point3;
 import com.example.cinema.client.media.audio.acoustics.path.ReflectionPathTap;
 import com.example.cinema.client.media.audio.acoustics.propagation.OcclusionResult;
 import com.example.cinema.client.media.audio.acoustics.room.AcousticMaterial;
+import com.example.cinema.client.media.audio.dsp.Biquad;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -12,6 +14,7 @@ import java.util.Locale;
 import java.util.Random;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -241,6 +244,43 @@ class LateReflectionBusTest {
 	}
 
 	@Test
+	void materialEqCascadeMatchesReferenceBiquads() {
+		LateReflectionBus bus = new LateReflectionBus(SAMPLE_RATE, 1024, 4);
+		MaterialReflectionFilter filter = MaterialReflectionFilter.of(
+			new AcousticMaterial("test", 0.40, 0.20, 0.50, 0.0),
+			SAMPLE_RATE);
+		bus.setTaps(List.of(new LateReflectionBus.Tap(0, 0.0, 1.0,
+			48_000.0, new float[]{0.0f, 0.0f, 0.0f},
+			new int[]{0}, new float[]{1.0f}, "filtered", filter)));
+		float[][] input = buffers(128);
+		float[][] outputs = buffers(128);
+		input[0][0] = 1.0f;
+
+		bus.process(input, 128, outputs);
+		double[] expected = filterImpulse(filter, 128);
+
+		for (int frame = 0; frame < 128; frame++) {
+			assertEquals(expected[frame], outputs[0][frame], 1.0e-7);
+		}
+	}
+
+	@Test
+	void materialEqFromPathUsesDistanceOnlyDamping() {
+		AcousticMaterial material =
+			new AcousticMaterial("test", 0.40, 0.20, 0.50, 0.0);
+		ReflectionPathTap path = new ReflectionPathTap(2, "2:test", 2,
+			new Point3(0.0, 0.0, 0.0),
+			List.of(new Point3(1.0, 0.0, 0.0), new Point3(2.0, 0.0, 0.0)),
+			List.of(material, material), 8.0, 0.020, 0.5,
+			OcclusionResult.NONE);
+		LateReflectionBus.Tap tap = LateReflectionBus.Tap.fromPath(path, 0.25,
+			null, null, null, true, SAMPLE_RATE);
+
+		assertEquals(12_000.0 - 150.0 * 8.0, tap.dampingHz(), 1.0e-6);
+		assertFalse(tap.materialFilter().isFlat());
+	}
+
+	@Test
 	void multiOutputTapUsesEnergyNormalizedWeights() {
 		LateReflectionBus bus = new LateReflectionBus(SAMPLE_RATE, 1024, 4);
 		bus.setTaps(List.of(new LateReflectionBus.Tap(0, 0.010, 1.0,
@@ -264,6 +304,44 @@ class LateReflectionBusTest {
 		assertEquals(2, tap.outputChannels().length);
 		assertEquals(2.0 / Math.sqrt(5.0), tap.outputWeights()[0], 1.0e-5);
 		assertEquals(1.0 / Math.sqrt(5.0), tap.outputWeights()[1], 1.0e-5);
+	}
+
+	@Test
+	void wetPointIndicesAboveSixAreRendered() {
+		LateReflectionBus bus = new LateReflectionBus(SAMPLE_RATE, 1024, 4);
+		bus.setOutputCount(LateReflectionBus.MAX_OUTPUT_CHANNELS);
+		bus.setTaps(List.of(new LateReflectionBus.Tap(0, 0.010, 1.0,
+			48_000.0, new int[]{10, 23}, new float[]{0.6f, 0.8f})));
+		float[][] input = new float[LateReflectionBus.CHANNELS][1024];
+		float[][] outputs = new float[LateReflectionBus.MAX_OUTPUT_CHANNELS][1024];
+		input[0][0] = 1.0f;
+
+		bus.process(input, 1024, outputs);
+
+		assertEquals(0.6, outputs[10][480], 1.0e-4);
+		assertEquals(0.8, outputs[23][480], 1.0e-4);
+		assertEquals(0.0f, outputs[0][480]);
+	}
+
+	@Test
+	void loweringTheOutputCountDropsOutOfRangePointsSafely() {
+		LateReflectionBus bus = new LateReflectionBus(SAMPLE_RATE, 1024, 4);
+		bus.setOutputCount(LateReflectionBus.MAX_OUTPUT_CHANNELS);
+		LateReflectionBus.Tap tap = new LateReflectionBus.Tap(0, 0.010, 1.0,
+			48_000.0, new int[]{10}, new float[]{1.0f});
+		bus.setTaps(List.of(tap));
+		bus.setOutputCount(LateReflectionBus.CHANNELS);
+		bus.setTaps(List.of(tap));
+		float[][] input = new float[LateReflectionBus.CHANNELS][1024];
+		float[][] outputs = new float[LateReflectionBus.CHANNELS][1024];
+		input[0][0] = 1.0f;
+
+		bus.process(input, 1024, outputs);
+
+		for (int channel = 0; channel < LateReflectionBus.CHANNELS;
+			 channel++) {
+			assertEquals(0.0f, outputs[channel][480]);
+		}
 	}
 
 	@Test
@@ -341,6 +419,43 @@ class LateReflectionBusTest {
 		bus.setTaps(List.of(
 			new LateReflectionBus.Tap(0, 1.20, 1.0, 7_000.0)), 0.60);
 		assertEquals(0, bus.tapCount());
+	}
+
+	private static double[] filterImpulse(MaterialReflectionFilter filter,
+										  int frames) {
+		double[] output = new double[frames];
+		Biquad low = filter.low();
+		Biquad peak = filter.peak();
+		Biquad high = filter.high();
+		double low1 = 0.0;
+		double low2 = 0.0;
+		double peak1 = 0.0;
+		double peak2 = 0.0;
+		double high1 = 0.0;
+		double high2 = 0.0;
+		for (int i = 0; i < frames; i++) {
+			double value = i == 0 ? 1.0 : 0.0;
+			if (low != null) {
+				double y = low.b0() * value + low1;
+				low1 = low.b1() * value - low.a1() * y + low2;
+				low2 = low.b2() * value - low.a2() * y;
+				value = y;
+			}
+			if (peak != null) {
+				double y = peak.b0() * value + peak1;
+				peak1 = peak.b1() * value - peak.a1() * y + peak2;
+				peak2 = peak.b2() * value - peak.a2() * y;
+				value = y;
+			}
+			if (high != null) {
+				double y = high.b0() * value + high1;
+				high1 = high.b1() * value - high.a1() * y + high2;
+				high2 = high.b2() * value - high.a2() * y;
+				value = y;
+			}
+			output[i] = value;
+		}
+		return output;
 	}
 
 	private static float[][] buffers(int frames) {

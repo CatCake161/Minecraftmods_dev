@@ -251,7 +251,7 @@ CinemaAudioEngine.run
             ├─ writeRawHistory                  // 原始 5.1 先入环
             ├─ 直接声 FIR → 6 个 OpenAL source
             ├─ premium 反射 → ReflectionSource → OpenAL source
-            └─ late bus → LateReflectionBus → 6 个 wet source
+            └─ late bus → LateReflectionBus → 物理+ghost 动态 wet 点（上限 24）
 ```
 
 `queueBlock` 是唯一同时接触“PCM”和“声学参数”的位置。

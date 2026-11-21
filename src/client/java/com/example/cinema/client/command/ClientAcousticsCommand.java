@@ -1,8 +1,10 @@
 package com.example.cinema.client.command;
 
 import com.example.cinema.block.entity.SpeakerRole;
+import com.example.cinema.client.config.AcousticMaterialConfig;
 import com.example.cinema.client.config.CinemaClientConfig;
 import com.example.cinema.client.media.audio.AcousticScale;
+import com.example.cinema.client.media.audio.acousticfir.MaterialReflectionFilter;
 import com.example.cinema.client.media.audio.acousticfir.CommonAcousticFirDesigner;
 import com.example.cinema.client.media.audio.acousticfir.CommonAcousticFirProfile;
 import com.example.cinema.client.media.audio.acousticfir.CommonAcousticFirService;
@@ -28,12 +30,15 @@ import com.example.cinema.client.media.audio.acoustics.scene.AcousticScene;
 import com.example.cinema.client.media.audio.acoustics.scene.AcousticSpeaker;
 import com.example.cinema.client.media.audio.acoustics.scene.RoomAcousticSnapshot;
 import com.example.cinema.client.media.audio.dsp.MinimumPhaseFir;
+import com.example.cinema.client.media.AvReceiverPlaybackManager;
+import com.example.cinema.client.media.audio.debug.SourceDebugPoint;
 import com.example.cinema.client.media.audio.playback.CinemaAudioEngine;
 import com.example.cinema.client.media.audio.reflection.LateReflectionAudibility;
 import com.example.cinema.client.media.audio.reflection.LateReflectionSettings;
 import com.example.cinema.client.media.audio.reflection.LateReflectionTarget;
 import com.example.cinema.client.media.audio.speaker.SpeakerDataProfile;
 import com.example.cinema.client.media.audio.speaker.SpeakerDataRegistry;
+import com.example.cinema.client.render.SourceDebugRenderer;
 import com.example.cinema.client.media.audio.speaker.SpeakerDirectivityService;
 import com.example.cinema.client.media.audio.speaker.SubwooferBand;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
@@ -68,7 +73,105 @@ public final class ClientAcousticsCommand {
 				.then(ClientCommandManager.argument("order",
 						IntegerArgumentType.integer(2, 5))
 					.executes(context -> dumpPaths(context.getSource(),
-						IntegerArgumentType.getInteger(context, "order"))))));
+						IntegerArgumentType.getInteger(context, "order")))))
+			.then(ClientCommandManager.literal("scattering")
+				.executes(context -> setScattering(context.getSource(), null))
+				.then(ClientCommandManager.literal("on")
+					.executes(context -> setScattering(context.getSource(), true)))
+				.then(ClientCommandManager.literal("off")
+					.executes(context -> setScattering(context.getSource(), false)))
+				.then(ClientCommandManager.literal("toggle")
+					.executes(context -> setScattering(context.getSource(), null))))
+			.then(ClientCommandManager.literal("materialeq")
+				.executes(context -> setMaterialEq(context.getSource(), null))
+				.then(ClientCommandManager.literal("on")
+					.executes(context -> setMaterialEq(context.getSource(), true)))
+				.then(ClientCommandManager.literal("off")
+					.executes(context -> setMaterialEq(context.getSource(), false)))
+				.then(ClientCommandManager.literal("toggle")
+					.executes(context -> setMaterialEq(context.getSource(), null))))
+			.then(ClientCommandManager.literal("wetdebug")
+				.executes(context -> setSourceDebug(context.getSource(), null))
+				.then(ClientCommandManager.literal("on")
+					.executes(context -> setSourceDebug(context.getSource(), true)))
+				.then(ClientCommandManager.literal("off")
+					.executes(context -> setSourceDebug(context.getSource(), false)))
+				.then(ClientCommandManager.literal("toggle")
+					.executes(context -> setSourceDebug(context.getSource(), null))))
+			.then(ClientCommandManager.literal("reloadmaterials")
+				.executes(context -> reloadMaterials(context.getSource()))));
+	}
+
+	/**
+	 * Quick A/B control for the S1a first-order scattering split.
+	 * {@code mode == null} toggles the saved switch.
+	 */
+	private static int setScattering(FabricClientCommandSource source,
+									 Boolean mode) {
+		CinemaClientConfig config = CinemaClientConfig.get();
+		boolean enabled = mode == null ? !config.scatteringEnabled() : mode;
+		config.setScatteringEnabled(enabled);
+		config.save();
+		boolean effective = enabled && config.lateReverb();
+		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
+			"acoustics: first-order scattering effective=%s (switch=%s, lateReverb=%s)",
+			effective ? "ON" : "OFF", enabled ? "ON" : "OFF",
+			config.lateReverb() ? "ON" : "OFF")));
+		return 1;
+	}
+
+	/** Reloads the editable JSON material table without restarting. */
+	private static int reloadMaterials(FabricClientCommandSource source) {
+		boolean ok = AcousticMaterialConfig.reload();
+		if (ok) {
+			AcousticScene.invalidate();
+			MaterialReflectionFilter.clearCache();
+			source.sendFeedback(Component.literal(
+				"acoustics: reloaded " + AcousticMaterialConfig.file()));
+			return 1;
+		}
+		source.sendError(Component.literal(
+			"acoustics: could not reload " + AcousticMaterialConfig.file()
+				+ "; defaults are active (see log)"));
+		return 0;
+	}
+
+	/** Quick A/B control for the A3-D1 late-tap material PEQ. */
+	private static int setMaterialEq(FabricClientCommandSource source,
+									 Boolean mode) {
+		CinemaClientConfig config = CinemaClientConfig.get();
+		boolean enabled = mode == null ? !config.lateMaterialEq() : mode;
+		config.setLateMaterialEq(enabled);
+		config.save();
+		boolean effective = enabled && config.lateReverb();
+		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
+			"acoustics: late material EQ effective=%s (switch=%s, lateReverb=%s)",
+			effective ? "ON" : "OFF", enabled ? "ON" : "OFF",
+			config.lateReverb() ? "ON" : "OFF")));
+		return 1;
+	}
+
+	/** Toggles the world-space audio-source debug overlay. */
+	private static int setSourceDebug(FabricClientCommandSource source,
+								   Boolean mode) {
+		boolean enabled = mode == null ? SourceDebugRenderer.toggle() : mode;
+		if (mode != null) {
+			SourceDebugRenderer.setEnabled(enabled);
+		}
+		List<SourceDebugPoint> points =
+			AvReceiverPlaybackManager.debugSources();
+		long direct = points.stream().filter(point ->
+			point.kind() == SourceDebugPoint.Kind.DIRECT).count();
+		long reflection = points.stream().filter(point ->
+			point.kind() == SourceDebugPoint.Kind.REFLECTION).count();
+		long wet = points.size() - direct - reflection;
+		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
+			"acoustics: source debug=%s sources=%d direct=%d reflection=%d "
+				+ "wet=%d (blue=direct, red=reflection, green=wet speaker, "
+				+ "purple=wet LFE, yellow/orange/magenta/cyan=wet ghost 1/2/3/4, "
+				+ "grey=inactive wet)",
+			enabled ? "ON" : "OFF", points.size(), direct, reflection, wet)));
+		return 1;
 	}
 
 	private static String rt60(double value) {
@@ -171,11 +274,14 @@ public final class ClientAcousticsCommand {
 		for (AcousticSurface surface : room.surfaces()) {
 			AcousticMaterial material = surface.material();
 			source.sendFeedback(Component.literal(String.format(Locale.ROOT,
-				"acoustics: plane %s @ %.2f area=%.1f material=%s alpha=%.2f/%.2f/%.2f samples=%d",
+				"acoustics: plane %s @ %.2f area=%.1f material=%s "
+					+ "alpha=%.2f/%.2f/%.2f scattering=%.2f/%.2f/%.2f samples=%d",
 				surface.label(), surface.coordinate(),
 				AcousticScale.squareBlocksToSquareMeters(surface.area()),
 				material.name(),
-				material.low(), material.mid(), material.high(), surface.samples())));
+				material.low(), material.mid(), material.high(),
+				material.scatteringLow(), material.scatteringMid(),
+				material.scatteringHigh(), surface.samples())));
 		}
 		int patchShown = 0;
 		for (AcousticSurface surface : room.reflectionSurfaces()) {
@@ -241,6 +347,9 @@ public final class ClientAcousticsCommand {
 		ClientLevel level = Minecraft.getInstance().level;
 		if (level != null) {
 			ReflectionProbe probe = new ReflectionProbe(level);
+			source.sendFeedback(Component.literal(
+				"acoustics: first-order scattering="
+					+ (config.lateReverb() ? "on" : "bypassed (lateReverb=false)")));
 			List<ReflectionTap> allTaps = new ArrayList<>();
 			for (AcousticSpeaker speaker : snapshot.speakers()) {
 				if (speaker.role() == SpeakerRole.NONE) {
@@ -251,7 +360,7 @@ public final class ClientAcousticsCommand {
 				int channel = speaker.role().ordinal() - 1;
 				List<ReflectionTap> taps = ImageSourceSolver.solve(planes, channel,
 					pointOf(speaker.position()), pointOf(snapshot.listener().eye()),
-					probe, delayLimit.maxDelaySeconds(1));
+					probe, delayLimit.maxDelaySeconds(1), config.lateReverb());
 				allTaps.addAll(taps);
 				source.sendFeedback(Component.literal(String.format(Locale.ROOT,
 					"acoustics: reflection %s planes=%d taps=%d",
@@ -261,15 +370,15 @@ public final class ClientAcousticsCommand {
 				for (ReflectionTap tap : taps) {
 					source.sendFeedback(Component.literal(String.format(Locale.ROOT,
 						"acoustics: tap %s %s R=(%.2f, %.2f, %.2f) L=%.2f m "
-							+ "delay=%.1f ms material=%s gain=%.4f "
-							+ "occ=%.1f dB cutoff=%.0f Hz order=%d",
+							+ "delay=%.1f ms material=%s specular=%.4f "
+							+ "scatter=%.4f occ=%.1f dB cutoff=%.0f Hz order=%d",
 						speaker.role().label(), tap.planeKey(),
 						tap.reflectionPoint().x(), tap.reflectionPoint().y(),
 						tap.reflectionPoint().z(),
 						AcousticScale.blocksToMeters(tap.pathLength()),
 						tap.delayMilliseconds(), tap.material().name(), tap.gain(),
-						tap.occlusion().attenuationDb(), tap.occlusion().cutoffHz(),
-						tap.occlusion().order())));
+						tap.scatteredGain(), tap.occlusion().attenuationDb(),
+						tap.occlusion().cutoffHz(), tap.occlusion().order())));
 					Vec3 reflectionPoint = new Vec3(tap.reflectionPoint().x(),
 						tap.reflectionPoint().y(), tap.reflectionPoint().z());
 					SpeakerDirectivityService.Angles angles =
@@ -336,12 +445,14 @@ public final class ClientAcousticsCommand {
 		int total = 0;
 		int totalDelayRejected = 0;
 		long totalNanos = 0L;
+		boolean scattering = config.lateReverb() && config.scatteringEnabled();
 		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
 			"acoustics: higher-order paths maxOrder=%d capPerSpeaker=%d "
 				+ "visitCap=%d lateLimit=%.1f ms floor=%+.0f dB re direct "
-				+ "(specular only, no scattering, not wired to audio)",
+				+ "scattering=%s",
 			maxOrder, PATH_STAT_MAX, ImageSourcePathSolver.MAX_VISITS,
-			lateMaxDelay * 1_000.0, config.lateFloorDb())));
+			lateMaxDelay * 1_000.0, config.lateFloorDb(),
+			scattering ? "ON" : "OFF")));
 		List<AcousticSpeaker> speakers = nearestSpeakers(snapshot);
 		for (AcousticSpeaker speaker : speakers) {
 			if (speaker.role() == SpeakerRole.NONE) {
@@ -354,7 +465,7 @@ public final class ClientAcousticsCommand {
 				room.reflectionSurfaces());
 			ImageSourcePathSolver.SolveStats stats = ImageSourcePathSolver.solveWithStats(
 				planes, channel, pointOf(speaker.position()), listener,
-				probe, maxOrder, PATH_STAT_MAX, delayLimit);
+				probe, maxOrder, PATH_STAT_MAX, delayLimit, scattering);
 			List<ReflectionPathTap> paths = stats.paths();
 			long elapsed = System.nanoTime() - start;
 			totalNanos += elapsed;
@@ -364,12 +475,15 @@ public final class ClientAcousticsCommand {
 			int[] orderCounts = new int[maxOrder + 1];
 			double maxDelayMs = 0.0;
 			double strongest = 0.0;
+			double strongestScatter = 0.0;
 			for (ReflectionPathTap path : paths) {
 				if (path.order() >= 0 && path.order() < orderCounts.length) {
 					orderCounts[path.order()]++;
 				}
 				maxDelayMs = Math.max(maxDelayMs, path.delayMilliseconds());
 				strongest = Math.max(strongest, path.gain());
+				strongestScatter = Math.max(strongestScatter,
+					path.scatteredGain());
 			}
 			StringBuilder breakdown = new StringBuilder();
 			for (int order = 2; order <= maxOrder; order++) {
@@ -382,12 +496,13 @@ public final class ClientAcousticsCommand {
 			source.sendFeedback(Component.literal(String.format(Locale.ROOT,
 				"acoustics: paths %s planes=%d orders(2..%d)=%s total=%d "
 					+ "maxDelay=%.1f ms limit(order)=%.1f ms dropped=%d "
-					+ "strongest=%.4f visits=%d time=%.1f ms%s",
+					+ "strongestSpecular=%.4f strongestScatter=%.4f "
+					+ "visits=%d time=%.1f ms%s",
 				speaker.role().label(), planes.size(), maxOrder, breakdown,
 				paths.size(), maxDelayMs,
 				delayLimit.maxDelaySeconds(maxOrder) * 1_000.0,
-				stats.delayRejected(), strongest, stats.visits(),
-				elapsed / 1.0e6, capped)));
+				stats.delayRejected(), strongest, strongestScatter,
+				stats.visits(), elapsed / 1.0e6, capped)));
 		}
 		source.sendFeedback(Component.literal(String.format(Locale.ROOT,
 			"acoustics: paths total=%d speakers=%d capPerSpeaker=%d "
@@ -500,3 +615,4 @@ public final class ClientAcousticsCommand {
 			speaker.settings().highHz());
 	}
 }
+

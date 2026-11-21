@@ -11,21 +11,21 @@ class SourceBudgetTest {
 	}
 
 	@Test
-	void fiveOneKeepsOneHundredSixteenReflectionSources() {
-		assertEquals(116, CinemaAudioEngine.reflectionSourcesFor(6));
+	void fiveOneKeepsNinetyEightReflectionSources() {
+		assertEquals(98, CinemaAudioEngine.reflectionSourcesFor(6));
 		assertEquals(116, CinemaAudioEngine.MAX_REFLECTION_SOURCES);
 	}
 
 	@Test
 	void multipleSpeakersPerChannelShrinkTheReflectionPool() {
-		assertEquals(110, CinemaAudioEngine.reflectionSourcesFor(12));
-		assertEquals(90, CinemaAudioEngine.reflectionSourcesFor(32));
-		assertEquals(58, CinemaAudioEngine.reflectionSourcesFor(64));
+		assertEquals(92, CinemaAudioEngine.reflectionSourcesFor(12));
+		assertEquals(72, CinemaAudioEngine.reflectionSourcesFor(32));
+		assertEquals(40, CinemaAudioEngine.reflectionSourcesFor(64));
 	}
 
 	@Test
 	void directSourcesAreClampedToTheDesignCap() {
-		assertEquals(116, CinemaAudioEngine.reflectionSourcesFor(0));
-		assertEquals(58, CinemaAudioEngine.reflectionSourcesFor(100));
+		assertEquals(104, CinemaAudioEngine.reflectionSourcesFor(0));
+		assertEquals(40, CinemaAudioEngine.reflectionSourcesFor(100));
 	}
 }

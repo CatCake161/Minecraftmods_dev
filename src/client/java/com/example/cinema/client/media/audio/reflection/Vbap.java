@@ -13,13 +13,14 @@ import java.util.List;
  * propagation direction is the negative of this vector; using it would mirror
  * left/right and front/back.
  *
- * <p>LFE (channel 3) is excluded from the output target set. LFE source
- * channels still contribute through the main speakers; the separate
- * low-frequency send belongs to A5.
+ * <p>LFE (channel 3) is excluded from the output target set when a 5.1 channel
+ * mapping is supplied. LFE source channels still contribute through the main
+ * speakers; the separate low-frequency send belongs to A5.
  */
 public final class Vbap {
 	public static final int LFE_CHANNEL = 3;
 	private static final double EPSILON = 1.0e-6;
+	private static final double HULL_EPSILON = 1.0e-5;
 	private static final double TWO_PI = 2.0 * Math.PI;
 
 	public record Weights(int[] channels, float[] weights) {
@@ -41,6 +42,9 @@ public final class Vbap {
 						   double azimuth) {
 	}
 
+	private record Triplet(Speaker a, Speaker b, Speaker c) {
+	}
+
 	private Vbap() {
 	}
 
@@ -50,7 +54,7 @@ public final class Vbap {
 	 * contains the LFE channel.
 	 */
 	public static Weights pan(float[] direction, float[][] speakerPositions) {
-		return pan(direction, speakerPositions, null);
+		return new Panner(speakerPositions, null, true).pan(direction);
 	}
 
 	/**
@@ -60,41 +64,87 @@ public final class Vbap {
 	 */
 	public static Weights pan(float[] direction, float[][] speakerPositions,
 							  int[] speakerChannels) {
-		List<Speaker> speakers = speakers(speakerPositions, speakerChannels);
-		if (speakers.isEmpty()) {
-			return new Weights(new int[0], new float[0]);
+		return new Panner(speakerPositions, speakerChannels, true).pan(direction);
+	}
+
+	/**
+	 * Pans onto an explicit list of output points. The returned indices are
+	 * point indices, not 5.1 channels, and LFE filtering is the caller's
+	 * responsibility. This is used by the dynamic wet layout, where points are
+	 * physical speakers plus reflection ghost speakers.
+	 */
+	public static Weights panPoints(float[] direction, float[][] positions) {
+		return pannerPoints(positions).pan(direction);
+	}
+
+	/**
+	 * Builds a reusable panner for explicit point indices. Point index 3 is a
+	 * normal output point; unlike the 5.1 mapping, no index is treated as LFE.
+	 */
+	public static Panner pannerPoints(float[][] positions) {
+		return new Panner(positions, null, false);
+	}
+
+	/**
+	 * Builds a reusable panner. The convex-hull triangles are computed once so
+	 * hundreds of taps can be panned against the same dynamic wet layout
+	 * without an O(N^3) search per tap.
+	 */
+	public static Panner panner(float[][] positions, int[] channels) {
+		return new Panner(positions, channels, true);
+	}
+
+	public static final class Panner {
+		private final List<Speaker> speakers;
+		private final List<Triplet> hull;
+
+		private Panner(float[][] positions, int[] channels,
+					   boolean excludeLfe) {
+			this.speakers = speakers(positions, channels, excludeLfe);
+			this.hull = buildHull(speakers);
 		}
-		double x = 0.0;
-		double y = 0.0;
-		double z = 0.0;
-		if (direction != null && direction.length >= 3) {
-			x = direction[0];
-			y = direction[1];
-			z = direction[2];
+
+		public int size() {
+			return speakers.size();
 		}
-		double length = Math.sqrt(x * x + y * y + z * z);
-		if (!Double.isFinite(length) || length < EPSILON) {
-			return diffuse(speakers);
+
+		public Weights pan(float[] direction) {
+			if (speakers.isEmpty()) {
+				return new Weights(new int[0], new float[0]);
+			}
+			double x = 0.0;
+			double y = 0.0;
+			double z = 0.0;
+			if (direction != null && direction.length >= 3) {
+				x = direction[0];
+				y = direction[1];
+				z = direction[2];
+			}
+			double length = Math.sqrt(x * x + y * y + z * z);
+			if (!Double.isFinite(length) || length < EPSILON) {
+				return diffuse(speakers);
+			}
+			x /= length;
+			y /= length;
+			z /= length;
+			if (speakers.size() == 1) {
+				return single(speakers.get(0));
+			}
+			Weights exact = exactHull(hull, x, y, z);
+			if (exact != null) {
+				return exact;
+			}
+			Weights horizontal = horizontal(speakers, x, z);
+			if (horizontal != null) {
+				return horizontal;
+			}
+			return nearest(speakers, x, y, z);
 		}
-		x /= length;
-		y /= length;
-		z /= length;
-		if (speakers.size() == 1) {
-			return single(speakers.get(0));
-		}
-		Weights exact = exact(speakers, x, y, z);
-		if (exact != null) {
-			return exact;
-		}
-		Weights horizontal = horizontal(speakers, x, z);
-		if (horizontal != null) {
-			return horizontal;
-		}
-		return nearest(speakers, x, y, z);
 	}
 
 	private static List<Speaker> speakers(float[][] positions,
-										  int[] speakerChannels) {
+										  int[] speakerChannels,
+										  boolean excludeLfe) {
 		List<Speaker> result = new ArrayList<>();
 		if (positions == null) {
 			return result;
@@ -102,7 +152,10 @@ public final class Vbap {
 		for (int index = 0; index < positions.length; index++) {
 			int channel = speakerChannels != null && index < speakerChannels.length
 				? speakerChannels[index] : index;
-			if (channel == LFE_CHANNEL || channel < 0) {
+			if (excludeLfe && (channel == LFE_CHANNEL || channel < 0)) {
+				continue;
+			}
+			if (channel < 0) {
 				continue;
 			}
 			float[] position = positions[index];
@@ -124,53 +177,106 @@ public final class Vbap {
 		return result;
 	}
 
-	/** Exact 3D VBAP over every speaker triplet; null when no triplet contains the direction. */
-	private static Weights exact(List<Speaker> speakers, double x, double y,
-								 double z) {
-		Weights best = null;
-		double bestScore = -Double.MAX_VALUE;
-		for (int first = 0; first < speakers.size() - 2; first++) {
-			for (int second = first + 1; second < speakers.size() - 1;
-				 second++) {
-				for (int third = second + 1; third < speakers.size(); third++) {
-					Speaker a = speakers.get(first);
-					Speaker b = speakers.get(second);
+	/**
+	 * Keeps only the outward-facing triangles of the point-set convex hull.
+	 * A direction inside the hull is covered by one of these triangles; using
+	 * all C(N,3) triplets for every tap is both slower and unnecessary.
+	 */
+	private static List<Triplet> buildHull(List<Speaker> speakers) {
+		List<Triplet> result = new ArrayList<>();
+		int count = speakers.size();
+		for (int first = 0; first < count - 2; first++) {
+			Speaker a = speakers.get(first);
+			for (int second = first + 1; second < count - 1; second++) {
+				Speaker b = speakers.get(second);
+				for (int third = second + 1; third < count; third++) {
 					Speaker c = speakers.get(third);
-					double det = det3(a.x, b.x, c.x,
-						a.y, b.y, c.y,
-						a.z, b.z, c.z);
-					if (Math.abs(det) < EPSILON) {
+					double ux = b.x - a.x;
+					double uy = b.y - a.y;
+					double uz = b.z - a.z;
+					double vx = c.x - a.x;
+					double vy = c.y - a.y;
+					double vz = c.z - a.z;
+					double nx = uy * vz - uz * vy;
+					double ny = uz * vx - ux * vz;
+					double nz = ux * vy - uy * vx;
+					double length = Math.sqrt(nx * nx + ny * ny + nz * nz);
+					if (length < EPSILON) {
 						continue;
 					}
-					double gainA = det3(x, b.x, c.x,
-						y, b.y, c.y,
-						z, b.z, c.z) / det;
-					double gainB = det3(a.x, x, c.x,
-						a.y, y, c.y,
-						a.z, z, c.z) / det;
-					double gainC = det3(a.x, b.x, x,
-						a.y, b.y, y,
-						a.z, b.z, z) / det;
-					if (gainA < -EPSILON || gainB < -EPSILON
-						|| gainC < -EPSILON) {
-						continue;
+					nx /= length;
+					ny /= length;
+					nz /= length;
+					double plane = nx * a.x + ny * a.y + nz * a.z;
+					if (plane < 0.0) {
+						nx = -nx;
+						ny = -ny;
+						nz = -nz;
+						plane = -plane;
 					}
-					double norm = Math.sqrt(gainA * gainA + gainB * gainB
-						+ gainC * gainC);
-					if (norm < EPSILON) {
-						continue;
+					boolean inside = true;
+					for (Speaker speaker : speakers) {
+						if (speaker == a || speaker == b || speaker == c) {
+							continue;
+						}
+						double distance = nx * speaker.x + ny * speaker.y
+							+ nz * speaker.z;
+						if (distance > plane + HULL_EPSILON) {
+							inside = false;
+							break;
+						}
 					}
-					gainA = Math.max(0.0, gainA) / norm;
-					gainB = Math.max(0.0, gainB) / norm;
-					gainC = Math.max(0.0, gainC) / norm;
-					double score = Math.min(gainA, Math.min(gainB, gainC));
-					if (score > bestScore) {
-						bestScore = score;
-						best = weights(
-							new int[]{a.channel(), b.channel(), c.channel()},
-							new double[]{gainA, gainB, gainC});
+					if (inside) {
+						result.add(new Triplet(a, b, c));
 					}
 				}
+			}
+		}
+		return result;
+	}
+
+	/** Exact 3D VBAP over the precomputed hull triangles. */
+	private static Weights exactHull(List<Triplet> hull, double x, double y,
+									 double z) {
+		Weights best = null;
+		double bestScore = -Double.MAX_VALUE;
+		for (Triplet triplet : hull) {
+			Speaker a = triplet.a();
+			Speaker b = triplet.b();
+			Speaker c = triplet.c();
+			double det = det3(a.x, b.x, c.x,
+				a.y, b.y, c.y,
+				a.z, b.z, c.z);
+			if (Math.abs(det) < EPSILON) {
+				continue;
+			}
+			double gainA = det3(x, b.x, c.x,
+				y, b.y, c.y,
+				z, b.z, c.z) / det;
+			double gainB = det3(a.x, x, c.x,
+				a.y, y, c.y,
+				a.z, z, c.z) / det;
+			double gainC = det3(a.x, b.x, x,
+				a.y, b.y, y,
+				a.z, b.z, z) / det;
+			if (gainA < -EPSILON || gainB < -EPSILON
+				|| gainC < -EPSILON) {
+				continue;
+			}
+			double norm = Math.sqrt(gainA * gainA + gainB * gainB
+				+ gainC * gainC);
+			if (norm < EPSILON) {
+				continue;
+			}
+			gainA = Math.max(0.0, gainA) / norm;
+			gainB = Math.max(0.0, gainB) / norm;
+			gainC = Math.max(0.0, gainC) / norm;
+			double score = Math.min(gainA, Math.min(gainB, gainC));
+			if (score > bestScore) {
+				bestScore = score;
+				best = weights(
+					new int[]{a.channel(), b.channel(), c.channel()},
+					new double[]{gainA, gainB, gainC});
 			}
 		}
 		return best;

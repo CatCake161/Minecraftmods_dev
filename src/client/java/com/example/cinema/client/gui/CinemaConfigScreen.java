@@ -75,6 +75,8 @@ public final class CinemaConfigScreen extends Screen {
 	private double draftAirTemperatureC;
 	private double draftAirHumidityPercent;
 	private boolean draftLateReverb;
+	private boolean draftScatteringEnabled;
+	private boolean draftLateMaterialEq;
 	private double draftLateFloorDb;
 	private int draftReflectionUpdateMillis;
 	private double draftReflectionMoveThresholdMeters;
@@ -114,6 +116,8 @@ public final class CinemaConfigScreen extends Screen {
 		draftAirTemperatureC = config.airTemperatureC();
 		draftAirHumidityPercent = config.airHumidityPercent();
 		draftLateReverb = config.lateReverb();
+		draftScatteringEnabled = config.scatteringEnabled();
+		draftLateMaterialEq = config.lateMaterialEq();
 		draftLateFloorDb = config.lateFloorDb();
 		draftReflectionUpdateMillis = config.reflectionUpdateMillis();
 		draftReflectionMoveThresholdMeters =
@@ -234,6 +238,22 @@ public final class CinemaConfigScreen extends Screen {
 		tooltip(late, "Order 1 is always active. Order 2/3/4 are geometric "
 			+ "reflections: the strongest paths run through a per-tap FIR and the "
 			+ "rest feed the late bus. Off disables order 2-4 only.");
+		y += ROW_SPACING;
+		Button scattering = toggle(contentLeft, y, contentWidth,
+			"First-order scattering", () -> draftScatteringEnabled,
+			value -> draftScatteringEnabled = value);
+		tooltip(scattering, "A3-S1a/S1b energy split: scattering removes energy "
+			+ "from the specular early reflection and sends it to the late bus "
+			+ "diffuse send. Effective only while Order 2-4 reflections is on. "
+			+ "Use this switch for A/B; /cinema_acoustics scattering also toggles it.");
+		y += ROW_SPACING;
+		Button materialEq = toggle(contentLeft, y, contentWidth,
+			"Late material EQ", () -> draftLateMaterialEq,
+			value -> draftLateMaterialEq = value);
+		tooltip(materialEq, "A3-D1: late taps use a combined all-bounce material "
+			+ "with low-shelf / peak / high-shelf PEQ instead of the old single "
+			+ "one-pole damping. Off keeps the previous sound. "
+			+ "/cinema_acoustics materialeq also toggles it.");
 		y += ROW_SPACING;
 		ValueSlider lateFloor = valueSlider(contentLeft, y, contentWidth,
 			"Order 2-4 floor: %+.0f dB re direct",
@@ -494,6 +514,8 @@ public final class CinemaConfigScreen extends Screen {
 		draftAirTemperatureC = CinemaClientConfig.DEFAULT_AIR_TEMPERATURE_C;
 		draftAirHumidityPercent = CinemaClientConfig.DEFAULT_AIR_HUMIDITY_PERCENT;
 		draftLateReverb = CinemaClientConfig.DEFAULT_LATE_REVERB;
+		draftScatteringEnabled = CinemaClientConfig.DEFAULT_SCATTERING_ENABLED;
+		draftLateMaterialEq = CinemaClientConfig.DEFAULT_LATE_MATERIAL_EQ;
 		draftLateFloorDb = CinemaClientConfig.DEFAULT_LATE_FLOOR_DB;
 		draftReflectionUpdateMillis =
 			CinemaClientConfig.DEFAULT_REFLECTION_UPDATE_MILLIS;
@@ -565,6 +587,8 @@ public final class CinemaConfigScreen extends Screen {
 		config.setAirTemperatureC(draftAirTemperatureC);
 		config.setAirHumidityPercent(draftAirHumidityPercent);
 		config.setLateReverb(draftLateReverb);
+		config.setScatteringEnabled(draftScatteringEnabled);
+		config.setLateMaterialEq(draftLateMaterialEq);
 		config.setLateFloorDb(draftLateFloorDb);
 		config.setReflectionUpdateMillis(draftReflectionUpdateMillis);
 		config.setReflectionMoveThresholdMeters(

@@ -1,6 +1,7 @@
 package com.example.cinema.client.media.audio.acoustics.geometry;
 
 import com.example.cinema.client.media.audio.AcousticScale;
+import com.example.cinema.client.media.audio.acoustics.path.AcousticScattering;
 import com.example.cinema.client.media.audio.acoustics.path.ReflectionTap;
 import com.example.cinema.client.media.audio.acoustics.propagation.OcclusionResult;
 import com.example.cinema.client.media.audio.acoustics.room.AcousticMaterial;
@@ -120,8 +121,16 @@ public final class ImageSourceSolver {
 	public static List<ReflectionTap> solve(List<MirrorPlane> planes, int channel,
 											Point3 source, Point3 listener,
 											World world, double maxDelaySeconds) {
-		return solve(planes, channel, source, listener, world, Set.of(),
-			maxDelaySeconds);
+		return solve(planes, channel, "", source, listener, world, Set.of(),
+			maxDelaySeconds, false);
+	}
+
+	public static List<ReflectionTap> solve(List<MirrorPlane> planes, int channel,
+											Point3 source, Point3 listener,
+											World world, double maxDelaySeconds,
+											boolean scatteringEnabled) {
+		return solve(planes, channel, "", source, listener, world, Set.of(),
+			maxDelaySeconds, scatteringEnabled);
 	}
 
 	public static List<ReflectionTap> solve(List<MirrorPlane> planes, int channel,
@@ -130,7 +139,17 @@ public final class ImageSourceSolver {
 											Set<String> previousKeys,
 											double maxDelaySeconds) {
 		return solve(planes, channel, "", source, listener, world, previousKeys,
-			maxDelaySeconds);
+			maxDelaySeconds, false);
+	}
+
+	public static List<ReflectionTap> solve(List<MirrorPlane> planes, int channel,
+											Point3 source, Point3 listener,
+											World world,
+											Set<String> previousKeys,
+											double maxDelaySeconds,
+											boolean scatteringEnabled) {
+		return solve(planes, channel, "", source, listener, world, previousKeys,
+			maxDelaySeconds, scatteringEnabled);
 	}
 
 	/**
@@ -143,6 +162,22 @@ public final class ImageSourceSolver {
 											World world,
 											Set<String> previousKeys,
 											double maxDelaySeconds) {
+		return solve(planes, channel, sourceKey, source, listener, world,
+			previousKeys, maxDelaySeconds, false);
+	}
+
+	/**
+	 * Solves one physical speaker with optional scattering energy splitting.
+	 * The specular {@code gain} and diffuse {@code scatteredGain} are in the
+	 * same distance/occlusion domain; see {@link AcousticScattering}.
+	 */
+	public static List<ReflectionTap> solve(List<MirrorPlane> planes, int channel,
+											String sourceKey,
+											Point3 source, Point3 listener,
+											World world,
+											Set<String> previousKeys,
+											double maxDelaySeconds,
+											boolean scatteringEnabled) {
 		if (planes == null || planes.isEmpty() || source == null
 			|| listener == null || world == null) {
 			return List.of();
@@ -167,13 +202,19 @@ public final class ImageSourceSolver {
 			OcclusionResult occlusion = OcclusionResult.combine(
 				legOcclusion(world, source, geometry.reflectionPoint()),
 				legOcclusion(world, geometry.reflectionPoint(), listener));
+			double gain = reflectionGain(material, geometry.pathLength(),
+				scatteringEnabled) * occlusion.linearGain();
+			double scatterGain = scatteringEnabled
+				? scatteredGain(material, geometry.pathLength())
+					* occlusion.linearGain()
+				: 0.0;
 			taps.add(new ReflectionTap(channel, sourceKey, plane.key(),
 				geometry.imageSource(), geometry.reflectionPoint(),
 				geometry.pathLength(), geometry.delaySeconds(), material,
-				reflectionGain(material, geometry.pathLength())
-					* occlusion.linearGain(), occlusion));
+				gain, scatterGain, occlusion, plane.normalVector()));
 		}
-		return strongest(taps, MAX_TAPS_PER_SPEAKER, previousKeys);
+		return strongest(taps, MAX_TAPS_PER_SPEAKER, previousKeys,
+			scatteringEnabled);
 	}
 
 	/** Keeps the strongest taps across all speakers of one receiver. */
@@ -189,13 +230,26 @@ public final class ImageSourceSolver {
 	 */
 	public static List<ReflectionTap> strongest(List<ReflectionTap> taps, int max,
 												Set<String> previousKeys) {
+		return strongest(taps, max, previousKeys, false);
+	}
+
+	/**
+	 * Keeps the strongest taps for a solver cap. When {@code includeScatter}
+	 * is true, the ranking uses {@code max(gain, scatteredGain)} so a fully
+	 * scattered tap is not dropped before the diffuse send sees it. Directional
+	 * source selection still uses the plain specular overload.
+	 */
+	public static List<ReflectionTap> strongest(List<ReflectionTap> taps, int max,
+												Set<String> previousKeys,
+												boolean includeScatter) {
 		if (taps == null || taps.isEmpty() || max <= 0) {
 			return List.of();
 		}
 		Set<String> previous = previousKeys == null ? Set.of() : previousKeys;
 		Comparator<ReflectionTap> order = (first, second) -> {
-			int byEffective = Double.compare(effectiveGain(second, previous),
-				effectiveGain(first, previous));
+			int byEffective = Double.compare(
+				effectiveGain(second, previous, includeScatter),
+				effectiveGain(first, previous, includeScatter));
 			if (byEffective != 0) {
 				return byEffective;
 			}
@@ -219,22 +273,51 @@ public final class ImageSourceSolver {
 		return tap.key();
 	}
 
-	private static double effectiveGain(ReflectionTap tap, Set<String> previousKeys) {
-		double gain = tap.gain();
+	private static double effectiveGain(ReflectionTap tap, Set<String> previousKeys,
+										boolean includeScatter) {
+		double gain = includeScatter
+			? Math.max(tap.gain(), tap.scatteredGain()) : tap.gain();
 		return previousKeys.contains(tapKey(tap))
 			? gain * TAP_HYSTERESIS_GAIN : gain;
 	}
 
 	/**
-	 * Base gain before directivity/air absorption: pressure reflection
+	 * Base specular gain before directivity/air absorption: pressure reflection
 	 * coefficient times the Java {@code 1/max(L,1 m)} distance rule.
 	 * {@code pathLength} is in blocks; the distance rule is applied in metres.
 	 */
 	public static double reflectionGain(AcousticMaterial material, double pathLength) {
+		return reflectionGain(material, pathLength, false);
+	}
+
+	/**
+	 * Base specular gain with optional scattering attenuation.
+	 * {@code scatteringEnabled=false} preserves the pre-A3-S1 behaviour.
+	 */
+	public static double reflectionGain(AcousticMaterial material, double pathLength,
+										boolean scatteringEnabled) {
 		if (material == null || !Double.isFinite(pathLength)) {
 			return 0.0;
 		}
-		double reflection = Math.sqrt(Math.max(0.0, 1.0 - material.mid()));
+		double reflection = scatteringEnabled
+			? AcousticScattering.specularPressure(material.mid(),
+				material.scattering())
+			: Math.sqrt(Math.max(0.0, 1.0 - material.mid()));
+		return reflection / Math.max(1.0,
+			AcousticScale.blocksToMeters(pathLength));
+	}
+
+	/**
+	 * Base scattered gain before directivity/air absorption. Uses the same
+	 * distance rule as {@link #reflectionGain}.
+	 */
+	public static double scatteredGain(AcousticMaterial material,
+									   double pathLength) {
+		if (material == null || !Double.isFinite(pathLength)) {
+			return 0.0;
+		}
+		double reflection = AcousticScattering.scatteredPressure(material.mid(),
+			material.scattering());
 		return reflection / Math.max(1.0,
 			AcousticScale.blocksToMeters(pathLength));
 	}

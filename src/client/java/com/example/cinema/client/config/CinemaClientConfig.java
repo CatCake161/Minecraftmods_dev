@@ -61,6 +61,18 @@ public final class CinemaClientConfig {
 	/** Geometric order-2/3/4 reflections; low-frequency modes remain A5's concern. */
 	public static final boolean DEFAULT_LATE_REVERB = false;
 	/**
+	 * A3-S1a first-order scattering split. Only effective when
+	 * {@link #lateReverb()} is on, because the scattered energy is rendered by
+	 * the late bus. This switch exists for in-game A/B.
+	 */
+	public static final boolean DEFAULT_SCATTERING_ENABLED = true;
+	/**
+	 * A3-D1 late-tap three-band material PEQ. Off preserves the pre-D1
+	 * one-pole damping; on uses the combined path material and a distance-only
+	 * one-pole. This is the A/B switch for the material EQ.
+	 */
+	public static final boolean DEFAULT_LATE_MATERIAL_EQ = false;
+	/**
 	 * Late-bus audibility floor relative to the direct sound at the listener.
 	 * -60 dB means the bus stops one RT60 after the direct arrival.
 	 */
@@ -123,7 +135,7 @@ public final class CinemaClientConfig {
 	public static final int MAX_FFMPEG_PATH_LENGTH = 260;
 
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-	private static final int CONFIG_VERSION = 4;
+	private static final int CONFIG_VERSION = 6;
 	private static final CinemaClientConfig INSTANCE = load();
 	private static final Integer SCREEN_MAX_SIZE_OVERRIDE = readScreenMaxSizeOverride();
 
@@ -136,6 +148,8 @@ public final class CinemaClientConfig {
 	private double airTemperatureC = DEFAULT_AIR_TEMPERATURE_C;
 	private double airHumidityPercent = DEFAULT_AIR_HUMIDITY_PERCENT;
 	private boolean lateReverb = DEFAULT_LATE_REVERB;
+	private boolean scatteringEnabled = DEFAULT_SCATTERING_ENABLED;
+	private boolean lateMaterialEq = DEFAULT_LATE_MATERIAL_EQ;
 	private double lateFloorDb = DEFAULT_LATE_FLOOR_DB;
 	private int reflectionUpdateMillis = DEFAULT_REFLECTION_UPDATE_MILLIS;
 	private double reflectionMoveThresholdMeters =
@@ -245,6 +259,22 @@ public final class CinemaClientConfig {
 
 	public void setLateReverb(boolean value) {
 		lateReverb = value;
+	}
+
+	public boolean scatteringEnabled() {
+		return scatteringEnabled;
+	}
+
+	public void setScatteringEnabled(boolean value) {
+		scatteringEnabled = value;
+	}
+
+	public boolean lateMaterialEq() {
+		return lateMaterialEq;
+	}
+
+	public void setLateMaterialEq(boolean value) {
+		lateMaterialEq = value;
 	}
 
 	public double lateFloorDb() {
@@ -410,6 +440,8 @@ public final class CinemaClientConfig {
 		root.addProperty("airTemperatureC", airTemperatureC);
 		root.addProperty("airHumidityPercent", airHumidityPercent);
 		root.addProperty("lateReverb", lateReverb);
+		root.addProperty("scatteringEnabled", scatteringEnabled);
+		root.addProperty("lateMaterialEq", lateMaterialEq);
 		root.addProperty("lateFloorDb", lateFloorDb);
 		root.addProperty("reflectionUpdateMillis", reflectionUpdateMillis);
 		root.addProperty("reflectionMoveThresholdMeters",
@@ -438,7 +470,8 @@ public final class CinemaClientConfig {
 					+ "pauseGameInDeviceGuis={}, emptyHandOpensDeviceGuis={}, "
 					+ "spikeModifiesWorld={}, metersPerBlock={}, airAbsorption={}, "
 					+ "airTemperatureC={}, airHumidityPercent={}, lateReverb={}, "
-					+ "lateFloorDb={}, reflectionUpdateMillis={}, "
+					+ "scatteringEnabled={}, lateMaterialEq={}, lateFloorDb={}, "
+					+ "reflectionUpdateMillis={}, "
 					+ "reflectionMoveThresholdMeters={}, "
 					+ "lateReflectionUpdateMillis={}, "
 					+ "latePathMoveThresholdMeters={}, latePathStepBudgetMillis={}, "
@@ -450,7 +483,8 @@ public final class CinemaClientConfig {
 				file, screenMaxSize, pauseGameInDeviceGuis,
 				emptyHandOpensDeviceGuis, spikeModifiesWorld, metersPerBlock,
 				airAbsorption, airTemperatureC, airHumidityPercent, lateReverb,
-				lateFloorDb, reflectionUpdateMillis,
+				scatteringEnabled, lateMaterialEq, lateFloorDb,
+				reflectionUpdateMillis,
 				reflectionMoveThresholdMeters, lateReflectionUpdateMillis,
 				latePathMoveThresholdMeters, latePathStepBudgetMillis,
 				latePathMinStableMillis, latePathMaxStableMillis,
@@ -580,6 +614,14 @@ public final class CinemaClientConfig {
 			} else if (root.has("lateReverb")) {
 				config.lateReverb = root.get("lateReverb").getAsBoolean();
 			}
+			if (root.has("scatteringEnabled")) {
+				config.scatteringEnabled =
+					root.get("scatteringEnabled").getAsBoolean();
+			}
+			if (root.has("lateMaterialEq")) {
+				config.lateMaterialEq =
+					root.get("lateMaterialEq").getAsBoolean();
+			}
 			if (root.has("lateGainDb")) {
 				CinemaLog.info(CinemaLog.CONFIG, "legacy lateGainDb is ignored; "
 					+ "late level is computed from the room");
@@ -651,14 +693,15 @@ public final class CinemaClientConfig {
 					+ "late reflections default is off", CONFIG_VERSION);
 			} else if (version < CONFIG_VERSION) {
 				CinemaLog.info(CinemaLog.CONFIG, "migrated to version {}; "
-					+ "new video, diagnostic and world-scale settings use defaults",
+					+ "new video, diagnostic, world-scale, scattering and late-material settings use defaults",
 					CONFIG_VERSION);
 			}
 			CinemaLog.info(CinemaLog.CONFIG, "loaded {} (screenMaxSize={}, "
 					+ "pauseGameInDeviceGuis={}, emptyHandOpensDeviceGuis={}, "
 					+ "spikeModifiesWorld={}, metersPerBlock={}, airAbsorption={}, "
 					+ "airTemperatureC={}, airHumidityPercent={}, lateReverb={}, "
-					+ "lateFloorDb={}, reflectionUpdateMillis={}, "
+					+ "scatteringEnabled={}, lateMaterialEq={}, lateFloorDb={}, "
+					+ "reflectionUpdateMillis={}, "
 					+ "reflectionMoveThresholdMeters={}, "
 					+ "lateReflectionUpdateMillis={}, "
 					+ "latePathMoveThresholdMeters={}, latePathStepBudgetMillis={}, "
@@ -672,6 +715,7 @@ public final class CinemaClientConfig {
 				config.metersPerBlock, config.airAbsorption,
 				config.airTemperatureC,
 				config.airHumidityPercent, config.lateReverb,
+				config.scatteringEnabled, config.lateMaterialEq,
 				config.lateFloorDb, config.reflectionUpdateMillis,
 				config.reflectionMoveThresholdMeters,
 				config.lateReflectionUpdateMillis,

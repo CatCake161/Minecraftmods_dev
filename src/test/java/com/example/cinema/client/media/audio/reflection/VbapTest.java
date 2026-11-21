@@ -159,6 +159,44 @@ class VbapTest {
 		assertEquals(1.0f, weights.weights()[0], EPS);
 	}
 
+	@Test
+	void pointPanningDoesNotTreatIndexThreeAsLfe() {
+		float[][] points = {
+			{-0.7071f, 0.0f, -0.7071f},
+			{0.7071f, 0.0f, -0.7071f},
+			{0.0f, 1.0f, 0.0f},
+			{0.0f, 0.0f, 1.0f},
+			{-0.7071f, 0.0f, 0.7071f},
+		};
+
+		Vbap.Weights weights = Vbap.panPoints(
+			new float[]{0.0f, 0.0f, 1.0f}, points);
+
+		assertFalse(weights.isEmpty());
+		assertTrue(contains(weights, 3),
+			"point index 3 is a normal output point");
+		assertEquals(1.0, energy(weights), EPS);
+	}
+
+	@Test
+	void pointPanningUsesElevatedGhostAsExactTarget() {
+		float[][] points = new float[7][];
+		points[0] = new float[]{-0.7071f, 0.0f, -0.7071f};
+		points[1] = new float[]{0.7071f, 0.0f, -0.7071f};
+		points[2] = new float[]{0.0f, 0.0f, -1.0f};
+		points[3] = new float[]{-0.7071f, 0.0f, 0.7071f};
+		points[4] = new float[]{0.7071f, 0.0f, 0.7071f};
+		points[5] = new float[]{0.0f, 1.0f, 0.0f};
+		points[6] = new float[]{0.0f, 0.0f, 1.0f};
+
+		Vbap.Weights weights = Vbap.panPoints(
+			new float[]{0.0f, 1.0f, 0.0f}, points);
+
+		assertEquals(1, weights.channels().length);
+		assertEquals(5, weights.channels()[0]);
+		assertEquals(1.0f, weights.weights()[0], EPS);
+	}
+
 	private static float[][] layout() {
 		float[][] positions = new float[6][];
 		positions[0] = new float[]{-0.7071f, 0.0f, -0.7071f};

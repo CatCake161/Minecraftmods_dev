@@ -109,6 +109,104 @@ class ImageSourceSolverTest {
 	}
 
 	@Test
+	void firstOrderTapCarriesSurfaceNormalForDiffuseRays() {
+		FakeWorld world = new FakeWorld(STONE, OcclusionResult.NONE);
+
+		List<ReflectionTap> taps = solveSinglePlane(world);
+
+		assertEquals(1, taps.size());
+		assertEquals(-1.0, taps.get(0).normal().x(), EPS);
+		assertEquals(0.0, taps.get(0).normal().y(), EPS);
+		assertEquals(0.0, taps.get(0).normal().z(), EPS);
+	}
+
+	@Test
+	void scatteringSplitsFirstOrderEnergy() {
+		AcousticMaterial fabric =
+			new AcousticMaterial("fabric", 0.19, 0.62, 0.65, 0.35);
+		FakeWorld world = new FakeWorld(fabric, OcclusionResult.NONE);
+		MirrorPlane plane = MirrorPlane.unbounded(MirrorPlane.Axis.X, 5.0,
+			-1.0, null);
+		Point3 source = Point3.of(0.0, 1.0, 0.0);
+		Point3 listener = Point3.of(2.0, 2.0, 0.0);
+
+		List<ReflectionTap> taps = ImageSourceSolver.solve(List.of(plane), 0,
+			source, listener, world, Set.of(),
+			ImageSourceSolver.MAX_DELAY_SECONDS, true);
+
+		assertEquals(1, taps.size());
+		ReflectionTap tap = taps.get(0);
+		double distance = 1.0 / Math.max(1.0, Math.sqrt(65.0));
+		double specular = Math.sqrt((1.0 - 0.62) * (1.0 - 0.35)) * distance;
+		double scattered = Math.sqrt((1.0 - 0.62) * 0.35) * distance;
+		double legacy = ImageSourceSolver.reflectionGain(fabric,
+			Math.sqrt(65.0));
+
+		assertEquals(specular, tap.gain(), EPS);
+		assertEquals(scattered, tap.scatteredGain(), EPS);
+		assertEquals(legacy * legacy,
+			tap.gain() * tap.gain() + tap.scatteredGain() * tap.scatteredGain(),
+			EPS);
+	}
+
+	@Test
+	void scatteringBypassKeepsLegacyGain() {
+		AcousticMaterial fabric =
+			new AcousticMaterial("fabric", 0.19, 0.62, 0.65, 0.35);
+		FakeWorld world = new FakeWorld(fabric, OcclusionResult.NONE);
+		MirrorPlane plane = MirrorPlane.unbounded(MirrorPlane.Axis.X, 5.0,
+			-1.0, null);
+		Point3 source = Point3.of(0.0, 1.0, 0.0);
+		Point3 listener = Point3.of(2.0, 2.0, 0.0);
+
+		List<ReflectionTap> taps = ImageSourceSolver.solve(List.of(plane), 0,
+			source, listener, world, Set.of(),
+			ImageSourceSolver.MAX_DELAY_SECONDS, false);
+
+		assertEquals(1, taps.size());
+		assertEquals(ImageSourceSolver.reflectionGain(fabric, Math.sqrt(65.0)),
+			taps.get(0).gain(), EPS);
+		assertEquals(0.0, taps.get(0).scatteredGain(), EPS);
+	}
+
+	@Test
+	void fullyScatteredTapKeepsOnlyDiffuseEnergy() {
+		AcousticMaterial fabric =
+			new AcousticMaterial("fabric", 0.19, 0.62, 0.65, 1.0);
+		FakeWorld world = new FakeWorld(fabric, OcclusionResult.NONE);
+		MirrorPlane plane = MirrorPlane.unbounded(MirrorPlane.Axis.X, 5.0,
+			-1.0, null);
+		Point3 source = Point3.of(0.0, 1.0, 0.0);
+		Point3 listener = Point3.of(2.0, 2.0, 0.0);
+
+		List<ReflectionTap> taps = ImageSourceSolver.solve(List.of(plane), 0,
+			source, listener, world, Set.of(),
+			ImageSourceSolver.MAX_DELAY_SECONDS, true);
+
+		assertEquals(1, taps.size());
+		assertEquals(0.0, taps.get(0).gain(), EPS);
+		assertEquals(Math.sqrt(1.0 - 0.62)
+			/ Math.max(1.0, Math.sqrt(65.0)),
+			taps.get(0).scatteredGain(), EPS);
+	}
+
+	@Test
+	void solverCapKeepsHighScatterTap() {
+		ReflectionTap weakSpecular = new ReflectionTap(0, "scatter", "a",
+			Point3.ZERO, Point3.ZERO, 2.0, 0.01, STONE, 0.01, 0.90,
+			OcclusionResult.NONE);
+		ReflectionTap strongSpecular = new ReflectionTap(0, "specular", "b",
+			Point3.ZERO, Point3.ZERO, 1.0, 0.01, STONE, 0.50, 0.0,
+			OcclusionResult.NONE);
+
+		List<ReflectionTap> result = ImageSourceSolver.strongest(
+			List.of(weakSpecular, strongSpecular), 1, Set.of(), true);
+
+		assertEquals(1, result.size());
+		assertEquals("a", result.get(0).planeKey());
+	}
+
+	@Test
 	void glassAtReflectionPointIsAValidReflector() {
 		FakeWorld world = new FakeWorld(GLASS, OcclusionResult.NONE);
 

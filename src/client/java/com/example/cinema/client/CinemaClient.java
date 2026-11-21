@@ -11,6 +11,7 @@ import com.example.cinema.client.command.ClientHelpCommand;
 import com.example.cinema.client.command.ClientProjectorCommand;
 import com.example.cinema.client.command.ClientReceiverCommand;
 import com.example.cinema.client.command.ClientSpeakerDataCommand;
+import com.example.cinema.client.config.AcousticMaterialConfig;
 import com.example.cinema.client.config.CinemaClientConfig;
 import com.example.cinema.client.gui.AvReceiverConfigScreen;
 import com.example.cinema.client.gui.ProjectorConfigScreen;
@@ -29,6 +30,7 @@ import com.example.cinema.client.media.CinemaPrewarm;
 import com.example.cinema.client.render.ProjectorOptics;
 import com.example.cinema.client.render.ScreenBlockEntityRenderer;
 import com.example.cinema.client.render.ScreenGeometry;
+import com.example.cinema.client.render.SourceDebugRenderer;
 import com.example.cinema.client.render.ScreenLimits;
 import com.example.cinema.client.render.SeatEntityRenderer;
 import com.example.cinema.client.render.SpeakerBlockEntityRenderer;
@@ -78,6 +80,7 @@ public class CinemaClient implements ClientModInitializer {
 	@Override
 	public void onInitializeClient() {
 		CinemaPrewarm.start();
+		AcousticMaterialConfig.load();
 		SpeakerDataRegistry.load();
 		SpeakerDataAssignments.load();
 
@@ -191,6 +194,7 @@ public class CinemaClient implements ClientModInitializer {
 			AvReceiverPlaybackManager.presentFrames();
 			CinemaPlayer.presentActiveFrame();
 		});
+		WorldRenderEvents.AFTER_TRANSLUCENT.register(SourceDebugRenderer::render);
 		ClientTickEvents.END_CLIENT_TICK.register(AvReceiverPlaybackManager::tick);
 		ClientTickEvents.END_CLIENT_TICK.register(SpeakerLocator::tick);
 		ClientTickEvents.END_CLIENT_TICK.register(AcousticScene::tick);

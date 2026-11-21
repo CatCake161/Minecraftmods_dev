@@ -2,6 +2,7 @@ package com.example.cinema.client.media;
 
 import com.example.cinema.block.entity.AvReceiverBlockEntity;
 import com.example.cinema.Cinema;
+import com.example.cinema.client.media.audio.debug.SourceDebugPoint;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
@@ -10,10 +11,12 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.ChunkPos;
 
+import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -30,6 +33,7 @@ public final class AvReceiverPlaybackManager {
 	private static final int SYNC_INTERVAL_TICKS = 10;
 	private static final Map<BlockPos, AvReceiverPlayback> playbacks = new HashMap<>();
 	private static final AtomicInteger textureSequence = new AtomicInteger();
+	private static volatile boolean sourceDebugEnabled;
 	private static ClientLevel lastLevel;
 	private static int tickCounter;
 
@@ -59,6 +63,26 @@ public final class AvReceiverPlaybackManager {
 
 	public static AvReceiverPlayback playbackAt(BlockPos receiverPos) {
 		return receiverPos == null ? null : playbacks.get(receiverPos);
+	}
+
+	public static boolean sourceDebugEnabled() {
+		return sourceDebugEnabled;
+	}
+
+	public static void setSourceDebugEnabled(boolean enabled) {
+		sourceDebugEnabled = enabled;
+	}
+
+	/** World-space audio sources from every active receiver, for debug rendering. */
+	public static List<SourceDebugPoint> debugSources() {
+		if (playbacks.isEmpty()) {
+			return List.of();
+		}
+		List<SourceDebugPoint> points = new ArrayList<>();
+		for (AvReceiverPlayback playback : playbacks.values()) {
+			points.addAll(playback.debugSources());
+		}
+		return List.copyOf(points);
 	}
 
 	public static void presentFrames() {

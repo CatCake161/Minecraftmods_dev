@@ -294,6 +294,8 @@ duration, volume, muted, missing, CinemaPlayer player
 定位：**功放前面板 + 设置菜单**，不是文件浏览器。主界面必须一眼回答：当前媒体、音量、视频/音频输出目标、异常状态。投影仪光学设置不进入本 GUI。
 
 > 以下为完整目标规格；M2 已实现四页签、媒体库、播放/音量控制和主要诊断，标为“后续”或“待补”的条目尚未完成。
+>
+> **2026-11-21 GUI 重构规划**：目标信息架构、布局、组件拆分和分阶段迁移见 [AV-RECEIVER-GUI-REFACTOR.md](AV-RECEIVER-GUI-REFACTOR.md)。目标一级页面为 Home / Media / Speakers / Sound / Information / Setup，默认 Home；纯 GUI 重构，payload 不变。
 
 ### 10.1 信息架构
 
@@ -355,16 +357,16 @@ duration, volume, muted, missing, CinemaPlayer player
 
 ### 10.4 扬声器页
 
-- 已连接扬声器列表：自定义名称（未命名时显示角色/箱体/坐标）、`Ping` 定位按钮、`Level` 滑块（-60.0..+12.0 dB，0.5 dB 步进并吸附 0.0 dB）、在线状态；超过可视行数时支持滚轮并显示滚动条（同一角色允许多只扬声器链接，L2a 起每只都获得独立 direct source 并同时出声；反射与 late bus 也按每只扬声器生成）。方向键同样按 0.5 dB 调整，且每次按键立即保存。
+- 已连接扬声器列表：自定义名称（未命名时显示角色/箱体/坐标）、`Ping` 定位按钮、`Level` 滑块（-60.0..+12.0 dB，0.5 dB 步进并吸附 0.0 dB）、在线状态；超过可视行数时支持滚轮并显示滚动条（同一角色允许多只扬声器链接，L2a 起每只都获得独立 direct source 并同时出声；反射与 late bus 也按每只扬声器生成）。方向键同样按 0.5 dB 调整，且每次按键立即保存。**重构后 Level 移到 Sound 页，Speakers 页保留设备/Ping/Access。**
 - 悬停扬声器行显示完整信息：名称、角色、箱体、方块坐标、与接收器距离、当前 Level。
 - `Ping` 在扬声器方块位置播放定位音，并生成约 8 秒粒子光柱；用于区分外观相同的多只扬声器。
 - 链接已参与音频路由：配对扬声器的角色/位置/电平映射到对应声道；**缺少物理扬声器的声道不创建 source**。听者使用玩家实际位置/朝向，不使用 Seat/皇帝位或声场校正。
 - 角色分配只显示合法项：中置仅 `FC`，低音炮仅 `LFE`，落地式/书架式仅 `NONE/FL/FR/BL/BR`。
 - 单只/全部测试音（后续）。
 - 每声道电平已实现；距离/延迟、LFE 分频、聆听模式（5.1 直通/立体声下混/上混）后续。
-- 房间混响（EFX 预设、wet/dry）后续。
+- 房间声学/混响不进入接收器 GUI；`lateReverb`/`lateFloorDb` 等继续在 Mod Menu（A4 已取消）。
 - 无物理扬声器时明确显示“无物理扬声器”，不再创建虚拟 5.1。
-- 房间声学/早期反射/晚期混响的计算、限制与分阶段见 [AUDIO-ACOUSTICS.md](AUDIO-ACOUSTICS.md)；扬声器指向性计划使用 Spinorama 实测 H/V SPL。Speakers 页只放开关、电平、校准和诊断，不在这里做 DSP 细节。
+- 房间声学/早期反射/晚期混响的计算、限制与分阶段见 [AUDIO-ACOUSTICS.md](AUDIO-ACOUSTICS.md)；扬声器指向性计划使用 Spinorama 实测 H/V SPL。Speakers/Sound 页只放设备、电平、校准和诊断，不在这里做 DSP 细节，也不放声学开关。
 
 ### 10.5 信号/诊断页
 
@@ -375,6 +377,8 @@ duration, volume, muted, missing, CinemaPlayer player
 - 只做展示，不把解码参数做成主界面控件。
 
 ### 10.6 设置页
+
+> 重构后 Setup 采用 master-detail 分类（Inputs / Audio / Video / Speakers / General；Network 有数据后再出现），详见 [AV-RECEIVER-GUI-REFACTOR.md](AV-RECEIVER-GUI-REFACTOR.md) §3.4。下列条目先按现有功能映射，未实现的后端不伪造控件。
 
 - 默认媒体库只读显示 `cinema/media/`。
 - **外部媒体库**：输入文件夹绝对路径 → Add library；列表可选中/Remove library（只删注册，不删文件）。
@@ -391,6 +395,7 @@ duration, volume, muted, missing, CinemaPlayer player
 - 屏幕配对/屏幕几何（投影仪管理）。
 - 绝对路径、系统文件浏览器。
 - 与扬声器 GUI 角色选择重复的“下一角色”按钮；角色在扬声器 GUI 内分配，不再用右键循环。
+- 声学总开关、房间预设、反射阶数/floor、重扫、early/late gain、limiter 设置。A4 接收器声学集成已取消（2026-11-21）；这些继续留在 Mod Menu。接收器 GUI 只显示 limiter 的只读状态。
 
 ### 10.8 实现约束
 
@@ -410,6 +415,7 @@ duration, volume, muted, missing, CinemaPlayer player
 | M3 | 每接收器独立播放实例/纹理/音频引擎 | 两个接收器可独立播放（已实现并验收） |
 | M4 | Speaker 方块、5.1 路由、每扬声器电平、dBFS 音量 | 六只扬声器按角色出声、电平可调、玩家在影院内外定位正确（已实现并验收；A2g 后主音量上限 +18 dBFS、Level 上限 +12 dB，输出限幅 -0.3 dBFS） |
 | M5 | LAN 状态硬化、资源重载、遥控器/远程配对、长片测试 | 专用服务器/两小时长片通过；观众席可远程控制与配对 |
+| M6 | GUI 重构（G1–G4）：Home/Now Playing、六页 IA、常驻 header/footer、响应式、键盘/tooltip | 现有功能零回归；GUI scale 1–4 可用；4K/BSL 无卡顿；详见 [AV-RECEIVER-GUI-REFACTOR.md](AV-RECEIVER-GUI-REFACTOR.md) |
 
 M1 已完成并通过游戏内验收：
 

@@ -1,6 +1,7 @@
 package com.example.cinema.client.media.audio.acoustics.geometry;
 
 import com.example.cinema.client.media.audio.AcousticScale;
+import com.example.cinema.client.media.audio.acoustics.path.AcousticScattering;
 import com.example.cinema.client.media.audio.acoustics.path.ReflectionDelayLimit;
 import com.example.cinema.client.media.audio.acoustics.path.ReflectionPathTap;
 import com.example.cinema.client.media.audio.acoustics.propagation.OcclusionResult;
@@ -88,6 +89,16 @@ public final class ImageSourcePathSolver {
 			maxOrder, maxPaths, delayLimit).paths();
 	}
 
+	public static List<ReflectionPathTap> solve(List<MirrorPlane> planes, int channel,
+												Point3 source, Point3 listener,
+												ImageSourceSolver.World world,
+												int maxOrder, int maxPaths,
+												ReflectionDelayLimit delayLimit,
+												boolean scatteringEnabled) {
+		return solveWithStats(planes, channel, source, listener, world,
+			maxOrder, maxPaths, delayLimit, scatteringEnabled).paths();
+	}
+
 	public static SolveStats solveWithStats(List<MirrorPlane> planes, int channel,
 											Point3 source, Point3 listener,
 											ImageSourceSolver.World world,
@@ -102,7 +113,17 @@ public final class ImageSourcePathSolver {
 											int maxOrder, int maxPaths,
 											ReflectionDelayLimit delayLimit) {
 		return solveWithStats(planes, channel, source, listener, world,
-			maxOrder, maxPaths, 2, MAX_VISITS, delayLimit);
+			maxOrder, maxPaths, 2, MAX_VISITS, delayLimit, false);
+	}
+
+	public static SolveStats solveWithStats(List<MirrorPlane> planes, int channel,
+											Point3 source, Point3 listener,
+											ImageSourceSolver.World world,
+											int maxOrder, int maxPaths,
+											ReflectionDelayLimit delayLimit,
+											boolean scatteringEnabled) {
+		return solveWithStats(planes, channel, source, listener, world,
+			maxOrder, maxPaths, 2, MAX_VISITS, delayLimit, scatteringEnabled);
 	}
 
 	public static SolveStats solveWithStats(List<MirrorPlane> planes, int channel,
@@ -112,7 +133,18 @@ public final class ImageSourcePathSolver {
 											int maxOrder, int maxPaths,
 											ReflectionDelayLimit delayLimit) {
 		return solveWithStats(planes, channel, sourceKey, source, listener, world,
-			maxOrder, maxPaths, 2, MAX_VISITS, delayLimit);
+			maxOrder, maxPaths, 2, MAX_VISITS, delayLimit, false);
+	}
+
+	public static SolveStats solveWithStats(List<MirrorPlane> planes, int channel,
+											String sourceKey,
+											Point3 source, Point3 listener,
+											ImageSourceSolver.World world,
+											int maxOrder, int maxPaths,
+											ReflectionDelayLimit delayLimit,
+											boolean scatteringEnabled) {
+		return solveWithStats(planes, channel, sourceKey, source, listener, world,
+			maxOrder, maxPaths, 2, MAX_VISITS, delayLimit, scatteringEnabled);
 	}
 
 	public static SolveStats solveWithStats(List<MirrorPlane> planes, int channel,
@@ -131,7 +163,19 @@ public final class ImageSourcePathSolver {
 											int minOrder, int maxVisits,
 											ReflectionDelayLimit delayLimit) {
 		return solveWithStats(planes, channel, "", source, listener, world,
-			maxOrder, maxPaths, minOrder, maxVisits, delayLimit);
+			maxOrder, maxPaths, minOrder, maxVisits, delayLimit, false);
+	}
+
+	public static SolveStats solveWithStats(List<MirrorPlane> planes, int channel,
+											Point3 source, Point3 listener,
+											ImageSourceSolver.World world,
+											int maxOrder, int maxPaths,
+											int minOrder, int maxVisits,
+											ReflectionDelayLimit delayLimit,
+											boolean scatteringEnabled) {
+		return solveWithStats(planes, channel, "", source, listener, world,
+			maxOrder, maxPaths, minOrder, maxVisits, delayLimit,
+			scatteringEnabled);
 	}
 
 	/**
@@ -144,7 +188,8 @@ public final class ImageSourcePathSolver {
 											ImageSourceSolver.World world,
 											int maxOrder, int maxPaths,
 											int minOrder, int maxVisits,
-											ReflectionDelayLimit delayLimit) {
+											ReflectionDelayLimit delayLimit,
+											boolean scatteringEnabled) {
 		int firstOrder = Math.max(2, minOrder);
 		if (planes == null || planes.isEmpty() || source == null
 			|| listener == null || world == null || maxOrder < firstOrder
@@ -162,7 +207,7 @@ public final class ImageSourcePathSolver {
 		boolean[] truncated = {false};
 		search(planes, channel, sourceKey, listener, world, maxOrder, maxPaths,
 			firstOrder, maxVisits, source, pathPlanes, imageChain, taps, visits,
-			truncated, delayRejected, limit);
+			truncated, delayRejected, limit, scatteringEnabled);
 		return new SolveStats(taps, visits[0], truncated[0], delayRejected[0]);
 	}
 
@@ -176,7 +221,8 @@ public final class ImageSourcePathSolver {
 							   List<ReflectionPathTap> taps,
 							   int[] visits, boolean[] truncated,
 							   int[] delayRejected,
-							   ReflectionDelayLimit delayLimit) {
+							   ReflectionDelayLimit delayLimit,
+							   boolean scatteringEnabled) {
 		if (pathPlanes.size() >= maxOrder) {
 			return;
 		}
@@ -207,7 +253,8 @@ public final class ImageSourcePathSolver {
 			imageChain.add(nextImage);
 			if (pathPlanes.size() >= minOrder) {
 				ReflectionPathTap tap = buildTap(channel, sourceKey, pathPlanes,
-					imageChain, listener, world, delayRejected, delayLimit);
+					imageChain, listener, world, delayRejected, delayLimit,
+					scatteringEnabled);
 				if (tap != null) {
 					taps.add(tap);
 					if (taps.size() >= maxPaths) {
@@ -220,7 +267,7 @@ public final class ImageSourcePathSolver {
 			}
 			search(planes, channel, sourceKey, listener, world, maxOrder, maxPaths,
 				minOrder, maxVisits, nextImage, pathPlanes, imageChain, taps, visits,
-				truncated, delayRejected, delayLimit);
+				truncated, delayRejected, delayLimit, scatteringEnabled);
 			imageChain.remove(imageChain.size() - 1);
 			pathPlanes.remove(pathPlanes.size() - 1);
 		}
@@ -255,6 +302,7 @@ public final class ImageSourcePathSolver {
 		private final int minOrder;
 		private final int maxVisits;
 		private final ReflectionDelayLimit delayLimit;
+		private final boolean scatteringEnabled;
 		private final List<ReflectionPathTap> taps = new ArrayList<>();
 		private final ArrayDeque<Frame> stack = new ArrayDeque<>();
 		private final MirrorPlane[] pathPlanes;
@@ -268,7 +316,7 @@ public final class ImageSourcePathSolver {
 					   Point3 listener, ImageSourceSolver.World world,
 					   int maxOrder, int maxPaths, int minOrder, int maxVisits) {
 			this(planes, channel, source, listener, world, maxOrder, maxPaths,
-				minOrder, maxVisits, DEFAULT_DELAY_LIMIT);
+				minOrder, maxVisits, DEFAULT_DELAY_LIMIT, false);
 		}
 
 		public Session(List<MirrorPlane> planes, int channel, Point3 source,
@@ -276,14 +324,24 @@ public final class ImageSourcePathSolver {
 					   int maxOrder, int maxPaths, int minOrder, int maxVisits,
 					   ReflectionDelayLimit delayLimit) {
 			this(planes, channel, "", source, listener, world, maxOrder, maxPaths,
-				minOrder, maxVisits, delayLimit);
+				minOrder, maxVisits, delayLimit, false);
+		}
+
+		public Session(List<MirrorPlane> planes, int channel, Point3 source,
+					   Point3 listener, ImageSourceSolver.World world,
+					   int maxOrder, int maxPaths, int minOrder, int maxVisits,
+					   ReflectionDelayLimit delayLimit,
+					   boolean scatteringEnabled) {
+			this(planes, channel, "", source, listener, world, maxOrder, maxPaths,
+				minOrder, maxVisits, delayLimit, scatteringEnabled);
 		}
 
 		public Session(List<MirrorPlane> planes, int channel, String sourceKey,
 					   Point3 source, Point3 listener,
 					   ImageSourceSolver.World world, int maxOrder, int maxPaths,
 					   int minOrder, int maxVisits,
-					   ReflectionDelayLimit delayLimit) {
+					   ReflectionDelayLimit delayLimit,
+					   boolean scatteringEnabled) {
 			this.planes = planes == null ? List.of() : planes;
 			this.channel = channel;
 			this.sourceKey = sourceKey == null ? "" : sourceKey;
@@ -294,6 +352,7 @@ public final class ImageSourcePathSolver {
 			this.minOrder = Math.max(2, minOrder);
 			this.maxVisits = Math.max(1, maxVisits);
 			this.delayLimit = delayLimit == null ? DEFAULT_DELAY_LIMIT : delayLimit;
+			this.scatteringEnabled = scatteringEnabled;
 			this.pathPlanes = new MirrorPlane[Math.max(2, maxOrder)];
 			this.imageChain = new Point3[Math.max(2, maxOrder) + 1];
 			if (source == null || listener == null || world == null
@@ -347,7 +406,8 @@ public final class ImageSourcePathSolver {
 					List<Point3> images = Arrays.asList(imageChain)
 						.subList(0, frame.depth + 2);
 					ReflectionPathTap tap = buildTap(channel, sourceKey, path, images,
-						listener, world, delayRejected, delayLimit);
+						listener, world, delayRejected, delayLimit,
+						scatteringEnabled);
 					if (tap != null) {
 						taps.add(tap);
 					}
@@ -373,7 +433,8 @@ public final class ImageSourcePathSolver {
 											  Point3 listener,
 											  ImageSourceSolver.World world,
 											  int[] delayRejected,
-											  ReflectionDelayLimit delayLimit) {
+											  ReflectionDelayLimit delayLimit,
+											  boolean scatteringEnabled) {
 		int order = planes.size();
 		Point3 finalImage = imageChain.get(order);
 		Point3 source = imageChain.get(0);
@@ -433,16 +494,26 @@ public final class ImageSourcePathSolver {
 		occlusion = OcclusionResult.combine(occlusion,
 			world.occlusion(previous, listener));
 
-		double gain = occlusion.linearGain()
+		double distance = occlusion.linearGain()
 			/ Math.max(1.0, AcousticScale.blocksToMeters(pathLength));
-		for (AcousticMaterial material : materials) {
-			gain *= Math.sqrt(Math.max(0.0, 1.0 - material.mid()));
+		double gain;
+		double scatterGain;
+		if (scatteringEnabled) {
+			gain = distance * AcousticScattering.specularPressure(materials);
+			scatterGain = distance * AcousticScattering.scatteredPressure(materials);
+		} else {
+			gain = distance;
+			for (AcousticMaterial material : materials) {
+				gain *= Math.sqrt(Math.max(0.0, 1.0 - material.mid()));
+			}
+			scatterGain = 0.0;
 		}
 		String key = (sourceKey == null || sourceKey.isEmpty() ? ""
 			: sourceKey + ":") + pathKey(channel, planes);
+		Point3 lastNormal = planes.get(order - 1).normalVector();
 		return new ReflectionPathTap(channel, sourceKey, key, order,
 			finalImage, points, materials, pathLength, delaySeconds, gain,
-			occlusion);
+			scatterGain, occlusion, lastNormal);
 	}
 
 	private static Point3 mirror(Point3 point, MirrorPlane plane) {

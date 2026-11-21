@@ -20,7 +20,7 @@
 - **投影仪**：投掷比/变焦、对焦、梯形校正、环境光洗白、灯泡预热/风扇声。
 - **可见光束**：已删除，不做光锥/粒子束。
 - **扬声器**：当前 5.1（FL/FR/FC/LFE/BL/BR），保留立体声回退；每只扬声器独立 mono source。未来规划可变布局（mono/stereo/2.1/3.1/5.1/7.1/5.1.2/5.1.4/7.1.2/7.1.4）及天空/吸顶音响（同一种吸顶式扬声器），见 [CHANNEL-LAYOUTS.md](design/CHANNEL-LAYOUTS.md)。
-- **AV 接收器**：独立方块，负责媒体/播放状态、扬声器配对与路由、音量；延迟/混响为后续功能。
+- **AV 接收器**：独立方块，负责媒体/播放状态、扬声器配对与路由、音量；扬声器距离/延迟校准为后续功能。房间声学/混响留在 Mod Menu（A4 已取消）。
 - **座位**：可右键乘坐的影院座位；不参与投影/声场校准，也不定义皇帝位或听者参考。
 - **编码默认**：1080p H.264/AAC；4K/HEVC/AV1 后置。
 - **媒体依赖**：FFmpeg 是外部必须项，由用户从 gyan.dev 安装，不随模组打包。
@@ -48,7 +48,7 @@ AV Receiver（权威媒体单元）
 5.1 PCM → 直达声（单个 4096-tap FIR：on-axis/指向性 + ISO 空气 + 遮挡低通；Java 距离/遮挡宽带）
         → 一阶早期反射（镜像源 + 单个 4096-tap 全频带 FIR：指向性/空气/材质/遮挡低通）  // A2b 已验收，A2c-R 已验收
         → 晚期场（几何 order-2/3/4 → LateReflectionBus → VBAP）        // A3 几何总线已验收；默认关闭
-        → 当前 5.1 每声道一只扬声器：6 个直达 OpenAL source + 116 个反射 source（当前 planner 仍只激活 24 一阶 + 16 二阶 premium + 8 三阶 premium；其余槽位保留给多扬声器/后续扩展）+ 启用时创建的 6 个 lazy wet source；每引擎 source 预算上限 128
+        → 当前 5.1 每声道一只扬声器：6 个直达 OpenAL source + 98 个反射 source（当前 planner 仍只激活 24 一阶 + 16 二阶 premium + 8 三阶 premium；其余槽位保留给多扬声器/后续扩展）+ 启用时懒分配的 24 个 wet source（物理扬声器 + 反射 ghost，上限 24）；每引擎 source 预算上限 128
         // L2a 已实现：每个声道可接多只扬声器，direct source 按已连接扬声器计数，反射池 = 128 - direct - wet 动态调整
 ```
 
@@ -59,7 +59,7 @@ AV Receiver（权威媒体单元）
 - 空气吸收开关/温湿度放 Mod Menu（客户端）；直达声和反射声共用同一套 on-axis/指向性/`overallGain` 语义；反射 FIR 已合并空气、材质和遮挡低通，一阶反射保持全频带，不再使用反射 biquad 或 Schroeder 滤波。所有电平由物理模拟/房间校准决定，不提供 early/late gain trim；Mod Menu `Performance` 页只调求解性能与限幅器，并查看 JVM 进程 CPU。
 - 只做扬声器箱体指向性，不做原始声源指向性；5.1 bus 已混合，无法从混音恢复每个原始声源方向。
 - **2026-11-08 A3 FDN 验收结论：不通过，FDN 已删除。** 高频“沙沙”、低频不足、整体音色不平衡；2026-11-12 已彻底移除 64-line FDN、RT60/pre-delay/DC 高通/阻尼/Hadamard 去相关及相关测试。**几何 `LateReflectionBus` 是另一条实现，已于 2026-11-14 通过游戏内验收**，两者不要混淆。`DEFAULT_LATE_REVERB=false`，默认只保留直达 + 一阶反射；`CinemaAudioEngine` 仅在启用时创建 wet source。低频模态/SBIR 仍归 A5。
-- 晚期尾音当前由 geometric `LateReflectionBus` 生成：order-2/3/4 几何路径、6 路 wet source、每 tap delay/gain/damping；最强路径作为 premium 使用独立 `ReflectionSource` 和 4096-tap FIR，其余进入 bus 并按真实扬声器布局做 VBAP（方向 listener → 最后反射点，能量归一化权重，精确 3D → 水平 → 最近扬声器 → 扩散回退，LFE 不作为普通输出目标）。LFE 与其他 5 声道一样参与完整反射计算。房间常数校准保留 `sourceGainDb = 20log10(2/√R)`，不再叠加用户 trim；**2026-11-14 起 tap 用相对听者位置直达声的门限 `lateFloorDb`（默认 -60 dB）过滤，延迟上限改为 `RT60_mid · (-lateFloorDb)/60`，不再使用房间盒对角线**。EAXReverb 仅保留为可选 fallback；低频模态仍由 A5 处理。
+- 晚期尾音当前由 geometric `LateReflectionBus` 生成：order-2/3/4 几何路径、动态 wet 点（物理扬声器 + 1/2/3/4 阶 ghost，上限 24）、每 tap delay/gain/damping；最强路径作为 premium 使用独立 `ReflectionSource` 和 4096-tap FIR，其余进入 bus 并按真实扬声器布局做 VBAP（方向 listener → 最后反射点，能量归一化权重，ghost 点保证凸包完整，LFE 不作为普通输出目标）。LFE 与其他 5 声道一样参与完整反射计算。房间常数校准保留 `sourceGainDb = 20log10(2/√R)`，不再叠加用户 trim；**2026-11-14 起 tap 用相对听者位置直达声的门限 `lateFloorDb`（默认 -60 dB）过滤，延迟上限改为 `RT60_mid · (-lateFloorDb)/60`，不再使用房间盒对角线**。EAXReverb 仅保留为可选 fallback；低频模态仍由 A5 处理。
 - 低音炮声学（2026-11-09）：内置/未测量低音炮按 enclosure 生成解析响应（sealed 二阶 30 Hz / ported 四阶 20 Hz Butterworth 高通；measured profile 跳过解析模型，避免重复计算），手动 Low/High（10–1000 Hz）用二阶 Butterworth 高通/低通实际带限；低音炮 FIR/源增益参考 `sqrt(low*high)`。多低音炮路由/模态仍归 A5。
 - 声学计算是客户端本地行为，不改变接收器的媒体/播放权威，也不影响 A/V 时钟。
 
@@ -70,7 +70,7 @@ AV Receiver（权威媒体单元）
 - `StreamingAudioDecoder`：外部 FFmpeg → 5.1 `f32le`；音频块 PTS 由采样数计算。
 - `CinemaPlayer`：每接收器播放代理持有的播放器实例；不再有全局播放器。
 - `CinemaVideoTexture`：接收器视频输出 → RGBA 上传/对焦 LOD → 投影仪。
-- `CinemaAudioEngine`：每接收器独立的音频引擎与 OpenAL context，共享 Minecraft OpenAL device；direct source 按已连接扬声器动态分配（L2a），未来按目标布局扩展；A2 起在音频线程做 Java 距离/遮挡增益和单个 4096-tap 直达 FIR；A2b 起另含最多 116 个反射 source（当前 128 source 预算：6 direct + 116 reflection + 6 lazy wet；多扬声器时 direct 增加、反射池动态缩小）、延迟环；A2c-R 起反射使用共享 `CommonAcousticFirDesigner` 的 4096-tap FIR，不再串 biquad；A3 起另含 6 个 late-reflection wet source 和 geometric `LateReflectionBus`（FDN 已删除）。
+- `CinemaAudioEngine`：每接收器独立的音频引擎与 OpenAL context，共享 Minecraft OpenAL device；direct source 按已连接扬声器动态分配（L2a），未来按目标布局扩展；A2 起在音频线程做 Java 距离/遮挡增益和单个 4096-tap 直达 FIR；A2b 起另含最多 98 个反射 source（当前 128 source 预算：6 direct + 98 reflection + 24 wet；多扬声器时 direct 增加、反射池动态缩小）、延迟环；A2c-R 起反射使用共享 `CommonAcousticFirDesigner` 的 4096-tap FIR，不再串 biquad；A3 起另含最多 24 个动态 wet source（物理扬声器 + 反射 ghost）和 geometric `LateReflectionBus`（FDN 已删除）。
 - `CinemaPrewarm`：启动时检查外部 FFmpeg 版本。
 
 职责边界：
@@ -145,7 +145,7 @@ AV Receiver（权威媒体单元）
 - 投影仪和屏幕配对依赖附近已加载区块；线材提供近距显式配对，接收器/投影仪 GUI 的配对菜单可远程选择附近设备完成配对。
 - 遥控器扫描面板支持 128 格内 Ping/Access；绑定/解绑仍保留但只影响物品 tooltip，多人并发与视线遮挡规则尚未实现。
 - EAXReverb 是参数化感知混响，不是几何声学；其早期反射固定为约 5 m 房间模型，不能直接用于不同尺寸影院，计划只取晚期尾音。
-- 一阶镜像源忽略衍射、散射、高阶反射和低频房间模态；LFE 低频驻波/峰谷不会由首版模型正确重现，低频管理与模态（含多低音炮）安排在 A4 之后的 A5。
+- 一阶镜像源忽略衍射、散射、高阶反射和低频房间模态；LFE 低频驻波/峰谷不会由首版模型正确重现，低频管理与模态（含多低音炮）安排在 A5；A4 接收器声学集成已取消。
 - Minecraft 方块没有真实吸声系数；材质吸收首版只能是近似，需要游戏内校准。
 - 扬声器指向性计划使用 Spinorama 实测 H/V + 轴上响应；方块是风格化模型，映射到真实型号必然有偏差，且 H/V 两切面不能完全代表 3D 指向性。REST API 需要人工申请 Bearer key，不能匿名访问，key 不得进入仓库/模组/日志。
 - Spinorama 测量数据默认 CC BY-NC-SA 4.0（署名、非商业、相同方式共享），与项目 CC0 代码不同；发布前必须做许可/attribution 决策，不能默认打包。

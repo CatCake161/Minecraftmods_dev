@@ -18,7 +18,7 @@ public record AcousticSurface(Axis axis, double coordinate, double normal,
 	}
 
 	public AcousticSurface {
-		material = material == null ? AcousticMaterials.DEFAULT : material;
+		material = material == null ? AcousticMaterials.defaultMaterial() : material;
 	}
 
 	public double area() {

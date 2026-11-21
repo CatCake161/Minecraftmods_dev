@@ -1,8 +1,10 @@
 package com.example.cinema.client.media.audio.reflection;
 
 import com.example.cinema.client.media.audio.AcousticScale;
+import com.example.cinema.client.media.audio.acousticfir.MaterialReflectionFilter;
 import com.example.cinema.client.media.audio.acoustics.path.ReflectionPathTap;
 import com.example.cinema.client.media.audio.acoustics.room.AcousticMaterial;
+import com.example.cinema.client.media.audio.dsp.Biquad;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -11,6 +13,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -31,6 +34,11 @@ import java.util.Set;
  */
 public final class LateReflectionBus {
 	public static final int CHANNELS = 6;
+	/**
+	 * Maximum wet output points: physical speakers plus dynamic reflection
+	 * ghost speakers. The input history is still the six 5.1 source channels.
+	 */
+	public static final int MAX_OUTPUT_CHANNELS = 24;
 	public static final double DEFAULT_DAMPING_HZ = 7_000.0;
 	private static final double MIN_DAMPING_HZ = 200.0;
 	private static final double MAX_DAMPING_FRACTION = 0.49;
@@ -50,12 +58,16 @@ public final class LateReflectionBus {
 	private double[] tapGains = new double[0];
 	private double[] tapAlphas = new double[0];
 	private double[] tapStates = new double[0];
+	private MaterialReflectionFilter[] tapFilters =
+		new MaterialReflectionFilter[0];
+	private double[] tapFilterStates = new double[0];
 	private float[] tapFadeGains = new float[0];
 	private float[] tapFadeTargets = new float[0];
 	private int[] tapOutputStarts = new int[0];
 	private int[] tapOutputCounts = new int[0];
 	private int[] tapOutputChannels = new int[0];
 	private float[] tapOutputWeights = new float[0];
+	private int outputCount = CHANNELS;
 	private float outputGain = 1.0f;
 
 	public LateReflectionBus(int sampleRate, int historyFrames, int maxTaps) {
@@ -90,26 +102,30 @@ public final class LateReflectionBus {
 	 * {@code direction} is the listener-to-last-reflection-point unit vector
 	 * (x right, y up, z forward negative); {@code outputChannels}/
 	 * {@code outputWeights} carry the energy-normalized VBAP mapping for the
-	 * physical speaker layout. Empty or invalid output arrays fall back to the
+	 * dynamic wet layout. Empty or invalid output arrays fall back to the
 	 * input channel with weight 1.0.
 	 */
 	public record Tap(int channel, double delaySeconds, double gain,
 					  double dampingHz, float[] direction,
 					  int[] outputChannels, float[] outputWeights,
-					  String key) {
+					  String key, MaterialReflectionFilter materialFilter,
+					  int order) {
 		private static final float MIN_WEIGHT = 1.0e-6f;
 
 		public Tap {
 			key = key == null ? "" : key;
+			materialFilter = materialFilter == null
+				? MaterialReflectionFilter.FLAT : materialFilter;
 			channel = Math.max(0, Math.min(CHANNELS - 1, channel));
+			order = Math.max(0, Math.min(5, order));
 			delaySeconds = Double.isFinite(delaySeconds)
 				? Math.max(0.0, delaySeconds) : 0.0;
 			gain = Double.isFinite(gain) ? Math.max(0.0, gain) : 0.0;
 			dampingHz = Double.isFinite(dampingHz) && dampingHz > 0.0
 				? dampingHz : DEFAULT_DAMPING_HZ;
 			direction = normalizeDirection(direction);
-			int[] channels = new int[CHANNELS];
-			float[] weights = new float[CHANNELS];
+			int[] channels = new int[MAX_OUTPUT_CHANNELS];
+			float[] weights = new float[MAX_OUTPUT_CHANNELS];
 			int count = 0;
 			if (outputChannels != null && outputWeights != null) {
 				int length = Math.min(outputChannels.length,
@@ -117,7 +133,7 @@ public final class LateReflectionBus {
 				for (int i = 0; i < length; i++) {
 					int output = outputChannels[i];
 					float weight = outputWeights[i];
-					if (output < 0 || output >= CHANNELS
+					if (output < 0 || output >= MAX_OUTPUT_CHANNELS
 						|| !Float.isFinite(weight) || weight <= MIN_WEIGHT) {
 						continue;
 					}
@@ -158,14 +174,16 @@ public final class LateReflectionBus {
 				   double dampingHz, float[] direction, int[] outputChannels,
 				   float[] outputWeights) {
 			this(channel, delaySeconds, gain, dampingHz, direction,
-				outputChannels, outputWeights, "");
+				outputChannels, outputWeights, "",
+				MaterialReflectionFilter.FLAT, 0);
 		}
 
 		public Tap(int channel, double delaySeconds, double gain,
 				   double dampingHz) {
 			this(channel, delaySeconds, gain, dampingHz,
 				new float[]{0.0f, 0.0f, 0.0f},
-				new int[]{channel}, new float[]{1.0f}, "");
+				new int[]{channel}, new float[]{1.0f}, "",
+				MaterialReflectionFilter.FLAT, 0);
 		}
 
 		public Tap(int channel, double delaySeconds, double gain,
@@ -173,7 +191,40 @@ public final class LateReflectionBus {
 				   float[] outputWeights) {
 			this(channel, delaySeconds, gain, dampingHz,
 				new float[]{0.0f, 0.0f, 0.0f},
-				outputChannels, outputWeights, "");
+				outputChannels, outputWeights, "",
+				MaterialReflectionFilter.FLAT, 0);
+		}
+
+		public Tap(int channel, double delaySeconds, double gain,
+				   double dampingHz, float[] direction, int[] outputChannels,
+				   float[] outputWeights, String key) {
+			this(channel, delaySeconds, gain, dampingHz, direction,
+				outputChannels, outputWeights, key,
+				MaterialReflectionFilter.FLAT, 0);
+		}
+
+		public Tap(int channel, double delaySeconds, double gain,
+				   double dampingHz, float[] direction, int[] outputChannels,
+				   float[] outputWeights, String key,
+				   MaterialReflectionFilter materialFilter) {
+			this(channel, delaySeconds, gain, dampingHz, direction,
+				outputChannels, outputWeights, key, materialFilter, 0);
+		}
+
+		public Tap withOutput(int[] channels, float[] weights) {
+			return new Tap(channel, delaySeconds, gain, dampingHz, direction,
+				channels, weights, key, materialFilter, order);
+		}
+
+		public Tap withDirection(float[] newDirection) {
+			return new Tap(channel, delaySeconds, gain, dampingHz,
+				newDirection, outputChannels, outputWeights, key,
+				materialFilter, order);
+		}
+
+		public Tap withOrder(int value) {
+			return new Tap(channel, delaySeconds, gain, dampingHz, direction,
+				outputChannels, outputWeights, key, materialFilter, value);
 		}
 
 		public static Tap fromPath(ReflectionPathTap path) {
@@ -193,6 +244,19 @@ public final class LateReflectionBus {
 		public static Tap fromPath(ReflectionPathTap path, double gainMultiplier,
 								   float[] direction, int[] outputChannels,
 								   float[] outputWeights) {
+			return fromPath(path, gainMultiplier, direction, outputChannels,
+				outputWeights, false, MaterialReflectionFilter.DEFAULT_SAMPLE_RATE);
+		}
+
+		/**
+		 * Builds a lazy tap. With {@code materialEq} the one-pole keeps only
+		 * the distance term and the three-band material PEQ is attached; with
+		 * {@code materialEq=false} the pre-A3-D1 damping is preserved exactly.
+		 */
+		public static Tap fromPath(ReflectionPathTap path, double gainMultiplier,
+								   float[] direction, int[] outputChannels,
+								   float[] outputWeights, boolean materialEq,
+								   double sampleRate) {
 			if (path == null) {
 				return new Tap(0, 0.0, 0.0, DEFAULT_DAMPING_HZ);
 			}
@@ -202,14 +266,19 @@ public final class LateReflectionBus {
 				high += material.high();
 			}
 			high = count == 0 ? 0.0 : high / count;
-			double cutoff = 12_000.0 - 6_000.0 * high
-				- 150.0 * AcousticScale.blocksToMeters(path.pathLength());
+			double distanceMeters = AcousticScale.blocksToMeters(path.pathLength());
+			double cutoff = materialEq
+				? 12_000.0 - 150.0 * distanceMeters
+				: 12_000.0 - 6_000.0 * high - 150.0 * distanceMeters;
+			MaterialReflectionFilter filter = materialEq
+				? MaterialReflectionFilter.of(path.specularMaterial(), sampleRate)
+				: MaterialReflectionFilter.FLAT;
 			double multiplier = Double.isFinite(gainMultiplier)
 				? Math.max(0.0, gainMultiplier) : 0.0;
 			return new Tap(path.channel(), path.delaySeconds(),
 				path.gain() * multiplier, Math.max(2_000.0, cutoff),
 				direction, outputChannels, outputWeights,
-				path.sourcePathKey());
+				path.sourcePathKey(), filter, path.order());
 		}
 
 		@Override
@@ -224,7 +293,9 @@ public final class LateReflectionBus {
 				&& Double.compare(delaySeconds, other.delaySeconds) == 0
 				&& Double.compare(gain, other.gain) == 0
 				&& Double.compare(dampingHz, other.dampingHz) == 0
+				&& order == other.order
 				&& key.equals(other.key)
+				&& Objects.equals(materialFilter, other.materialFilter)
 				&& Arrays.equals(direction, other.direction)
 				&& Arrays.equals(outputChannels, other.outputChannels)
 				&& Arrays.equals(outputWeights, other.outputWeights);
@@ -236,7 +307,9 @@ public final class LateReflectionBus {
 			result = 31 * result + Double.hashCode(delaySeconds);
 			result = 31 * result + Double.hashCode(gain);
 			result = 31 * result + Double.hashCode(dampingHz);
+			result = 31 * result + Integer.hashCode(order);
 			result = 31 * result + key.hashCode();
+			result = 31 * result + Objects.hashCode(materialFilter);
 			result = 31 * result + Arrays.hashCode(direction);
 			result = 31 * result + Arrays.hashCode(outputChannels);
 			result = 31 * result + Arrays.hashCode(outputWeights);
@@ -308,6 +381,8 @@ public final class LateReflectionBus {
 		double[] oldGains = Arrays.copyOf(tapGains, oldCount);
 		double[] oldAlphas = Arrays.copyOf(tapAlphas, oldCount);
 		double[] oldStates = Arrays.copyOf(tapStates, oldCount);
+		MaterialReflectionFilter[] oldFilters = Arrays.copyOf(tapFilters, oldCount);
+		double[] oldFilterStates = Arrays.copyOf(tapFilterStates, oldCount * 6);
 		float[] oldFades = Arrays.copyOf(tapFadeGains, oldCount);
 		int[] oldOutputStarts = Arrays.copyOf(tapOutputStarts, oldCount);
 		int[] oldOutputCounts = Arrays.copyOf(tapOutputCounts, oldCount);
@@ -363,12 +438,21 @@ public final class LateReflectionBus {
 				old = i;
 			}
 			double state = old >= 0 ? oldStates[old] : 0.0;
+			boolean filterChanged = old >= 0
+				&& !Objects.equals(oldFilters[old], tap.materialFilter());
 			float fade = old >= 0 ? oldFades[old]
 				: (fadeInFrames > 0 ? 0.0f : 1.0f);
+			if (filterChanged) {
+				fade = 0.0f;
+			}
 			if (old >= 0) {
 				matched[old] = true;
 			}
 			writeTap(write, tap, state, fade, 1.0f, outputIndex);
+			if (old >= 0 && !filterChanged) {
+				System.arraycopy(oldFilterStates, old * 6, tapFilterStates,
+					write * 6, 6);
+			}
 			outputIndex += tap.outputChannels().length;
 			write++;
 		}
@@ -383,6 +467,9 @@ public final class LateReflectionBus {
 			tapGains[write] = oldGains[i];
 			tapAlphas[write] = oldAlphas[i];
 			tapStates[write] = oldStates[i];
+			tapFilters[write] = oldFilters[i];
+			System.arraycopy(oldFilterStates, i * 6, tapFilterStates,
+				write * 6, 6);
 			tapFadeGains[write] = oldFades[i];
 			tapFadeTargets[write] = 0.0f;
 			tapOutputStarts[write] = outputIndex;
@@ -406,6 +493,8 @@ public final class LateReflectionBus {
 		tapGains[index] = tap.gain();
 		tapAlphas[index] = dampingAlpha(tap.dampingHz());
 		tapStates[index] = state;
+		tapFilters[index] = tap.materialFilter();
+		Arrays.fill(tapFilterStates, index * 6, index * 6 + 6, 0.0);
 		tapFadeGains[index] = fade;
 		tapFadeTargets[index] = fadeTarget;
 		int[] channels = tap.outputChannels();
@@ -432,8 +521,21 @@ public final class LateReflectionBus {
 	}
 
 	/**
-	 * Renders one block. Input and output must both contain
-	 * {@link #CHANNELS} rows of at least {@code frames} samples.
+	 * Sets the number of wet output points. The input history stays at
+	 * {@link #CHANNELS}; only the output side grows. Callers should publish a
+	 * fresh tap list after changing this.
+	 */
+	public void setOutputCount(int count) {
+		outputCount = Math.max(1, Math.min(MAX_OUTPUT_CHANNELS, count));
+	}
+
+	public int outputCount() {
+		return outputCount;
+	}
+
+	/**
+	 * Renders one block. Input must contain {@link #CHANNELS} rows of at least
+	 * {@code frames} samples; output must contain {@link #outputCount()} rows.
 	 */
 	public void process(float[][] input, int frames, float[][] outputs) {
 		if (frames <= 0) {
@@ -442,9 +544,9 @@ public final class LateReflectionBus {
 		if (frames > historyFrames) {
 			throw new IllegalArgumentException("block longer than history");
 		}
-		validateBuffers(input, frames, "input");
-		validateBuffers(outputs, frames, "output");
-		for (int channel = 0; channel < CHANNELS; channel++) {
+		validateInput(input, frames);
+		validateOutput(outputs, frames);
+		for (int channel = 0; channel < outputCount; channel++) {
 			Arrays.fill(outputs[channel], 0, frames, 0.0f);
 		}
 
@@ -470,47 +572,67 @@ public final class LateReflectionBus {
 			float fadeTarget = tapFadeTargets[tap];
 			float fadeStep = fadeInFrames > 0 ? 1.0f / fadeInFrames : 1.0f;
 			int outputStart = tapOutputStarts[tap];
-			int outputCount = tapOutputCounts[tap];
-			if (outputCount == 1) {
-				float[] output = outputs[tapOutputChannels[outputStart]];
-				float weight = tapOutputWeights[outputStart];
-				for (int i = 0; i < frames; i++) {
-					int index = (start + i - delayInteger) & historyMask;
-					double sample;
-					if (delayFraction <= 1.0e-9) {
-						sample = ring[index];
-					} else {
-						int previous = (index - 1) & historyMask;
-						sample = ring[index] * (1.0 - delayFraction)
-							+ ring[previous] * delayFraction;
-					}
-					state += alpha * (sample - state);
-					float value = (float) (gain * state) * fade;
-					output[i] += value * weight;
-					fade = advanceFade(fade, fadeTarget, fadeStep);
+			int tapOutputs = tapOutputCounts[tap];
+			MaterialReflectionFilter filter = tapFilters[tap];
+			Biquad low = filter == null ? null : filter.low();
+			Biquad peak = filter == null ? null : filter.peak();
+			Biquad high = filter == null ? null : filter.high();
+			int filterStart = tap * 6;
+			double low1 = tapFilterStates[filterStart];
+			double low2 = tapFilterStates[filterStart + 1];
+			double peak1 = tapFilterStates[filterStart + 2];
+			double peak2 = tapFilterStates[filterStart + 3];
+			double high1 = tapFilterStates[filterStart + 4];
+			double high2 = tapFilterStates[filterStart + 5];
+			for (int i = 0; i < frames; i++) {
+				int index = (start + i - delayInteger) & historyMask;
+				double sample;
+				if (delayFraction <= 1.0e-9) {
+					sample = ring[index];
+				} else {
+					int previous = (index - 1) & historyMask;
+					sample = ring[index] * (1.0 - delayFraction)
+						+ ring[previous] * delayFraction;
 				}
-			} else {
-				for (int i = 0; i < frames; i++) {
-					int index = (start + i - delayInteger) & historyMask;
-					double sample;
-					if (delayFraction <= 1.0e-9) {
-						sample = ring[index];
-					} else {
-						int previous = (index - 1) & historyMask;
-						sample = ring[index] * (1.0 - delayFraction)
-							+ ring[previous] * delayFraction;
-					}
-					state += alpha * (sample - state);
-					float value = (float) (gain * state) * fade;
-					for (int output = 0; output < outputCount; output++) {
-						int indexOut = outputStart + output;
-						outputs[tapOutputChannels[indexOut]][i] +=
-							value * tapOutputWeights[indexOut];
-					}
-					fade = advanceFade(fade, fadeTarget, fadeStep);
+				state += alpha * (sample - state);
+				double filtered = state;
+				if (low != null) {
+					double y = low.b0() * filtered + low1;
+					low1 = low.b1() * filtered - low.a1() * y + low2;
+					low2 = low.b2() * filtered - low.a2() * y;
+					filtered = y;
 				}
+				if (peak != null) {
+					double y = peak.b0() * filtered + peak1;
+					peak1 = peak.b1() * filtered - peak.a1() * y + peak2;
+					peak2 = peak.b2() * filtered - peak.a2() * y;
+					filtered = y;
+				}
+				if (high != null) {
+					double y = high.b0() * filtered + high1;
+					high1 = high.b1() * filtered - high.a1() * y + high2;
+					high2 = high.b2() * filtered - high.a2() * y;
+					filtered = y;
+				}
+				float value = (float) (gain * filtered) * fade;
+				for (int output = 0; output < tapOutputs; output++) {
+					int indexOut = outputStart + output;
+					int outputChannel = tapOutputChannels[indexOut];
+					if (outputChannel < 0 || outputChannel >= outputCount) {
+						continue;
+					}
+					outputs[outputChannel][i] +=
+						value * tapOutputWeights[indexOut];
+				}
+				fade = advanceFade(fade, fadeTarget, fadeStep);
 			}
 			tapStates[tap] = state;
+			tapFilterStates[filterStart] = low1;
+			tapFilterStates[filterStart + 1] = low2;
+			tapFilterStates[filterStart + 2] = peak1;
+			tapFilterStates[filterStart + 3] = peak2;
+			tapFilterStates[filterStart + 4] = high1;
+			tapFilterStates[filterStart + 5] = high2;
 			tapFadeGains[tap] = fade;
 		}
 		writeIndex = (start + frames) & historyMask;
@@ -532,6 +654,7 @@ public final class LateReflectionBus {
 			Arrays.fill(ring, 0.0f);
 		}
 		Arrays.fill(tapStates, 0.0);
+		Arrays.fill(tapFilterStates, 0.0);
 		Arrays.fill(tapFadeGains, 0.0f);
 		Arrays.fill(tapFadeTargets, 0.0f);
 		writeIndex = 0;
@@ -545,6 +668,8 @@ public final class LateReflectionBus {
 			tapGains = new double[count];
 			tapAlphas = new double[count];
 			tapStates = new double[count];
+			tapFilters = new MaterialReflectionFilter[count];
+			tapFilterStates = Arrays.copyOf(tapFilterStates, count * 6);
 			tapFadeGains = new float[count];
 			tapFadeTargets = new float[count];
 		}
@@ -554,7 +679,7 @@ public final class LateReflectionBus {
 		}
 		if (tapOutputChannels.length < outputs) {
 			int capacity = Math.max(outputs,
-				Math.max(CHANNELS, tapOutputChannels.length * 2));
+				Math.max(MAX_OUTPUT_CHANNELS, tapOutputChannels.length * 2));
 			tapOutputChannels = Arrays.copyOf(tapOutputChannels, capacity);
 			tapOutputWeights = Arrays.copyOf(tapOutputWeights, capacity);
 		}
@@ -570,14 +695,25 @@ public final class LateReflectionBus {
 		return 1.0 - Math.exp(-2.0 * Math.PI * cutoff / sampleRate);
 	}
 
-	private static void validateBuffers(float[][] buffers, int frames,
-										String name) {
+	private static void validateInput(float[][] buffers, int frames) {
 		if (buffers == null || buffers.length < CHANNELS) {
-			throw new IllegalArgumentException(name + " needs six channels");
+			throw new IllegalArgumentException("input needs six channels");
 		}
 		for (int channel = 0; channel < CHANNELS; channel++) {
 			if (buffers[channel] == null || buffers[channel].length < frames) {
-				throw new IllegalArgumentException(name + " buffer too short");
+				throw new IllegalArgumentException("input buffer too short");
+			}
+		}
+	}
+
+	private void validateOutput(float[][] buffers, int frames) {
+		if (buffers == null || buffers.length < outputCount) {
+			throw new IllegalArgumentException("output needs " + outputCount
+				+ " channels");
+		}
+		for (int channel = 0; channel < outputCount; channel++) {
+			if (buffers[channel] == null || buffers[channel].length < frames) {
+				throw new IllegalArgumentException("output buffer too short");
 			}
 		}
 	}

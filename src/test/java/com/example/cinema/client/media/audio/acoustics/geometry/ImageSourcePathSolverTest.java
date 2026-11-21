@@ -55,6 +55,41 @@ class ImageSourcePathSolverTest {
 	}
 
 	@Test
+	void higherOrderScatteringSplitsEnergy() {
+		AcousticMaterial material =
+			new AcousticMaterial("test", 0.10, 0.20, 0.30, 0.35);
+		ImageSourceSolver.World world = new ImageSourceSolver.World() {
+			@Override
+			public AcousticMaterial wallAt(MirrorPlane plane, Point3 point) {
+				return material;
+			}
+
+			@Override
+			public OcclusionResult occlusion(Point3 from, Point3 to) {
+				return OcclusionResult.NONE;
+			}
+		};
+		Point3 source = new Point3(2.0, 1.5, 3.0);
+		Point3 listener = new Point3(3.0, 1.6, 4.0);
+		List<ReflectionPathTap> taps = ImageSourcePathSolver.solve(
+			boxPlanes(0.0, 0.0, 0.0, 6.0, 4.0, 8.0), 0, source, listener,
+			world, 2, ImageSourcePathSolver.MAX_PATHS,
+			ImageSourcePathSolver.DEFAULT_DELAY_LIMIT, true);
+		ReflectionPathTap tap = find(taps, "0:Z-8000>X-6000");
+		double pathLength = Math.sqrt(130.01);
+		double specular = 0.8 * 0.65 / pathLength;
+		double scattered = 0.8 * Math.sqrt(1.0 - 0.65 * 0.65) / pathLength;
+
+		assertPoint(new Point3(-1.0, 0.0, 0.0), tap.lastNormal());
+		assertEquals(specular, tap.gain(), 1.0e-9);
+		assertEquals(scattered, tap.scatteredGain(), 1.0e-9);
+		assertEquals(0.8 * 0.8 / (pathLength * pathLength),
+			tap.gain() * tap.gain()
+				+ tap.scatteredGain() * tap.scatteredGain(),
+			1.0e-9);
+	}
+
+	@Test
 	void pathKeysAreUniqueAndKeepBounceOrder() {
 		List<ReflectionPathTap> taps = ImageSourcePathSolver.solve(
 			boxPlanes(0.0, 0.0, 0.0, 6.0, 4.0, 8.0), 0,

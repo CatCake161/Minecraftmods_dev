@@ -133,9 +133,9 @@ public record AcousticRoom(boolean valid, String fallbackReason,
 			axisHigh[axis] += surfaceArea * surface.material().high();
 		}
 		if (weightedArea <= 0.0) {
-			alphaLow = AcousticMaterials.DEFAULT.low();
-			alphaMid = AcousticMaterials.DEFAULT.mid();
-			alphaHigh = AcousticMaterials.DEFAULT.high();
+			alphaLow = AcousticMaterials.defaultMaterial().low();
+			alphaMid = AcousticMaterials.defaultMaterial().mid();
+			alphaHigh = AcousticMaterials.defaultMaterial().high();
 		} else {
 			alphaLow /= weightedArea;
 			alphaMid /= weightedArea;
@@ -144,12 +144,13 @@ public record AcousticRoom(boolean valid, String fallbackReason,
 		AxisAbsorption[] axes = new AxisAbsorption[3];
 		for (int i = 0; i < axes.length; i++) {
 			double sampled = sampledArea[i];
+			AcousticMaterial fallback = AcousticMaterials.defaultMaterial();
 			double low = sampled > 0.0 ? axisLow[i] / sampled
-				: AcousticMaterials.DEFAULT.low();
+				: fallback.low();
 			double mid = sampled > 0.0 ? axisMid[i] / sampled
-				: AcousticMaterials.DEFAULT.mid();
+				: fallback.mid();
 			double high = sampled > 0.0 ? axisHigh[i] / sampled
-				: AcousticMaterials.DEFAULT.high();
+				: fallback.high();
 			axes[i] = new AxisAbsorption(axisArea[i], low, mid, high);
 		}
 

@@ -71,17 +71,33 @@ final class MaterialReflectionCurve {
 		CACHE.clear();
 	}
 
-	private static MaterialReflectionCurve design(AcousticMaterial material) {
+	/**
+	 * Solves the same three-section target for a material. Returns null when
+	 * the result is flat (or invalid); {@link MaterialReflectionFilter} uses
+	 * these gains at the bus sample rate.
+	 */
+	static double[] sectionGains(AcousticMaterial material) {
+		if (material == null) {
+			return null;
+		}
 		double low = pressureReflection(material.low());
 		double mid = pressureReflection(material.mid());
 		double high = pressureReflection(material.high());
 		if (mid < 1.0e-6) {
-			return FLAT;
+			return null;
 		}
 		double lowDb = clampTarget(relativeDb(low, mid));
 		double highDb = clampTarget(relativeDb(high, mid));
 		double[] gains = solve(BASIS, new double[]{lowDb, 0.0, highDb});
 		if (gains == null || maxAbs(gains) < FLAT_GAIN_DB) {
+			return null;
+		}
+		return gains;
+	}
+
+	private static MaterialReflectionCurve design(AcousticMaterial material) {
+		double[] gains = sectionGains(material);
+		if (gains == null) {
 			return FLAT;
 		}
 		return new MaterialReflectionCurve(

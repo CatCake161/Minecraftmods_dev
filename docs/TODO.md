@@ -6,12 +6,16 @@
 ## 现在：剩余验收 / 已知问题
 
 - 暂无阻塞项。视频上传默认策略已定为 `glFenceSync` + 延迟回收，并已通过用户游戏内长测。
+- [ ] **大房间 / 高 RT60 听感不理想（2026-11-21 用户登记）**：在大房间且 RT60 较高的场景下，整体听感不理想（用户原话）。待量化/复现：记录房间尺寸、`/cinema_acoustics` 的 RT60/R/`rc`/lateMaxDelay、`lateFloorDb`、wet target/sourceGain、reflection/wet tap 数量与 CPU；分别 A/B `lateReverb`、`scattering`、`lateMaterialEq`、direct/reflection/wet 音量关系；重点检查晚期尾音过亮/过湿/过散、反射密度不足或梳状、低频/模态、wet 电平与直达声比例。**在拿到数据前不调整声学默认值**；低频模态/RT60 校准归 A5。
 - 待游戏内验收（2026-11-15 之后新增，均已 `check` 通过）：
   - [ ] 限幅器 `Output` 页 bypass + 3 ms attack：bypass 开/关时无爆音、释放平滑，状态行/Signal 页指示正确，16-bit 回退与多接收器回归。
   - [ ] A3-R4 48 m 大房间 order-3/4 延迟预算听感。
   - [ ] A3 late bus 相对门限 / RT60 延迟上限 / 直达传播延迟听感。
   - [ ] 移动 pop 修复 A/B（阈值单位、tap 淡入淡出、200 ms reset 间隔）。
   - [ ] 声学单位审计回归：`scale` 0.25 / 2.00 下的 OpenAL 米制位置、反射延迟与距离衰减。
+  - [ ] A3-S1a/S1b/S2a/S2b 散射 + wet 动态点：用 Mod Menu `First-order scattering` 或 `/cinema_acoustics scattering` 做开/关 A/B；`lateReverb=true` 时 fabric/carpet/vegetation vs glass/metal/water 的一阶/order-2/3/4 镜面/扩散差异、动态 ray 数量/占比是否平滑、`diffuse:` 方向 tap 的空间感、`scattering=0` 回归、seek/reset 无残留；重点听上方/后方反射是否不再被压到最近扬声器、同声道多扬声器 wet 是否覆盖全部扬声器、快速转头/移动时 ghost 是否平滑无梳状/跳动；用 `/cinema_acoustics wetdebug on` 观察 direct/reflection/wet 所有 source 的位置和 ghost 激活状态；`lateReverb=false` 或开关关闭时完全旁路。
+  - [ ] A3-D1 late material EQ：用 Mod Menu `Late material EQ` 或 `/cinema_acoustics materialeq` 做开/关 A/B；确认 late bus 低频/高频与一阶/premium 同向、无双重高频衰减、材质切换/移动无 click、512 taps 无 underrun。
+  - [ ] 材质 JSON：修改 `config/cinema-acoustic-materials.json` 后用 `/cinema_acoustics reloadmaterials`，确认房间材质 dump 更新、FIR/PEQ 使用新系数、非法 JSON 回退默认值。
 
 ## P1：投影仪 / 配对 / 遥控
 
@@ -22,11 +26,12 @@
 
 ## P1：AV Receiver / 媒体
 
-- [ ] 接收器 GUI 延迟 / 混响设置。
+- [ ] 接收器 GUI 扬声器距离/延迟校准（仅扬声器对齐；不含房间声学/混响设置，A4 已取消）。
 - [ ] 拖放导入媒体库。
 - [x] 媒体库探测缓存持久化：FFmpeg 探测结果写入 `<game>/cinema/media-cache.json`，按媒体 key + 大小 + 修改时间校验；每个接收器分别记住自己的库/文件夹/搜索词。
 - [ ] 音轨 / 视频轨 / 字幕选择与渲染（多音轨切换、字幕时间轴、字体与样式）。
 - [ ] AV Receiver `Video Processing` 模块：输出分辨率/高度、缩放/宽高比/色彩/HDR tone mapping/帧率与画质后处理；投影仪只做光学显示。
+- [ ] 接收器 GUI 重构（Home/Now Playing、Media、Speakers、Sound、Information、Setup；Setup 用 Inputs/Audio/Video/Speakers/General master-detail；常驻 header/footer；响应式布局）。规划见 [AV-RECEIVER-GUI-REFACTOR.md](design/AV-RECEIVER-GUI-REFACTOR.md)。Setup Assistant / Quick Select/Scenes / OSD 为后续独立任务。
 - [ ] 接收器 GUI 后续打磨：小窗口/多库布局、长文本与 tooltip、键盘导航、主题与本地化。
 - [ ] 4K60 低性能时的自动降级策略（HDR 默认 720p / SDR 1080p，可覆盖）。
 - [ ] 硬件解码失败时自动回退软件解码。
@@ -52,7 +57,7 @@
 > 方案、可行性/声学判断见 [AUDIO-ACOUSTICS.md](design/AUDIO-ACOUSTICS.md)。
 > M4 扬声器路由已完成；A0 EFX spike、A1d 数据管线已通过；A2 直达声已通过游戏内听感验收（距离/空气/遮挡/配置 UI）。
 
-- [x] A0 EFX/EAXReverb spike：`/cinema_efx_spike` 游戏内通过。OpenAL Soft；EFX/HRTF/loopback/reopen/deviceClock=true；`ALC_MAX_AUXILIARY_SENDS=2`；shared-caps EFX call=OK；真实设备临时 context EFX=OK；5.1 wet 出现在 5 个非 LFE 声道；HRTF enabled；loopback CPU≈0.8%、≈123× realtime；reset=OK；探针后 UI 音效正常。未测：真实设备听感、物理设备切换、真实硬件延迟（听感留 A3/A4）
+- [x] A0 EFX/EAXReverb spike：`/cinema_efx_spike` 游戏内通过。OpenAL Soft；EFX/HRTF/loopback/reopen/deviceClock=true；`ALC_MAX_AUXILIARY_SENDS=2`；shared-caps EFX call=OK；真实设备临时 context EFX=OK；5.1 wet 出现在 5 个非 LFE 声道；HRTF enabled；loopback CPU≈0.8%、≈123× realtime；reset=OK；探针后 UI 音效正常。未测：真实设备听感、物理设备切换、真实硬件延迟（听感留 A3/A6）
 - [x] A0b EFX 不可用回退：A3 改为几何晚期总线，不依赖 EFX；EFX 不可用时直达/反射/晚期场均不受影响
 - [x] A0c 决策门：A0 验证 EAXReverb late tail 可用；A3 最终选择几何 order-2/3/4 `LateReflectionBus`（FDN 已删除），EAXReverb 仅保留为后续可选 fallback。结论已回写 AUDIO-ACOUSTICS.md
 - [x] A1 声学数据模型：房间平面/包围盒、体积/表面积、材质吸收、扬声器位置/朝向/高度、玩家听者位置/朝向。已实现 `/cinema_acoustics` 快照；游戏内 dump 验证无明显问题
@@ -97,17 +102,23 @@
   - 安全上限：`maxLateOrder`（建议 6）、每 tick 4 ms 预算、visit cap、path/tap cap；移动/房间变化后从 order-2 重新增量；
   - 记录每阶 `orderEnergyDb`、停止原因（threshold/maxOrder/cap）、实际求解耗时，供 `/cinema_acoustics` 和日志诊断；
   - 测试：合成房间的路径能量衰减、threshold=0 时跑到 maxOrder、默认配置仍以 order-4 为稳态
-- [ ] A3-S1 散射/扩散实现：`AcousticMaterial.scattering` 已存在但当前完全未参与求解和增益。建议分两步：
-  - **第一步（低成本、推荐）**：能量分流。每 bounce 的镜面压力系数乘 `sqrt(1 - scattering)`；被散射的能量 `scattering` 不生成镜面 tap，而是进入 late bus 的 diffuse send。这样 `scattering=0` 保持现有行为，`scattering=1` 完全去除镜面早期反射；保持能量守恒（镜面² + 散射² ≤ 入射²）。
-  - **第二步（可选）**：在反射点按 cosine-weighted hemisphere 采样少量 diffuse ray（固定低差异序列 + 时间平滑 + CPU/路径预算），生成真正的非镜面早期 tap；或把 diffuse 能量集中到 `LateReflectionBus` 的随机/扩散 tap。
-  - 频率相关散射（low/mid/high）需要扩展 `AcousticMaterial` 与材质表；第一版可先用单值 scattering。
-  - 测试：`scattering=0` 与现有 tap 完全一致、`scattering=1` 无镜面 tap、能量不超入射、无 NaN；`/cinema_acoustics` 输出每 tap 的 specular/scatter 分量和每材质散射系数；游戏内 A/B（fabric/carpet/vegetation vs glass/metal/water）
-- [ ] A3-D1 late tap damping 材质化（未来）：把当前 single damping 改为按材质 low/mid/high 三段；low 用低架滤波器、high 用低通滤波器，全部用 PEQ 实现，并与现有每 tap FIR/材质吸收共用同一数字域。本次不实现，仅记录方案。
-- [ ] A4 接收器集成：Speakers/Settings 页声学总开关、按阶数反射开关/floor、房间预设/重扫；服务端字段/网络包；求解设置留在 Mod Menu Performance 页，限幅器设置留在 Output 页，不进接收器 GUI
-- [ ] A4b 听者策略（决策已定，待 A4 接入）：始终使用玩家实际耳朵位置/朝向；不做 Seat 皇帝位、固定监听点或声场校正
-- [ ] A5 低频管理与模态（原 A6 提前，排在 A4 之后）：LFE 分频/低频管理、多低音炮路由与校准（增益/延迟）、低频模态计算与模态 EQ、测量；依赖 A4 的接收器设置与同步
+- [ ] A3-S1 散射/扩散实现（详细规划见 [A3-SCATTERING-PLAN.md](design/A3-SCATTERING-PLAN.md)）：`AcousticMaterial.scatteringLow/Mid/High` 已接入一阶和 order-2/3/4，代码完成，**游戏内听感待验收**。分阶段：
+  - [x] **S1a 一阶（低成本，2026-11-21）**：能量分流。每 bounce 的镜面压力系数乘 `sqrt(1 - scattering)`；被散射的能量 `scattering` 不生成镜面 tap，而是进入 late bus 的 diffuse send。`lateReverb=false` 时完全旁路。新增 `AcousticScattering`、`ReflectionTap.scatteredGain`、一阶 `scatter:<channel>` 聚合；新增 `CinemaClientConfig.scatteringEnabled`（默认 on，配置版本 5→6）、Mod Menu `Audio` 开关和 `/cinema_acoustics scattering [on|off|toggle]` 方便 A/B；`check` 通过，**游戏内听感待验收**。
+  - [x] **S1b 高阶（2026-11-21）**：`ReflectionPathTap.scatteredGain`、`ImageSourcePathSolver` 的 `scatteringEnabled`（静态 solve + Session）已接入；`order2Scatter/order3Scatter/order4Scatter` 分别生成并在 fast/deep 发布前合并进同一组 6 路扩散 tap；`/cinema_acoustics paths` 输出 `scattering=ON/OFF` 与 `strongestScatter`；`check` 通过，**游戏内听感待验收**。
+  - [x] **S2a 一阶半球 diffuse tap（2026-11-21）**：`ReflectionTap` 携带墙面法线；`DiffuseRaySampler` 用 tap key 固定的低差异 cosine-weighted 半球方向，每个一阶散射 tap 生成 2 个 `diffuse:` tap（0/3 ms 微偏移）；一阶散射能量 50% 聚合 `scatter:`、50% 给方向 tap。不是完整“散射后再命中墙面”的路径追踪。
+  - [x] **S2b 高阶方向 tap（2026-11-21）**：`ReflectionPathTap.lastNormal`；order-2/3/4 每声道每阶按散射能量选 top-2 路径，各生成 1 个 `diffuse:<pathKey>:0`，选中路径与聚合按动态预算分配，其余路径全部聚合；高阶方向 tap 上限约 36。fast/deep 发布前更新 `order2/3/4RayTaps`；`check` 通过，**游戏内听感待验收**。
+  - [x] **动态方向 ray 预算（2026-11-21）**：`ScatterRayBudget` 用 `s_eff = E_scatter/(E_spec+E_scatter)` 前馈控制方向 ray 数量、**动态上限**和方向占比，约 250 ms 平滑；低散射 `maxRayPaths=1` 且 0 ray，高散射才打开到一阶每声道 3 路径、高阶每声道每阶 2 路径；方向占比 0.20–0.50，选中路径能量在 ray/聚合间重分配，总能量不变；不做反馈 AGC。
+  - [x] **Wet 动态点布局（2026-11-21）**：`WetLayout` 把 wet 输出从固定 6 个逻辑声道改为“实际非 LFE 物理扬声器 + 1/2/3/4 阶反射 ghost”动态点（上限 24，每阶最多 6 个 ghost，20° 聚类、250 ms 平滑、800 ms 保持）；`Vbap.Panner` 用凸包三角网做 exact 3D VBAP；`LateReflectionBus` 输出点上限 24，`Tap` 带 `order`/`withOutput`；`CinemaAudioEngine` 懒分配 24 个 wet source 并按 `setWetLayout` 更新位置；`scatter:` 仍只投物理扬声器；预算优先级 direct → 一阶/premium → 物理 wet → ghost。`check` 通过，**游戏内 VBAP 完整性/CPU 待验收**。
+  - [x] **频率相关散射（2026-11-21）**：`AcousticMaterial` 扩展为 `scatteringLow/Mid/High`；材质表改为低/中/高三带估计值；`AcousticScattering.specularMaterial` / `scatteredMaterial` 把逐频带镜面/散射能量合成为有效材料，进入 FIR/PEQ。单值构造器保留为三带同值兼容。`/cinema_acoustics` 材质行输出三带 `scattering=low/mid/high`。
+  - [x] **JSON 材质表（2026-11-21）**：`config/cinema-acoustic-materials.json` 首次启动自动生成，支持只覆盖部分材质；`AcousticMaterialConfig` 负责加载/校验/回退，`/cinema_acoustics reloadmaterials` 热重载并清缓存；内置表仅作为默认/缺项回退。测试覆盖覆盖值、缺文件生成、非法 JSON 回退。
+  - [ ] 后续（可选）：完整路径追踪/散射后再次命中墙面；目前不实现。
+  - 测试：`AcousticScatteringTest` / `ImageSourceSolverTest` / `ScatterAccumulatorTest` / `DiffuseRaySamplerTest` 已覆盖 `s=0/1`、逐频带有效材料、能量和、聚合 key/延迟/阻尼、无 speaker fallback；`/cinema_acoustics` 输出每 tap 的 specular/scatter 分量和每材质三带散射系数；游戏内 A/B（fabric/carpet/vegetation vs glass/metal/water）待做。
+- [x] A3-D1 late tap damping 材质化（详细规划见 [A3-SCATTERING-PLAN.md](design/A3-SCATTERING-PLAN.md) §4）：把当前 single damping 改为按材质 low/mid/high 三段；low shelf / mid peak / high shelf 三段 PEQ，复用 `MaterialReflectionCurve` 目标，tap 增益保持中频基准；距离 one-pole 不再含材质高频。premium 高阶改用所有 bounce 的合成材质，扩散 tap 使用能量加权材质 filter。`lateMaterialEq` 默认 **false**（配置版本 6），Mod Menu `Audio → Late material EQ` 或 `/cinema_acoustics materialeq [on|off|toggle]` 做 A/B；`check` 通过，**游戏内听感/CPU 待验收**。
+- [x] A4 接收器声学集成：**已取消（2026-11-21）**。声学设置继续留在 Mod Menu（客户端全局）；接收器 GUI 不增加声学页、不存声学字段、不发声学网络包。求解设置留在 Mod Menu Performance，限幅器留在 Output。
+- [x] A4b 听者策略（决策已定，不依赖 A4）：始终使用玩家实际耳朵位置/朝向；不做 Seat 皇帝位、固定监听点或声场校正。该策略已在现有直达/反射/late bus 中生效。
+- [ ] A5 低频管理与模态（原 A6 提前）：LFE 分频/低频管理、多低音炮路由与校准（增益/延迟）、低频模态计算与模态 EQ、测量；不再依赖 A4，依赖现有 M4 扬声器布局和后续可变声道布局。
 - [ ] A6 调试/验收：dump 房间/RT60/taps/late 参数；A/B 开关；矩形房间、材质、旋转、移动、5.1、4K/BSL、设备切换；A2c-R 直达单 FIR/反射 4096-tap 全频带 FIR（材质/遮挡/空气）/flood-fill 补丁种子/多接收器 CPU，部分墙/柱子/开放空间/玻璃/屏幕/门洞；A3 几何晚期总线：order-2/3/4 增量、premium per-tap、LFE 反射、VBAP 方向/权重、按阶数 UI 与电平、seek/reset 清空、多接收器 CPU；声学世界尺度 0.25/0.50/1.00/2.00 的 RT60/`f_s`/反射延迟/距离衰减与听感 A/B；输出限幅 -0.3 dBFS 的远距离电平、限幅指示、多接收器同时播放与 16-bit 回退路径；同一声道接多只扬声器时的直达声、限幅峰值累加、反射/late bus 行为，以及 L2a direct source 动态增减、反射池收缩/恢复、GUI/Signal 源计数
-- [ ] A7 后续：衍射/散射、测量 RIR/卷积、HRTF
+- [ ] A7 后续：衍射、真正的 diffuse ray（A3-S1 之后）、测量 RIR/卷积、HRTF
 
 ## P2：可变声道布局 / 天空声道（规划）
 
@@ -116,8 +127,8 @@
 - [ ] L1 `AudioLayout` / 声道枚举 / 上混下混矩阵纯函数 + 单元测试（含 LFE 低通、7.1 侧/后区分）
 - [x] OpenAL source 上限核对（2026-11-12）：LWJGL 3.3.3 / OpenAL Soft **1.23.1**，默认每 context **256** 个 source（255 mono + 1 stereo）；两个独立 context 各创建 128 个 source 实测成功；`alsoft.ini [general] sources` 可覆盖且最小 16。`/cinema_acoustics` 输出 `openal sourceLimit`，低于 128 时记录警告并按 `limit - direct - 6 wet` 缩小反射池
 - [x] OpenAL context 隔离回归（2026-11-12）：`ALC_EXT_thread_local_context` 必须可用；音频线程只使用 thread-local context，禁止在 Minecraft 拥有全局 context 时抢占它；关闭时恢复进入前的全局 context。实机 `latest.log` 确认 `threadLocal=true`、`OpenAL source limit: 256`、9 只扬声器时 `9 direct + 113 reflection + 6 wet = 128`，且不再出现 `SoundEngine ... Allocate new source: Invalid operation`
-- [ ] L2 `AudioChunk` 携带布局和动态声道数；`CinemaAudioEngine` 的**动态 source 分配**已在 L2a 完成（direct/reflection 池按 128 预算重分配）。现有 5.1 零回归。每引擎 source 预算上限 **128**：direct source 按**已连接的真实扬声器**计数（每个声道可以接多只扬声器，不是固定 6），优先保留每只扬声器的 source，剩余预算动态管理一阶反射、二阶/三阶 premium tap 与 lazy wet；5.1 每声道一只时为 6 direct + 116 reflection + 6 lazy wet，12 只扬声器时为 12 + 110 + 6
-- [x] L2a 多扬声器直达路由（2026-11-12）：`AvReceiverPlayback` 不再用 `bestDistance` 每声道只取最近一只；每只已连接扬声器各分配一个 direct source，拥有独立位置、trim/指向性 FIR、空气吸收和遮挡；同一输出声道的多只 direct source 通过 `directSourceChannels[]` 映射，限幅峰值按该声道累加；`CinemaAudioEngine` 按布局动态分配/释放 direct source，并把反射池收缩/恢复到 `128 - direct - 6 wet`；**反射与 late bus 已按每只扬声器生成**：一阶 tap key 加入 stable `sourceKey`，每只扬声器独立求解并保证 top 5 条，全局上限 64；late bus 的 order-2/3/4 路径按每只扬声器求解，VBAP 使用全部物理扬声器 + 实际 5.1 声道映射；`check` 通过，**已通过游戏内验收**：多扬声器直达、每只扬声器反射、late bus、动态增减 source、移动/延迟与 CPU
+- [ ] L2 `AudioChunk` 携带布局和动态声道数；`CinemaAudioEngine` 的**动态 source 分配**已在 L2a 完成（direct/reflection 池按 128 预算重分配）。现有 5.1 零回归。每引擎 source 预算上限 **128**：direct source 按**已连接的真实扬声器**计数（每个声道可以接多只扬声器，不是固定 6），优先保留每只扬声器的 source，剩余预算动态管理一阶反射、二阶/三阶 premium tap 与 wet 动态点；5.1 每声道一只时为 6 direct + 98 reflection + 24 wet，12 只扬声器时为 12 + 92 + 24
+- [x] L2a 多扬声器直达路由（2026-11-12）：`AvReceiverPlayback` 不再用 `bestDistance` 每声道只取最近一只；每只已连接扬声器各分配一个 direct source，拥有独立位置、trim/指向性 FIR、空气吸收和遮挡；同一输出声道的多只 direct source 通过 `directSourceChannels[]` 映射，限幅峰值按该声道累加；`CinemaAudioEngine` 按布局动态分配/释放 direct source，并把反射池收缩/恢复到 `128 - direct - 24 wet`；**反射与 late bus 已按每只扬声器生成**：一阶 tap key 加入 stable `sourceKey`，每只扬声器独立求解并保证 top 5 条，全局上限 64；late bus 的 order-2/3/4 路径按每只扬声器求解，VBAP 使用全部物理扬声器 + 动态 ghost 点；`check` 通过，**已通过游戏内验收**：多扬声器直达、每只扬声器反射、late bus、动态增减 source、移动/延迟与 CPU；**wet 动态点布局待重新验收**
 - [ ] L3 接收器布局选择（AUTO/显式）+ 7.1 `SL/SR` 角色 + 缺失声道 fallback/状态显示
 - [ ] L4 天空声道 `TFL/TFR/TRL/TRR` + 虚拟顶部位置 + 5.1.2/5.1.4/7.1.2/7.1.4
 - [ ] L5 天空/吸顶音响（`ceiling_speaker`，吸顶向下发声）：方块/模型/放置/角色限制/GUI
