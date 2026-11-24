@@ -2365,14 +2365,20 @@ public final class AvReceiverPlayback {
 		publishedOrder = PUBLISHED_ORDER_MIRROR;
 		// A fresh order-2 publish is the natural retry point for the RT tail.
 		rtGridFailed = false;
+		int order3Paths = 0;
+		for (LatePathCandidate candidate : job.candidates) {
+			if (candidate.path() != null && candidate.path().order() == 3) {
+				order3Paths++;
+			}
+		}
 		CinemaLog.info(CinemaLog.RECEIVER, "{}: late bus publishedOrder=2 "
 				+ "solver=mirror busTaps={} requested={} premium(order=2)={} "
-				+ "paths={} (order=2 paths={}) maxDelayMs={} dropped={} "
+				+ "paths={} (order=2 paths={}, order=3 paths={}) maxDelayMs={} dropped={} "
 				+ "sinceMoveMs={} buildWallMs={} solveMs={} publishWorkMs={} "
 				+ "publishWallMs={}",
 			receiverPos.toShortString(), effectiveBusTaps(currentLateTaps),
 			currentLateTaps.size(), job.premium2.size(),
-			job.candidates.size(), job.order2.size(),
+			job.candidates.size(), job.order2.size(), order3Paths,
 			String.format(java.util.Locale.ROOT, "%.1f",
 				latePathDelayLimit.maxDelaySeconds(2) * 1_000.0),
 			latePathDelayRejected,
