@@ -78,6 +78,8 @@ public final class OcclusionScanner {
 		private double attenuationDb;
 		private double cutoffWeight;
 		private int order;
+		/** Reused [entry, exit] distances; avoids per-box allocations. */
+		private final double[] span = new double[2];
 
 		private Trace(BlockGetter level, Vec3 origin, Vec3 direction,
 					  double distance) {
@@ -100,17 +102,18 @@ public final class OcclusionScanner {
 			if (shape.isEmpty()) {
 				return;
 			}
+			// VoxelShape coordinates are block-local (usually 0..1) while the ray
+			// is in world space. Shifting the origin by -pos is equivalent to
+			// moving every collision box and avoids allocating one AABB per box.
+			double localX = origin.x - pos.getX();
+			double localY = origin.y - pos.getY();
+			double localZ = origin.z - pos.getZ();
 			for (AABB box : shape.toAabbs()) {
-				// VoxelShape coordinates are block-local (usually 0..1). The ray
-				// is in world space, so the collision box must be moved by the
-				// block position before clipping. Without this offset every
-				// wall outside the block at the world origin is missed.
-				double[] segment = clip(box.move(pos.getX(), pos.getY(),
-					pos.getZ()));
-				if (segment == null) {
+				if (!clipBox(box, localX, localY, localZ,
+					direction.x, direction.y, direction.z, distance, span)) {
 					continue;
 				}
-				double length = segment[1] - segment[0];
+				double length = span[1] - span[0];
 				if (length <= EPSILON) {
 					continue;
 				}
@@ -122,14 +125,6 @@ public final class OcclusionScanner {
 				cutoffWeight += length / profile.cutoffHz();
 				order = Math.max(order, profile.order());
 			}
-		}
-
-		/**
-		 * Returns the entry/exit distance along the normalized ray for one
-		 * collision box, or {@code null} when the segment misses it.
-		 */
-		private double[] clip(AABB box) {
-			return clipBox(box, origin, direction, distance);
 		}
 
 		private OcclusionResult result() {
@@ -147,6 +142,8 @@ public final class OcclusionScanner {
 		private final Vec3 origin;
 		private final Vec3 direction;
 		private final double distance;
+		/** Reused [entry, exit] distances; avoids per-box allocations. */
+		private final double[] span = new double[2];
 
 		private ClearTrace(BlockGetter level, Vec3 origin, Vec3 direction,
 						   double distance) {
@@ -169,10 +166,14 @@ public final class OcclusionScanner {
 			if (shape.isEmpty()) {
 				return false;
 			}
+			// Shift the ray into block-local space instead of moving the boxes.
+			double localX = origin.x - pos.getX();
+			double localY = origin.y - pos.getY();
+			double localZ = origin.z - pos.getZ();
 			for (AABB box : shape.toAabbs()) {
-				double[] segment = clipBox(box.move(pos.getX(), pos.getY(),
-					pos.getZ()), origin, direction, distance);
-				if (segment != null && segment[1] - segment[0] > EPSILON) {
+				if (clipBox(box, localX, localY, localZ,
+					direction.x, direction.y, direction.z, distance, span)
+					&& span[1] - span[0] > EPSILON) {
 					return true;
 				}
 			}
@@ -180,43 +181,25 @@ public final class OcclusionScanner {
 		}
 	}
 
-	private static double[] clipBox(AABB box, Vec3 origin, Vec3 direction,
-									double distance) {
-		double min = 0.0;
-		double max = distance;
-		double[] span = clipAxis(origin.x, direction.x, box.minX, box.maxX,
-			min, max);
-		if (span == null) {
-			return null;
+	private static boolean clipBox(AABB box, double originX, double originY,
+								   double originZ, double directionX,
+								   double directionY, double directionZ,
+								   double distance, double[] span) {
+		span[0] = 0.0;
+		span[1] = distance;
+		if (!clipAxis(originX, directionX, box.minX, box.maxX, span)
+			|| !clipAxis(originY, directionY, box.minY, box.maxY, span)
+			|| !clipAxis(originZ, directionZ, box.minZ, box.maxZ, span)) {
+			return false;
 		}
-		min = span[0];
-		max = span[1];
-		span = clipAxis(origin.y, direction.y, box.minY, box.maxY, min, max);
-		if (span == null) {
-			return null;
-		}
-		min = span[0];
-		max = span[1];
-		span = clipAxis(origin.z, direction.z, box.minZ, box.maxZ, min, max);
-		if (span == null) {
-			return null;
-		}
-		min = span[0];
-		max = span[1];
-		if (max - min <= EPSILON) {
-			return null;
-		}
-		return new double[]{min, max};
+		return span[1] - span[0] > EPSILON;
 	}
 
-	private static double[] clipAxis(double origin, double direction,
-									 double minBound, double maxBound,
-									 double min, double max) {
+	private static boolean clipAxis(double origin, double direction,
+									double minBound, double maxBound,
+									double[] span) {
 		if (Math.abs(direction) < EPSILON) {
-			if (origin < minBound || origin > maxBound) {
-				return null;
-			}
-			return new double[]{min, max};
+			return origin >= minBound && origin <= maxBound;
 		}
 		double t1 = (minBound - origin) / direction;
 		double t2 = (maxBound - origin) / direction;
@@ -225,11 +208,13 @@ public final class OcclusionScanner {
 			t1 = t2;
 			t2 = swap;
 		}
-		double entry = Math.max(min, t1);
-		double exit = Math.min(max, t2);
+		double entry = Math.max(span[0], t1);
+		double exit = Math.min(span[1], t2);
 		if (entry > exit) {
-			return null;
+			return false;
 		}
-		return new double[]{entry, exit};
+		span[0] = entry;
+		span[1] = exit;
+		return true;
 	}
 }

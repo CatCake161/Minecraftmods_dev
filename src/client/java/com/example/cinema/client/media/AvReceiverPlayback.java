@@ -9,6 +9,7 @@ import com.example.cinema.client.media.audio.acousticfir.CommonAcousticFirDesign
 import com.example.cinema.client.media.audio.acousticfir.CommonAcousticFirProfile;
 import com.example.cinema.client.media.audio.acousticfir.CommonAcousticFirService;
 import com.example.cinema.client.media.audio.acousticfir.MaterialReflectionFilter;
+import com.example.cinema.client.media.audio.acoustics.geometry.AcousticVoxelGrid;
 import com.example.cinema.client.media.audio.acoustics.geometry.ImageSourcePathSolver;
 import com.example.cinema.client.media.audio.acoustics.geometry.ImageSourceSolver;
 import com.example.cinema.client.media.audio.acoustics.geometry.MirrorPlane;
@@ -30,7 +31,9 @@ import com.example.cinema.client.media.audio.acoustics.room.AcousticSurface;
 import com.example.cinema.client.media.audio.debug.SourceDebugPoint;
 import com.example.cinema.client.media.audio.acoustics.scene.AcousticScene;
 import com.example.cinema.client.media.audio.acoustics.scene.RoomAcousticSnapshot;
+import com.example.cinema.client.media.audio.dsp.CudaRayTracer;
 import com.example.cinema.client.media.audio.dsp.MinimumPhaseFir;
+import com.example.cinema.client.media.audio.dsp.RtLateFieldBins;
 import com.example.cinema.client.media.audio.playback.CinemaAudioEngine;
 import com.example.cinema.client.media.audio.playback.ReflectionSource;
 import com.example.cinema.client.media.audio.reflection.LateReflectionAudibility;
@@ -91,17 +94,50 @@ public final class AvReceiverPlayback {
 	private static final int MAX_FIRST_ORDER_REFLECTIONS = 64;
 	private static final int FIRST_ORDER_REFLECTIONS_PER_SPEAKER = 5;
 	private static final int MAX_PREMIUM_ORDER2_REFLECTIONS = 16;
-	private static final int MAX_PREMIUM_ORDER3_REFLECTIONS = 8;
 	private static final double MAX_PREMIUM_DELAY_SECONDS = 0.150;
-	private static final int MAX_FAST_REFLECTION_PATHS = 512;
-	private static final int MAX_DEEP_REFLECTION_PATHS = 512;
+	private static final int MAX_FAST_REFLECTION_PATHS = 320;
+	/**
+	 * The exact mirror phase solves order 2 only: order >= 3 belongs to the
+	 * CUDA ray tracer. Running the exact order-3/4 enumeration as well cost
+	 * ~1 s of extra latency per rebuild and duplicated the RT tail.
+	 */
 	private static final int LATE_PATH_FAST_ORDER = 3;
-	private static final int LATE_PATH_DEEP_ORDER = 4;
 	private static final double LATE_PATH_STABLE_MS_PER_SPEED = 1_200.0;
 	private static final int FIRST_ORDER_RAYS_PER_PATH = 2;
 	private static final int MAX_FIRST_ORDER_RAY_PATHS_PER_CHANNEL = 3;
 	private static final int MAX_ORDER_RAY_PATHS_PER_CHANNEL_ORDER = 2;
 	private static final int HIGHER_ORDER_RAYS_PER_PATH = 1;
+	/** Per-tick ceiling for the late-path publish stage. */
+	private static final long PUBLISH_SLICE_NANOS = 1_500_000L;
+	/** Minimum interval between diffuse-bed republishes. */
+	private static final long SCATTER_REFRESH_MILLIS = 750L;
+	/**
+	 * Lowest order that feeds the late bus; orders 1-2 stay image-based. The
+	 * RT switch, ray count and bounce cap live in the config.
+	 */
+	private static final int RT_MIN_ORDER = 3;
+	/** No late-bus taps published yet (empty or freshly reset build). */
+	private static final int PUBLISHED_ORDER_NONE = 0;
+	/** Exact order-2 mirror taps are on the bus; order >= 3 waits for RT. */
+	private static final int PUBLISHED_ORDER_MIRROR = 2;
+	/** The CUDA ray-traced order >= 3 tail is on the bus. */
+	private static final int PUBLISHED_ORDER_RT = 3;
+	/** Global trim for A/B calibration of the ray-traced tail. */
+	private static final float RT_GAIN = 1.0f;
+	private static final float RT_MAX_DISTANCE_METERS = 80.0f;
+	private static final int RT_GRID_MARGIN = 8;
+	private static final double RT_DEDUP_DELAY_SECONDS = 0.010;
+	private static final double RT_DEDUP_ANGLE = Math.cos(Math.toRadians(15.0));
+	private static final double RT_DAMPING_HZ = 6_000.0;
+	private static final int RT_TAP_CANDIDATES = 1_024;
+	/**
+	 * Phase step between accumulated RT passes. A golden-ratio step keeps the
+	 * per-pass ray sets maximally decorrelated, which is what makes the
+	 * multi-pass average converge.
+	 */
+	private static final double RT_PASS_PHASE_STEP = 0.6180339887498949;
+	/** Listener drift (squared blocks) that invalidates an RT accumulation. */
+	private static final double RT_ACCUM_MOVE_TOLERANCE_SQR = 0.05 * 0.05;
 	private static final double MAX_CHANNEL_GAIN =
 		Math.pow(10.0, 12.0 / 20.0);
 	private static final double MAX_LATE_SEND_GAIN = 8.0;
@@ -142,6 +178,7 @@ public final class AvReceiverPlayback {
 	private int lastReflectionLogCount = -1;
 	private long lastReflectionLogMillis;
 	private long lastWetLayoutLogMillis;
+	private long lastScatterRefreshMillis;
 	private Vec3 debugListener;
 	private Vec3 debugForward;
 	private Vec3 tapListener;
@@ -155,33 +192,41 @@ public final class AvReceiverPlayback {
 	private final LatePathRequest[] latePathRequests =
 		new LatePathRequest[CinemaAudioEngine.MAX_DIRECT_SOURCES];
 	private final List<LatePathCandidate> latePathCandidates = new ArrayList<>();
-	private int latePathFastNextSource;
-	private ImageSourcePathSolver.Session latePathFastSession;
-	private LatePathRequest latePathFastRequest;
-	private List<LateReflectionBus.Tap> latePathFastTaps = List.of();
-	private final List<LateReflectionBus.Tap> latePathDeepTaps = new ArrayList<>();
-	private int latePathDeepNextSource;
-	private ImageSourcePathSolver.Session latePathDeepSession;
-	private LatePathRequest latePathDeepRequest;
+	private int latePathNextSource;
+	private ImageSourcePathSolver.Session latePathSession;
+	private LatePathRequest latePathRequest;
+	private List<LateReflectionBus.Tap> latePathTaps = List.of();
 	private List<LateReflectionBus.Tap> currentLateTaps = List.of();
+	private WetLayout.Layout lastWetLayout;
+	private CudaRayTracer rtTracer;
+	private AcousticVoxelGrid rtGrid;
+	private long rtGridRoomVersion = Long.MIN_VALUE;
+	private boolean rtGridFailed;
+	/** In-flight order >= 3 accumulation; one GPU pass per tick. */
+	private RtBuild rtBuild;
+	/** Reusable bin grid for the next accumulation (~4 MB, allocated lazily). */
+	private RtLateFieldBins rtBins;
+	/** A build was discarded while moving; wait for stability before retrying. */
+	private boolean rtRestartPending;
+	/** Monotonic pass counter behind the golden-ratio ray-set phase. */
+	private long rtPassSerial;
+	private float[] physicalSpeakerDirectDelays = new float[0];
+	private SpeakerDataProfile[] physicalSpeakerProfiles = new SpeakerDataProfile[0];
+	private Vec3[] physicalSpeakerFronts = new Vec3[0];
+	private Vec3[] physicalSpeakerForwards = new Vec3[0];
+	private SubwooferBand[] physicalSpeakerSubwoofers = new SubwooferBand[0];
+	private float[] physicalSpeakerGains = new float[0];
 	private List<LateReflectionBus.Tap> scatterTaps = List.of();
 	private List<LateReflectionBus.Tap> diffuseRayTaps = List.of();
 	private List<LateReflectionBus.Tap> order2RayTaps = List.of();
-	private List<LateReflectionBus.Tap> order3RayTaps = List.of();
-	private List<LateReflectionBus.Tap> order4RayTaps = List.of();
 	private final ScatterRayBudget scatterRayBudget = new ScatterRayBudget();
 	private final WetLayout.Builder wetLayoutBuilder = new WetLayout.Builder();
 	private List<ScatterContribution> firstOrderScatter = List.of();
 	private List<ScatterContribution> order2Scatter = List.of();
-	private List<ScatterContribution> order3Scatter = List.of();
-	private final List<ScatterContribution> order4Scatter = new ArrayList<>();
-	private final List<LatePathCandidate> order4ScatterCandidates =
-		new ArrayList<>();
 	private int scatterTapsBelowFloor;
 	private int scatterTapsAboveDelay;
 	private double scatterEnergy;
 	private List<ReflectionSource> premiumOrder2Sources = List.of();
-	private List<ReflectionSource> premiumOrder3Sources = List.of();
 	private List<ReflectionSource> currentReflectionSources = List.of();
 	private final Map<String, MinimumPhaseFir> premiumReflectionFilters = new HashMap<>();
 	private Vec3 lastLatePathListener;
@@ -194,18 +239,21 @@ public final class AvReceiverPlayback {
 	private ReflectionDelayLimit latePathDelayLimit =
 		ImageSourcePathSolver.DEFAULT_DELAY_LIMIT;
 	private boolean latePathBuildActive;
-	private boolean latePathFastApplied;
-	private boolean latePathDeepApplied;
+	/**
+	 * Published late-bus progress: {@link #PUBLISHED_ORDER_NONE} before the
+	 * first publish, {@link #PUBLISHED_ORDER_MIRROR} once the exact order-2
+	 * mirrors are on the bus, and {@link #PUBLISHED_ORDER_RT} once the
+	 * ray-traced order >= 3 tail replaced them.
+	 */
+	private int publishedOrder = PUBLISHED_ORDER_NONE;
 	private long latePathBuildStartMillis;
 	private long latePathBuildNanos;
-	private long latePathDeepStartMillis;
-	private long latePathDeepNanos;
-	private int latePathFastDelayRejected;
-	private int latePathDeepDelayRejected;
+	private int latePathDelayRejected;
 	private double latePathMoveEma;
 	private boolean lastLateReflectionEnabled;
 	private boolean lastScatteringEnabled;
 	private boolean lastLateMaterialEq;
+	private boolean lastRayTracingEnabled;
 	private long lastSpeakerSettingsHash = Long.MIN_VALUE;
 	/** Direct propagation delay per physical speaker key, in seconds. */
 	private final Map<String, Double> directDelayBySource = new HashMap<>();
@@ -429,6 +477,16 @@ public final class AvReceiverPlayback {
 			audio.close();
 			audio = null;
 		}
+		if (rtTracer != null) {
+			rtTracer.close();
+			rtTracer = null;
+		}
+		rtGrid = null;
+		rtGridRoomVersion = Long.MIN_VALUE;
+		rtBuild = null;
+		rtBins = null;
+		rtRestartPending = false;
+		rtPassSerial = 0L;
 		if (textureRegistered) {
 			Minecraft.getInstance().getTextureManager().release(textureId);
 			textureRegistered = false;
@@ -457,29 +515,19 @@ public final class AvReceiverPlayback {
 		lastWetLayoutLogMillis = 0L;
 		Arrays.fill(latePathRequests, null);
 		latePathCandidates.clear();
-		latePathFastNextSource = 0;
-		latePathFastSession = null;
-		latePathFastRequest = null;
-		latePathFastTaps = List.of();
-		latePathDeepTaps.clear();
-		latePathDeepNextSource = 0;
-		latePathDeepSession = null;
-		latePathDeepRequest = null;
+		latePathNextSource = 0;
+		latePathSession = null;
+		latePathRequest = null;
+		latePathTaps = List.of();
 		premiumOrder2Sources = List.of();
-		premiumOrder3Sources = List.of();
 		currentReflectionSources = List.of();
 		premiumReflectionFilters.clear();
 		currentLateTaps = List.of();
 		scatterTaps = List.of();
 		diffuseRayTaps = List.of();
 		order2RayTaps = List.of();
-		order3RayTaps = List.of();
-		order4RayTaps = List.of();
 		firstOrderScatter = List.of();
 		order2Scatter = List.of();
-		order3Scatter = List.of();
-		order4Scatter.clear();
-		order4ScatterCandidates.clear();
 		scatterRayBudget.clear();
 		wetLayoutBuilder.clear();
 		scatterTapsBelowFloor = 0;
@@ -492,17 +540,14 @@ public final class AvReceiverPlayback {
 		latePathMoveEma = 0.0;
 		latePathRequestRoomVersion = Long.MIN_VALUE;
 		latePathBuildActive = false;
-		latePathFastApplied = false;
-		latePathDeepApplied = false;
+		publishedOrder = PUBLISHED_ORDER_NONE;
 		latePathBuildStartMillis = 0L;
 		latePathBuildNanos = 0L;
-		latePathDeepStartMillis = 0L;
-		latePathDeepNanos = 0L;
-		latePathFastDelayRejected = 0;
-		latePathDeepDelayRejected = 0;
+		latePathDelayRejected = 0;
 		lastLateReflectionEnabled = false;
 		lastScatteringEnabled = false;
 		lastLateMaterialEq = false;
+		lastRayTracingEnabled = false;
 		debugListener = null;
 		debugForward = null;
 		debugLevel = null;
@@ -735,13 +780,26 @@ public final class AvReceiverPlayback {
 		float[][] speakerPositions = new float[selected.size()][];
 		int[] speakerChannels = new int[selected.size()];
 		float[][] speakerWorldPositions = new float[selected.size()][];
+		SpeakerDataProfile[] speakerProfiles =
+			new SpeakerDataProfile[selected.size()];
+		Vec3[] speakerFronts = new Vec3[selected.size()];
+		Vec3[] speakerForwards = new Vec3[selected.size()];
+		SubwooferBand[] speakerBands = new SubwooferBand[selected.size()];
+		float[] speakerTrims = new float[selected.size()];
 		for (int i = 0; i < selected.size(); i++) {
 			SpeakerRoute route = selected.get(i);
 			speakerPositions[i] = route.position();
 			speakerChannels[i] = route.channel();
-			Vec3 front = route.speaker().acousticFrontPosition();
+			SpeakerBlockEntity speaker = route.speaker();
+			Vec3 front = speaker.acousticFrontPosition();
 			speakerWorldPositions[i] = new float[]{
 				(float) front.x, (float) front.y, (float) front.z};
+			SpeakerDataProfile profile = speakerProfile(speaker);
+			speakerProfiles[i] = profile;
+			speakerFronts[i] = front;
+			speakerForwards[i] = speaker.acousticForward();
+			speakerBands[i] = subwooferBand(speaker, profile);
+			speakerTrims[i] = speakerGain(speaker);
 		}
 		int routed = 0;
 		for (SpeakerRoute anchor : anchors) {
@@ -754,6 +812,12 @@ public final class AvReceiverPlayback {
 		physicalSpeakerPositions = speakerPositions;
 		physicalSpeakerWorldPositions = speakerWorldPositions;
 		physicalSpeakerChannels = speakerChannels;
+		physicalSpeakerDirectDelays = directDelays.clone();
+		physicalSpeakerProfiles = speakerProfiles;
+		physicalSpeakerFronts = speakerFronts;
+		physicalSpeakerForwards = speakerForwards;
+		physicalSpeakerSubwoofers = speakerBands;
+		physicalSpeakerGains = speakerTrims;
 		engine.setChannelLayout(sourceChannels, positions, gains, filters,
 			occlusionGains, lateSendGains, directDelays);
 		updateLateReflection(selected, config);
@@ -904,7 +968,7 @@ public final class AvReceiverPlayback {
 		engine.setLateReflection(settings);
 		if (now - lastLateReflectionLogMillis >= 5_000L) {
 			lastLateReflectionLogMillis = now;
-			CinemaLog.info(CinemaLog.RECEIVER, "{}: order 2-4 reflections R={} m2 "
+			CinemaLog.info(CinemaLog.RECEIVER, "{}: order=2..4 reflections R={} m2 "
 					+ "rc={} m target={} dB sourceGain={} dB effective={} dB",
 				receiverPos.toShortString(),
 				formatMetric(target.roomConstant(), "%.1f"),
@@ -984,11 +1048,14 @@ public final class AvReceiverPlayback {
 			config.scatteringEnabled() != lastScatteringEnabled;
 		boolean materialEqToggled =
 			config.lateMaterialEq() != lastLateMaterialEq;
+		boolean rayTracingToggled =
+			config.rayTracingEnabled() != lastRayTracingEnabled;
 		boolean debugToggled = AvReceiverPlaybackManager.sourceDebugEnabled()
 			!= lastSourceDebugEnabled;
 		boolean force = roomVersion != lastReflectionRoomVersion
 			|| speakerSettingsChanged || lateReflectionToggled
-			|| scatteringToggled || materialEqToggled || floorChanged
+			|| scatteringToggled || materialEqToggled || rayTracingToggled
+			|| floorChanged
 			|| debugToggled;
 		long interval = config.reflectionUpdateMillis();
 		if (moved) {
@@ -1012,24 +1079,23 @@ public final class AvReceiverPlayback {
 		}
 		lastScatteringEnabled = config.scatteringEnabled();
 		lastLateMaterialEq = config.lateMaterialEq();
-		if (scatteringToggled || materialEqToggled) {
+		lastRayTracingEnabled = config.rayTracingEnabled();
+		if (scatteringToggled || materialEqToggled || rayTracingToggled) {
 			// These switches change first-order taps, higher-order scatter,
 			// premium FIR material and lazy tap filters, so discard the steady
 			// late-path build and republish from order 2 in this update.
 			resetLatePathBuild();
 			premiumOrder2Sources = List.of();
-			premiumOrder3Sources = List.of();
 			lastLatePathListener = null;
 			latePathRequestRoomVersion = Long.MIN_VALUE;
 		}
 		if (speakerSettingsChanged || floorChanged) {
 			// Speaker level/profile gain and the listener-relative floor are
 			// baked into the premium sources and late-bus taps. Invalidate the
-			// steady-state order-2/3/4 build so the next update republishes
-			// them with the new gain, floor and delay cap.
+			// steady-state order-2 build so the next update republishes it
+			// with the new gain, floor and delay cap.
 			resetLatePathBuild();
 			premiumOrder2Sources = List.of();
-			premiumOrder3Sources = List.of();
 			latePathRequestRoomVersion = Long.MIN_VALUE;
 			lastLatePathListener = null;
 		}
@@ -1037,6 +1103,7 @@ public final class AvReceiverPlayback {
 		lastReflectionRoomVersion = roomVersion;
 		lastReflectionListener = listener;
 		lastSourceDebugEnabled = AvReceiverPlaybackManager.sourceDebugEnabled();
+		long updateStart = System.nanoTime();
 		tapListener = listener;
 		tapForward = forward;
 		Set<String> previousKeys = new HashSet<>(reflectionFilters.keySet());
@@ -1059,11 +1126,16 @@ public final class AvReceiverPlayback {
 		List<ReflectionTap> taps = new ArrayList<>();
 		List<LatePathCandidate> order2Candidates = new ArrayList<>();
 		int order2DelayRejected = 0;
-		boolean lateOrder2Stable = config.lateReverb() && latePathFastApplied
-			&& lastLatePathListener != null
-			&& listener.distanceToSqr(lastLatePathListener)
-				<= thresholdSqrBlocks(config.latePathMoveThresholdMeters())
-			&& roomVersion == latePathRequestRoomVersion;
+		// The incremental order-2 build already covers order 2. Re-solving it
+		// inline on every movement tick duplicated that work and showed up as an
+		// 8-15 ms render-thread spike at 5-10 Hz. Only the very first publish
+		// (empty bus) still uses the inline path so audio does not start with a
+		// 1-2 s silent late field.
+		boolean lateBuildInFlight = latePathSession != null
+			|| order2Publish != null;
+		boolean immediateOrder2 = config.lateReverb()
+			&& publishedOrder < PUBLISHED_ORDER_MIRROR
+			&& currentLateTaps.isEmpty() && !lateBuildInFlight;
 		Arrays.fill(latePathRequests, null);
 		Map<String, SpeakerRoute> routesByKey = new HashMap<>();
 		for (int sourceIndex = 0; sourceIndex < speakers.size(); sourceIndex++) {
@@ -1082,10 +1154,7 @@ public final class AvReceiverPlayback {
 			taps.addAll(ImageSourceSolver.solve(planes, channel, sourceKey,
 				pointOf(center), pointOf(listener), probe, previousKeys,
 				reflectionLimit.maxDelaySeconds(1), scatteringEnabled));
-			if (config.lateReverb() && !lateOrder2Stable) {
-				// Order-2 paths are published immediately. The order-3/4
-				// upgrades run incrementally and replace this set only after
-				// their phase completes.
+			if (immediateOrder2) {
 				ImageSourcePathSolver.SolveStats pathStats =
 					ImageSourcePathSolver.solveWithStats(planes, channel, sourceKey,
 						pointOf(center), pointOf(listener), probe, 2,
@@ -1105,7 +1174,7 @@ public final class AvReceiverPlayback {
 		firstOrderScatter = buildFirstOrderScatter(taps, routesByKey, config,
 			temperatureC, humidityPercent, pressureKpa, firstOrderPlan,
 			firstOrderRays.pathKeys());
-		if (!lateOrder2Stable) {
+		if (immediateOrder2) {
 			PathScatterResult result = buildPathScatter(order2Candidates, config,
 				temperatureC, humidityPercent, pressureKpa, listener, forward, now);
 			order2Scatter = result.contributions();
@@ -1113,16 +1182,11 @@ public final class AvReceiverPlayback {
 		}
 		if (!lateScatteringEnabled(config)) {
 			order2Scatter = List.of();
-			order3Scatter = List.of();
-			order4Scatter.clear();
 			order2RayTaps = List.of();
-			order3RayTaps = List.of();
-			order4RayTaps = List.of();
-			order4ScatterCandidates.clear();
 		}
 		rebuildScatterTaps(config.lateMaterialEq());
 		List<LateReflectionBus.Tap> order2BusTaps = List.of();
-		if (!lateOrder2Stable) {
+		if (immediateOrder2) {
 			List<LatePathCandidate> premium2 = selectPremium(order2Candidates, 2,
 				MAX_PREMIUM_ORDER2_REFLECTIONS, lateBusMaxDelaySeconds);
 			Set<String> premium2Keys = pathKeys(premium2);
@@ -1181,28 +1245,29 @@ public final class AvReceiverPlayback {
 		}
 		reflectionFilters.keySet().retainAll(currentKeys);
 		List<ReflectionSource> allSources = new ArrayList<>(
-			sources.size() + premiumOrder2Sources.size()
-				+ premiumOrder3Sources.size());
+			sources.size() + premiumOrder2Sources.size());
 		// The user-chosen budget priority is direct > premium > first-order
 		// > wet ghosts. Publishing premium before first-order makes the audio
 		// thread allocate premium slots first when the reflection pool shrinks.
 		allSources.addAll(premiumOrder2Sources);
-		allSources.addAll(premiumOrder3Sources);
 		allSources.addAll(sources);
 		currentReflectionSources = List.copyOf(allSources);
 		engine.setReflections(allSources);
-		if (allSources.size() != lastReflectionLogCount
+		double updateMs = (System.nanoTime() - updateStart) / 1.0e6;
+		boolean slowUpdate = updateMs >= 8.0;
+		if ((allSources.size() != lastReflectionLogCount || slowUpdate)
 			&& now - lastReflectionLogMillis >= 5_000L) {
 			lastReflectionLogCount = allSources.size();
 			lastReflectionLogMillis = now;
-			CinemaLog.info(CinemaLog.RECEIVER, "{}: {} reflection taps (first={}, premium2={}, "
-					+ "premium3={}, candidates={}, surfaces={}, room={}, "
-					+ "size={}, lateMaxDelay={} ms, rt60={} s, direct={} dB, "
-					+ "floor={} dB, busDroppedFloor={}, busDroppedDelay={}, "
-					+ "order2Dropped={}, scatterTaps={}, scatterE={}, "
-					+ "scatterDropFloor={}, scatterDropDelay={})",
+			CinemaLog.info(CinemaLog.RECEIVER, "{}: {} reflection taps (first={}, "
+					+ "premium(order=2)={}, candidates={}, "
+					+ "surfaces={}, room={}, size={}, lateMaxDelayMs={}, rt60={} s, "
+					+ "direct={} dB, floor={} dB, busDroppedFloor={}, "
+					+ "busDroppedDelay={}, dropped(order=2)={}, scatterTaps={}, "
+					+ "scatterE={}, scatterDropFloor={}, scatterDropDelay={}, "
+					+ "updateMs={})",
 				receiverPos.toShortString(), allSources.size(), sources.size(),
-				premiumOrder2Sources.size(), premiumOrder3Sources.size(),
+				premiumOrder2Sources.size(),
 				taps.size(), seeds.size(),
 				snapshot == null ? "none" : Long.toString(snapshotVersion),
 				room == null ? "none" : room.sizeLabel(),
@@ -1216,7 +1281,8 @@ public final class AvReceiverPlayback {
 				lateTapsBelowFloor, lateTapsAboveDelay, order2DelayRejected,
 				scatterTaps.size(),
 				String.format(java.util.Locale.ROOT, "%.4f", scatterEnergy),
-				scatterTapsBelowFloor, scatterTapsAboveDelay);
+				scatterTapsBelowFloor, scatterTapsAboveDelay,
+				updateMs);
 		}
 	}
 
@@ -1393,13 +1459,14 @@ public final class AvReceiverPlayback {
 					continue;
 				}
 				Point3 direction = directions.get(index);
-				float[] listenerDirection = toListenerSpace(
-					new Vec3(direction.x(), direction.y(), direction.z()),
-					forward);
+				Vec3 world = new Vec3(direction.x(), direction.y(),
+					direction.z());
+				float[] worldDirection = toWorldDirection(world);
+				float[] listenerDirection = toListenerSpace(world, forward);
 				Vbap.Weights weights = Vbap.pan(listenerDirection,
 					physicalSpeakerPositions, physicalSpeakerChannels);
 				rays.add(new LateReflectionBus.Tap(route.channel(), delay,
-					amplitude, cutoff, listenerDirection,
+					amplitude, cutoff, worldDirection,
 					weights.channels(), weights.weights(),
 					"diffuse:" + tap.key() + ":" + index, filter)
 					.withOrder(1));
@@ -1431,33 +1498,52 @@ public final class AvReceiverPlayback {
 		List<ScatterContribution> contributions = new ArrayList<>();
 		List<LateReflectionBus.Tap> rays = new ArrayList<>();
 		for (LatePathCandidate candidate : candidates) {
-			ScatterContribution contribution = buildPathScatter(candidate,
-				config, temperatureC, humidityPercent, pressureKpa);
-			if (contribution == null) {
-				continue;
-			}
-			String group = candidate.path().channel() + ":"
-				+ candidate.path().order();
-			ScatterRayBudget.Budget budget = budgets.get(group);
-			boolean selected = rayPaths.contains(
-				candidate.path().sourcePathKey());
-			List<LateReflectionBus.Tap> candidateRays = selected
-				&& budget != null
-				? buildPathRayTaps(candidate, Math.sqrt(contribution.energy()),
-					config, listener, forward, budget.directionalShare())
-				: List.of();
-			if (!candidateRays.isEmpty() && budget != null) {
-				contributions.add(new ScatterContribution(contribution.channel(),
-					contribution.energy() * (1.0 - budget.directionalShare()),
-					contribution.delaySeconds(), contribution.dampingHz(),
-					contribution.material()));
-				rays.addAll(candidateRays);
-			} else {
-				contributions.add(contribution);
-			}
+			accumulatePathScatter(candidate, budgets, rayPaths, config,
+				temperatureC, humidityPercent, pressureKpa, listener, forward,
+				contributions, rays);
 		}
 		return new PathScatterResult(List.copyOf(contributions),
 			List.copyOf(rays));
+	}
+
+	/** Accumulates one candidate's diffuse contribution and optional rays. */
+	private void accumulatePathScatter(LatePathCandidate candidate,
+									   Map<String, ScatterRayBudget.Budget> budgets,
+									   Set<String> rayPaths,
+									   CinemaClientConfig config,
+									   double temperatureC,
+									   double humidityPercent,
+									   double pressureKpa,
+									   Vec3 listener, Vec3 forward,
+									   List<ScatterContribution> contributions,
+									   List<LateReflectionBus.Tap> rays) {
+		if (candidate == null || candidate.path() == null) {
+			return;
+		}
+		ScatterContribution contribution = buildPathScatter(candidate,
+			config, temperatureC, humidityPercent, pressureKpa);
+		if (contribution == null) {
+			return;
+		}
+		String group = candidate.path().channel() + ":"
+			+ candidate.path().order();
+		ScatterRayBudget.Budget budget = budgets.get(group);
+		boolean selected = rayPaths.contains(
+			candidate.path().sourcePathKey());
+		List<LateReflectionBus.Tap> candidateRays = selected
+			&& budget != null
+			? buildPathRayTaps(candidate, Math.sqrt(contribution.energy()),
+				config, listener, forward, budget.directionalShare())
+			: List.of();
+		if (!candidateRays.isEmpty() && budget != null) {
+			contributions.add(new ScatterContribution(contribution.channel(),
+				contribution.energy() * (1.0 - budget.directionalShare()),
+				contribution.delaySeconds(), contribution.dampingHz(),
+				contribution.material()));
+			rays.addAll(candidateRays);
+		} else {
+			contributions.add(contribution);
+		}
 	}
 
 	private Map<String, ScatterRayBudget.Budget> pathRayBudgets(
@@ -1567,12 +1653,12 @@ public final class AvReceiverPlayback {
 				continue;
 			}
 			Point3 direction = directions.get(index);
-			float[] listenerDirection = toListenerSpace(
-				new Vec3(direction.x(), direction.y(), direction.z()), forward);
-			Vbap.Weights weights = Vbap.pan(listenerDirection,
+			Vec3 world = new Vec3(direction.x(), direction.y(), direction.z());
+			float[] worldDirection = toWorldDirection(world);
+			Vbap.Weights weights = Vbap.pan(toListenerSpace(world, forward),
 				physicalSpeakerPositions, physicalSpeakerChannels);
 			rays.add(new LateReflectionBus.Tap(path.channel(), delay,
-				amplitude * rayScale, cutoff, listenerDirection,
+				amplitude * rayScale, cutoff, worldDirection,
 				weights.channels(), weights.weights(),
 				"diffuse:" + path.sourcePathKey() + ":" + index, filter)
 				.withOrder(path.order()));
@@ -1641,28 +1727,23 @@ public final class AvReceiverPlayback {
 	}
 
 	/**
-	 * Rebuilds the six-channel diffuse send from first-order and all
-	 * higher-order contributions. Called after any tier changes.
+	 * Rebuilds the six-channel diffuse send from first- and second-order
+	 * contributions. Called after any tier changes.
 	 */
 	private void rebuildScatterTaps(boolean materialEq) {
 		ScatterAccumulator accumulator = new ScatterAccumulator();
 		addScatter(accumulator, firstOrderScatter);
 		addScatter(accumulator, order2Scatter);
-		addScatter(accumulator, order3Scatter);
-		addScatter(accumulator, order4Scatter);
 		List<LateReflectionBus.Tap> aggregate = accumulator.build(
 			physicalSpeakerPositions, physicalSpeakerChannels, "scatter:",
 			materialEq, CinemaAudioEngine.SAMPLE_RATE);
 		double rayEnergy = 0.0;
-		int rayCount = diffuseRayTaps.size() + order2RayTaps.size()
-			+ order3RayTaps.size() + order4RayTaps.size();
+		int rayCount = diffuseRayTaps.size() + order2RayTaps.size();
 		List<LateReflectionBus.Tap> merged = new ArrayList<>(
 			aggregate.size() + rayCount);
 		merged.addAll(aggregate);
 		rayEnergy += addRays(merged, diffuseRayTaps);
 		rayEnergy += addRays(merged, order2RayTaps);
-		rayEnergy += addRays(merged, order3RayTaps);
-		rayEnergy += addRays(merged, order4RayTaps);
 		scatterEnergy = accumulator.totalEnergy() + rayEnergy;
 		scatterTaps = List.copyOf(merged);
 	}
@@ -1739,11 +1820,13 @@ public final class AvReceiverPlayback {
 		// VBAP needs the direction from the listener to the virtual source.
 		// The propagation direction (last reflection point -> listener) is the
 		// negative of this vector and would mirror left/right and front/back.
+		// Taps store the world-space direction so a head turn never has to
+		// rewrite them; only the pan weights need the listener frame.
 		Vec3 arrival = new Vec3(lastPoint.x() - listener.x,
 			lastPoint.y() - listener.y, lastPoint.z() - listener.z);
-		float[] direction = toListenerSpace(arrival, forward);
-		Vbap.Weights weights = Vbap.pan(direction, physicalSpeakerPositions,
-			physicalSpeakerChannels);
+		float[] direction = toWorldDirection(arrival);
+		Vbap.Weights weights = Vbap.pan(toListenerSpace(arrival, forward),
+			physicalSpeakerPositions, physicalSpeakerChannels);
 		LateReflectionBus.Tap tap = LateReflectionBus.Tap.fromPath(path, gain,
 			direction, weights.channels(), weights.weights(),
 			config.lateMaterialEq(), CinemaAudioEngine.SAMPLE_RATE);
@@ -1928,9 +2011,9 @@ public final class AvReceiverPlayback {
 	}
 
 	/**
-	 * Publishes order-2 taps immediately, then runs two incremental phases:
-	 * order 3 in cost-aware speaker batches, followed by order 4 one speaker at a
-	 * time. The order-3 bus stays active while order 4 is being computed.
+	 * Resets the late-path build when the listener moved or the room / config
+	 * changed. The exact order-2 and the ray-traced order >= 3 stages are then
+	 * advanced together by {@link #stepLatePhase}.
 	 *
 	 * <p>This is deliberately not a background thread: the path solver reads the
 	 * live client level ({@code wallAt}, occlusion scans), which is not safe
@@ -1946,7 +2029,6 @@ public final class AvReceiverPlayback {
 		}
 		if (!config.lateReverb()) {
 			resetLatePathBuild();
-			premiumOrder3Sources = List.of();
 			latePathResetPending = false;
 			scatterTaps = List.of();
 			currentLateTaps = List.of();
@@ -1975,13 +2057,17 @@ public final class AvReceiverPlayback {
 			latePathRequestRoomVersion = roomVersion;
 			latePathDelayLimit = lateDelayLimit;
 			resetLatePathBuild();
-			currentLateTaps = withScatter(order2Taps);
-			engineTaps(currentLateTaps);
+			// Keep the previously published taps playing while the incremental
+			// build catches up; only a genuinely empty set publishes nothing.
+			if (!order2Taps.isEmpty() || currentLateTaps.isEmpty()) {
+				currentLateTaps = withScatter(order2Taps);
+				engineTaps(currentLateTaps);
+			}
 		} else if (moved) {
 			latePathResetPending = true;
 		}
-		// Fast/deep sessions are advanced in small per-tick slices by
-		// stepLatePhase().
+		// The order-2 and ray-traced stages are advanced in small per-tick
+		// slices by stepLatePhase().
 	}
 
 	private void updateLatePathMovement(Vec3 listener, long now) {
@@ -2010,43 +2096,57 @@ public final class AvReceiverPlayback {
 		return (long) Math.max(min, Math.min(max, value));
 	}
 
+	/**
+	 * Single late-bus driver. Each call advances the pipeline one slice:
+	 * exact order-2 mirrors (incremental session + sliced publish) first, then
+	 * the CUDA ray-traced order >= 3 tail. {@link #publishedOrder} records how
+	 * far the current build got (2 = mirrors, 3 = RT tail).
+	 */
 	private void stepLatePhase(ClientLevel level, Vec3 listener, Vec3 forward,
 							   CinemaClientConfig config) {
-		if (audio == null || !config.lateReverb() || latePathDeepApplied) {
+		if (audio == null || !config.lateReverb()
+			|| publishedOrder >= PUBLISHED_ORDER_RT) {
 			return;
 		}
 		debugListener = listener;
 		debugForward = forward;
 		debugLevel = level;
 		long now = System.currentTimeMillis();
-		if (!latePathFastApplied) {
-			stepFastPhase(level, listener, forward, config, now);
+		if (publishedOrder < PUBLISHED_ORDER_MIRROR) {
+			stepOrder2Phase(level, listener, forward, config, now);
 		} else {
-			stepDeepPhase(level, listener, forward, config);
+			stepRtPhase(level, listener, forward, config);
 		}
 	}
 
-	private void stepFastPhase(ClientLevel level, Vec3 listener, Vec3 forward,
-							   CinemaClientConfig config, long now) {
-		if (latePathFastSession == null) {
+	/** Advances the exact order-2 mirror build by one solver slice. */
+	private void stepOrder2Phase(ClientLevel level, Vec3 listener, Vec3 forward,
+								 CinemaClientConfig config, long now) {
+		if (order2Publish != null) {
+			// Finish an in-flight publish even while the listener keeps moving;
+			// the work is already sliced, and abandoning it would only restart
+			// the whole build later.
+			finishOrder2Phase(listener, forward, config, now);
+			return;
+		}
+		if (latePathSession == null) {
 			if (now - lastLatePathMoveMillis < requiredStableMillis(config)) {
 				return;
 			}
-			LatePathRequest request = nextFastRequest();
+			LatePathRequest request = nextOrder2Request();
 			if (request == null) {
-				finishFastPhase(listener, forward, config, now);
+				finishOrder2Phase(listener, forward, config, now);
 				return;
 			}
 			if (!latePathBuildActive) {
 				latePathBuildActive = true;
 				latePathCandidates.clear();
-				order3Scatter = List.of();
-				order4Scatter.clear();
 				latePathBuildStartMillis = now;
 				latePathBuildNanos = 0L;
+				latePathDelayRejected = 0;
 			}
-			latePathFastRequest = request;
-			latePathFastSession = new ImageSourcePathSolver.Session(
+			latePathRequest = request;
+			latePathSession = new ImageSourcePathSolver.Session(
 				request.planes(), request.channel(), sourceKey(request.speaker()),
 				pointOf(request.source()), pointOf(listener),
 				ReflectionProbe.of(level), LATE_PATH_FAST_ORDER,
@@ -2055,29 +2155,29 @@ public final class AvReceiverPlayback {
 				lateScatteringEnabled(config));
 		}
 		long stepStart = System.nanoTime();
-		boolean done = latePathFastSession.step(
+		boolean done = latePathSession.step(
 			config.latePathStepBudgetMillis() * 1_000_000L);
 		latePathBuildNanos += System.nanoTime() - stepStart;
 		if (!done) {
 			return;
 		}
-		ImageSourcePathSolver.SolveStats stats = latePathFastSession.stats();
-		latePathFastDelayRejected += stats.delayRejected();
-		LatePathRequest request = latePathFastRequest;
+		ImageSourcePathSolver.SolveStats stats = latePathSession.stats();
+		latePathDelayRejected += stats.delayRejected();
+		LatePathRequest request = latePathRequest;
 		for (ReflectionPathTap path : stats.paths()) {
 			latePathCandidates.add(new LatePathCandidate(path,
 				request.speaker()));
 		}
-		latePathFastSession = null;
-		latePathFastRequest = null;
-		if (latePathFastNextSource >= latePathRequests.length) {
-			finishFastPhase(listener, forward, config, now);
+		latePathSession = null;
+		latePathRequest = null;
+		if (latePathNextSource >= latePathRequests.length) {
+			finishOrder2Phase(listener, forward, config, now);
 		}
 	}
 
-	private LatePathRequest nextFastRequest() {
-		while (latePathFastNextSource < latePathRequests.length) {
-			LatePathRequest request = latePathRequests[latePathFastNextSource++];
+	private LatePathRequest nextOrder2Request() {
+		while (latePathNextSource < latePathRequests.length) {
+			LatePathRequest request = latePathRequests[latePathNextSource++];
 			if (request != null && !request.speaker().isRemoved()) {
 				return request;
 			}
@@ -2085,218 +2185,687 @@ public final class AvReceiverPlayback {
 		return null;
 	}
 
-	private void finishFastPhase(Vec3 listener, Vec3 forward,
-								 CinemaClientConfig config, long now) {
-		if (!latePathBuildActive && latePathCandidates.isEmpty()) {
+	private void finishOrder2Phase(Vec3 listener, Vec3 forward,
+								   CinemaClientConfig config, long now) {
+		if (!latePathBuildActive && latePathCandidates.isEmpty()
+			&& order2Publish == null) {
 			// lateReverb can be toggled on between reflection updates. Until the
 			// next update publishes latePathRequests there is nothing to solve;
 			// finishing here would publish an empty "steady" state and compute
 			// upgrade against the zero epoch sentinel.
 			return;
 		}
-		double temperatureC = config.airTemperatureC();
-		double humidityPercent = config.airHumidityPercent();
-		double pressureKpa = AirAbsorption.REFERENCE_PRESSURE_KPA;
-		List<LatePathCandidate> premium2 = selectPremium(latePathCandidates, 2,
-			MAX_PREMIUM_ORDER2_REFLECTIONS,
-			latePathDelayLimit.maxDelaySeconds(2));
-		List<LatePathCandidate> premium3 = selectPremium(latePathCandidates, 3,
-			MAX_PREMIUM_ORDER3_REFLECTIONS,
-			latePathDelayLimit.maxDelaySeconds(3));
-		Set<String> premium2Keys = pathKeys(premium2);
-		Set<String> premium3Keys = pathKeys(premium3);
-		Set<String> excluded = new HashSet<>(premium2Keys);
-		excluded.addAll(premium3Keys);
-		List<LatePathCandidate> premiumAll = new ArrayList<>(
-			premium2.size() + premium3.size());
-		premiumAll.addAll(premium2);
-		premiumAll.addAll(premium3);
-		List<ReflectionSource> premiumSources = buildPremiumSources(
-			premiumAll, listener, forward, config, temperatureC,
-			humidityPercent, pressureKpa);
-		List<ReflectionSource> order2Sources = new ArrayList<>();
-		List<ReflectionSource> order3Sources = new ArrayList<>();
-		for (ReflectionSource source : premiumSources) {
-			if (premium2Keys.contains(source.key())) {
-				order2Sources.add(source);
-			} else if (premium3Keys.contains(source.key())) {
-				order3Sources.add(source);
-			}
+		if (order2Publish == null) {
+			order2Publish = new Order2Publish(listener, forward, config, now,
+				new ArrayList<>(latePathCandidates));
 		}
-		premiumOrder2Sources = List.copyOf(order2Sources);
-		premiumOrder3Sources = List.copyOf(order3Sources);
-		latePathFastTaps = List.copyOf(busTaps(latePathCandidates, excluded,
-			config, temperatureC, humidityPercent, pressureKpa, listener,
-			forward, latePathDelayLimit));
-		List<LatePathCandidate> order2Candidates = new ArrayList<>();
-		List<LatePathCandidate> order3Candidates = new ArrayList<>();
-		for (LatePathCandidate candidate : latePathCandidates) {
-			if (candidate.path().order() == 2) {
-				order2Candidates.add(candidate);
-			} else if (candidate.path().order() == 3) {
-				order3Candidates.add(candidate);
+		Order2Publish job = order2Publish;
+		long tickStart = System.nanoTime();
+		long deadline = System.nanoTime() + PUBLISH_SLICE_NANOS;
+		while (true) {
+			if (job.stage == 0) {
+				if (!stepOrder2Taps(job, config, deadline)) {
+					job.workNanos += System.nanoTime() - tickStart;
+					return;
+				}
+				continue;
 			}
-		}
-		PathScatterResult order2Result = buildPathScatter(order2Candidates,
-			config, temperatureC, humidityPercent, pressureKpa, listener,
-			forward, now);
-		order2Scatter = order2Result.contributions();
-		order2RayTaps = order2Result.rays();
-		PathScatterResult order3Result = buildPathScatter(order3Candidates,
-			config, temperatureC, humidityPercent, pressureKpa, listener,
-			forward, now);
-		order3Scatter = order3Result.contributions();
-		order3RayTaps = order3Result.rays();
-		order4Scatter.clear();
-		order4RayTaps = List.of();
-		order4ScatterCandidates.clear();
-		rebuildScatterTaps(config.lateMaterialEq());
-		tapListener = listener;
-		tapForward = forward;
-		currentLateTaps = withScatter(latePathFastTaps);
-		engineTaps(currentLateTaps);
-		latePathBuildActive = false;
-		latePathFastApplied = true;
-		latePathDeepApplied = false;
-		latePathDeepNextSource = 0;
-		latePathDeepTaps.clear();
-		latePathDeepStartMillis = now;
-		latePathDeepNanos = 0L;
-		latePathDeepDelayRejected = 0;
-		int order2Paths = 0;
-		int order3Paths = 0;
-		for (LatePathCandidate candidate : latePathCandidates) {
-			if (candidate.path().order() == 2) {
-				order2Paths++;
-			} else if (candidate.path().order() == 3) {
-				order3Paths++;
+			if (job.stage == 1) {
+				if (!stepOrder2Scatter(job, config, deadline)) {
+					job.workNanos += System.nanoTime() - tickStart;
+					return;
+				}
+				continue;
 			}
+			break;
 		}
-		CinemaLog.info(CinemaLog.RECEIVER, "{}: geometric late bus steady fast order=3 "
-				+ "busTaps={} requested={} premium2={} premium3={} paths={} "
-				+ "(order2={}, order3={}), maxDelay={} ms, dropped={}, "
-				+ "stable={} ms, upgrade={} ms, solve={} ms",
-			receiverPos.toShortString(), effectiveBusTaps(currentLateTaps),
-			currentLateTaps.size(), premium2.size(), premium3.size(),
-			latePathCandidates.size(), order2Paths, order3Paths,
-			String.format(java.util.Locale.ROOT, "%.1f",
-				latePathDelayLimit.maxDelaySeconds(3) * 1_000.0),
-			latePathFastDelayRejected,
-			now - lastLatePathMoveMillis,
-			latePathBuildStartMillis > 0L ? now - latePathBuildStartMillis : 0L,
-			latePathBuildNanos / 1.0e6);
-		latePathCandidates.clear();
+		job.workNanos += System.nanoTime() - tickStart;
+		order2Publish = null;
+		applyOrder2Publish(job, config);
 	}
 
-	private void stepDeepPhase(ClientLevel level, Vec3 listener, Vec3 forward,
-							   CinemaClientConfig config) {
-		if (audio == null || !config.lateReverb() || !latePathFastApplied
-			|| latePathDeepApplied) {
-			return;
+	/**
+	 * Publishes the exact order-2 late set in small slices. Building every tap
+	 * and scatter ray in one tick cost tens of milliseconds and showed up as a
+	 * frame spike identical to a solve spike, so the work is bounded per tick
+	 * and the previous taps keep playing (30 ms crossfade) until it lands.
+	 */
+	private static final class Order2Publish {
+		final long startNanos = System.nanoTime();
+		final Vec3 listener;
+		final Vec3 forward;
+		final double temperatureC;
+		final double humidityPercent;
+		final double pressureKpa;
+		final long now;
+		final List<LatePathCandidate> candidates;
+		List<LatePathCandidate> premium2 = List.of();
+		Set<String> premium2Keys = Set.of();
+		Set<String> excluded = Set.of();
+		final List<LatePathCandidate> order2;
+		final List<LateReflectionBus.Tap> taps = new ArrayList<>();
+		boolean prepared;
+		int stage;
+		int index;
+		long workNanos;
+		Map<String, ScatterRayBudget.Budget> budgets;
+		Set<String> rayPaths;
+		final List<ScatterContribution> contributions = new ArrayList<>();
+		final List<LateReflectionBus.Tap> rays = new ArrayList<>();
+		PathScatterResult order2Result;
+
+		Order2Publish(Vec3 listener, Vec3 forward, CinemaClientConfig config,
+					  long now, List<LatePathCandidate> candidates) {
+			this.listener = listener;
+			this.forward = forward;
+			this.temperatureC = config.airTemperatureC();
+			this.humidityPercent = config.airHumidityPercent();
+			this.pressureKpa = AirAbsorption.REFERENCE_PRESSURE_KPA;
+			this.now = now;
+			this.candidates = candidates;
+			this.premium2 = List.of();
+			this.premium2Keys = Set.of();
+			this.excluded = Set.of();
+			this.order2 = new ArrayList<>();
 		}
-		long now = System.currentTimeMillis();
-		if (latePathDeepSession == null) {
-			LatePathRequest request = nextDeepRequest();
-			if (request == null) {
-				finishDeepPhase(now, config, listener, forward);
-				return;
+	}
+
+	private Order2Publish order2Publish;
+
+	/** Builds the bus taps for one slice; returns true when the stage finished. */
+	private boolean stepOrder2Taps(Order2Publish job, CinemaClientConfig config,
+								   long deadline) {
+		if (!job.prepared) {
+			job.prepared = true;
+			List<LatePathCandidate> premium2 = selectPremium(job.candidates, 2,
+				MAX_PREMIUM_ORDER2_REFLECTIONS,
+				latePathDelayLimit.maxDelaySeconds(2));
+			job.premium2 = premium2;
+			job.premium2Keys = pathKeys(premium2);
+			job.excluded = new HashSet<>(job.premium2Keys);
+			premiumOrder2Sources = buildPremiumSources(premium2, job.listener,
+				job.forward, config, job.temperatureC, job.humidityPercent,
+				job.pressureKpa);
+			for (LatePathCandidate candidate : job.candidates) {
+				if (candidate.path().order() == 2) {
+					job.order2.add(candidate);
+				}
 			}
-			latePathDeepRequest = request;
-			latePathDeepSession = new ImageSourcePathSolver.Session(
-				request.planes(), request.channel(), sourceKey(request.speaker()),
-				pointOf(request.source()), pointOf(listener),
-				ReflectionProbe.of(level), LATE_PATH_DEEP_ORDER,
-				MAX_DEEP_REFLECTION_PATHS,
-				LATE_PATH_DEEP_ORDER, ImageSourcePathSolver.MAX_VISITS,
-				latePathDelayLimit, lateScatteringEnabled(config));
 		}
-		long stepStart = System.nanoTime();
-		boolean done = latePathDeepSession.step(
-			config.latePathStepBudgetMillis() * 1_000_000L);
-		latePathDeepNanos += System.nanoTime() - stepStart;
-		if (!done) {
-			return;
-		}
-		ImageSourcePathSolver.SolveStats stats = latePathDeepSession.stats();
-		latePathDeepDelayRejected += stats.delayRejected();
-		LatePathRequest request = latePathDeepRequest;
-		double temperatureC = config.airTemperatureC();
-		double humidityPercent = config.airHumidityPercent();
-		double pressureKpa = AirAbsorption.REFERENCE_PRESSURE_KPA;
-		for (ReflectionPathTap path : stats.paths()) {
-			double delay = path.delaySeconds()
-				+ directDelaySeconds(request.speaker());
-			if (delay > latePathDelayLimit.maxDelaySeconds(path.order())) {
+		while (job.index < job.candidates.size()) {
+			LatePathCandidate candidate = job.candidates.get(job.index++);
+			if (job.excluded.contains(candidate.path().pathKey())) {
+				continue;
+			}
+			if (candidateDelaySeconds(candidate)
+				> latePathDelayLimit.maxDelaySeconds(candidate.path().order())) {
 				lateTapsAboveDelay++;
 				continue;
 			}
-			LateReflectionBus.Tap tap = lateTapFromPath(path,
-				request.speaker(), config, temperatureC, humidityPercent,
-				pressureKpa, listener, forward);
+			LateReflectionBus.Tap tap = lateTapFromPath(candidate.path(),
+				candidate.speaker(), config, job.temperatureC,
+				job.humidityPercent, job.pressureKpa, job.listener,
+				job.forward);
 			if (tap != null) {
-				latePathDeepTaps.add(tap);
+				job.taps.add(tap);
 			}
-			order4ScatterCandidates.add(
-				new LatePathCandidate(path, request.speaker()));
-		}
-		latePathDeepSession = null;
-		latePathDeepRequest = null;
-		if (latePathDeepNextSource >= latePathRequests.length) {
-			finishDeepPhase(now, config, listener, forward);
-		}
-	}
-
-	private LatePathRequest nextDeepRequest() {
-		while (latePathDeepNextSource < latePathRequests.length) {
-			LatePathRequest request = latePathRequests[latePathDeepNextSource++];
-			if (request != null && !request.speaker().isRemoved()) {
-				return request;
+			if ((job.index & 7) == 0 && System.nanoTime() >= deadline) {
+				return false;
 			}
 		}
-		return null;
+		job.stage = 1;
+		job.index = 0;
+		return true;
 	}
 
-	private void finishDeepPhase(long now, CinemaClientConfig config,
-								  Vec3 listener, Vec3 forward) {
-		List<LateReflectionBus.Tap> combined = new ArrayList<>(
-			latePathFastTaps.size() + latePathDeepTaps.size());
-		combined.addAll(latePathFastTaps);
-		combined.addAll(latePathDeepTaps);
-		PathScatterResult order4Result = buildPathScatter(
-			order4ScatterCandidates, config, config.airTemperatureC(),
-			config.airHumidityPercent(), AirAbsorption.REFERENCE_PRESSURE_KPA,
-			listener, forward, now);
-		order4Scatter.clear();
-		order4Scatter.addAll(order4Result.contributions());
-		order4RayTaps = order4Result.rays();
-		order4ScatterCandidates.clear();
+	/** Accumulates the order-2 scatter for the current slice. */
+	private boolean stepOrder2Scatter(Order2Publish job,
+									  CinemaClientConfig config, long deadline) {
+		if (job.index == 0) {
+			if (!lateScatteringEnabled(config) || job.order2.isEmpty()) {
+				job.order2Result = new PathScatterResult(List.of(), List.of());
+				job.stage = 2;
+				job.index = 0;
+				return true;
+			}
+			job.budgets = pathRayBudgets(job.order2, job.now);
+			job.rayPaths = selectRayPaths(job.order2, job.budgets);
+		}
+		while (job.index < job.order2.size()) {
+			accumulatePathScatter(job.order2.get(job.index++), job.budgets,
+				job.rayPaths, config, job.temperatureC, job.humidityPercent,
+				job.pressureKpa, job.listener, job.forward,
+				job.contributions, job.rays);
+			if ((job.index & 7) == 0 && System.nanoTime() >= deadline) {
+				return false;
+			}
+		}
+		job.order2Result = new PathScatterResult(
+			List.copyOf(job.contributions), List.copyOf(job.rays));
+		job.contributions.clear();
+		job.rays.clear();
+		job.stage = 2;
+		job.index = 0;
+		return true;
+	}
+
+	private void applyOrder2Publish(Order2Publish job,
+									CinemaClientConfig config) {
+		latePathTaps = List.copyOf(job.taps);
+		order2Scatter = job.order2Result == null
+			? List.of() : job.order2Result.contributions();
+		order2RayTaps = job.order2Result == null
+			? List.of() : job.order2Result.rays();
 		rebuildScatterTaps(config.lateMaterialEq());
-		tapListener = listener;
-		tapForward = forward;
-		currentLateTaps = withScatter(combined);
+		tapListener = job.listener;
+		tapForward = job.forward;
+		currentLateTaps = withScatter(latePathTaps);
 		engineTaps(currentLateTaps);
-		latePathDeepApplied = true;
-		CinemaLog.info(CinemaLog.RECEIVER, "{}: geometric late bus steady deep order=4 "
-				+ "busTaps={} requested={} fastTaps={} deepTaps={}, "
-				+ "maxDelay={} ms, dropped={}, "
-				+ "stable={} ms, deepUpgrade={} ms, solve={} ms",
+		latePathBuildActive = false;
+		publishedOrder = PUBLISHED_ORDER_MIRROR;
+		// A fresh order-2 publish is the natural retry point for the RT tail.
+		rtGridFailed = false;
+		CinemaLog.info(CinemaLog.RECEIVER, "{}: late bus publishedOrder=2 "
+				+ "solver=mirror busTaps={} requested={} premium(order=2)={} "
+				+ "paths={} (order=2 paths={}) maxDelayMs={} dropped={} "
+				+ "sinceMoveMs={} buildWallMs={} solveMs={} publishWorkMs={} "
+				+ "publishWallMs={}",
 			receiverPos.toShortString(), effectiveBusTaps(currentLateTaps),
-			currentLateTaps.size(), latePathFastTaps.size(),
-			latePathDeepTaps.size(),
+			currentLateTaps.size(), job.premium2.size(),
+			job.candidates.size(), job.order2.size(),
 			String.format(java.util.Locale.ROOT, "%.1f",
-				latePathDelayLimit.maxDelaySeconds(4) * 1_000.0),
-			latePathDeepDelayRejected,
-			now - lastLatePathMoveMillis,
-			latePathDeepStartMillis > 0L
-				? now - latePathDeepStartMillis : 0L,
-			latePathDeepNanos / 1.0e6);
-		latePathDeepTaps.clear();
+				latePathDelayLimit.maxDelaySeconds(2) * 1_000.0),
+			latePathDelayRejected,
+			job.now - lastLatePathMoveMillis,
+			latePathBuildStartMillis > 0L
+				? job.now - latePathBuildStartMillis : 0L,
+			latePathBuildNanos / 1.0e6,
+			job.workNanos / 1.0e6,
+			(System.nanoTime() - job.startNanos) / 1.0e6);
+		latePathCandidates.clear();
+	}
+
+	/**
+	 * In-flight order >= 3 accumulation. One kernel pass runs per tick, so a
+	 * build spans several ticks while the previously published taps keep
+	 * playing; the field is only replaced once every pass has been folded in.
+	 */
+	private static final class RtBuild {
+		final Vec3 listener;
+		final long roomVersion;
+		final int passes;
+		final int rays;
+		final int bounces;
+		final RtLateFieldBins bins;
+		final long startNanos = System.nanoTime();
+		int pass;
+		int connected;
+		long gridNanos;
+		long traceNanos;
+
+		RtBuild(Vec3 listener, long roomVersion, int passes,
+				int rays, int bounces, RtLateFieldBins bins) {
+			this.listener = listener;
+			this.roomVersion = roomVersion;
+			this.passes = passes;
+			this.rays = rays;
+			this.bounces = bounces;
+			this.bins = bins;
+		}
+	}
+
+	/** Golden-ratio phase for the next pass, in {@code [0,1)}. */
+	private float nextRtRayOffset() {
+		rtPassSerial++;
+		double phase = (rtPassSerial * RT_PASS_PHASE_STEP) % 1.0;
+		return (float) phase;
+	}
+
+	/** First physical speaker index per 5.1 channel, or -1. */
+	private int[] rtChannelSpeakers() {
+		int[] channelSpeaker = new int[RtLateFieldBins.CHANNELS];
+		Arrays.fill(channelSpeaker, -1);
+		for (int i = 0; i < physicalSpeakerWorldPositions.length; i++) {
+			int channel = physicalSpeakerChannels != null
+				&& i < physicalSpeakerChannels.length
+				? physicalSpeakerChannels[i] : i;
+			if (channel >= 0 && channel < channelSpeaker.length
+				&& channelSpeaker[channel] < 0) {
+				channelSpeaker[channel] = i;
+			}
+		}
+		return channelSpeaker;
+	}
+
+	/**
+	 * Direct-path distance and flight-time offset per 5.1 channel. Both are
+	 * needed to express a hit in the bus delay domain (excess over direct).
+	 */
+	private void rtDirectPaths(int[] channelSpeaker, Vec3 listener,
+							   double[] directMeters, double[] directDelay) {
+		Arrays.fill(directMeters, 0.0);
+		Arrays.fill(directDelay, 0.0);
+		for (int channel = 0; channel < channelSpeaker.length; channel++) {
+			int speakerIndex = channelSpeaker[channel];
+			if (speakerIndex < 0
+				|| speakerIndex >= physicalSpeakerWorldPositions.length) {
+				continue;
+			}
+			float[] position = physicalSpeakerWorldPositions[speakerIndex];
+			if (position != null) {
+				double dx = position[0] - listener.x;
+				double dy = position[1] - listener.y;
+				double dz = position[2] - listener.z;
+				directMeters[channel] = Math.sqrt(dx * dx + dy * dy + dz * dz);
+			}
+			if (physicalSpeakerDirectDelays != null
+				&& speakerIndex < physicalSpeakerDirectDelays.length) {
+				directDelay[channel] = physicalSpeakerDirectDelays[speakerIndex];
+			}
+		}
+	}
+
+	/**
+	 * Folds one pass into the delay/direction bins. Only order >= 3 hits that
+	 * reached a speaker count: orders 1-2 are owned by the exact solver.
+	 *
+	 * @return number of hits that entered the bins
+	 */
+	private int foldRtHits(RtBuild build, CudaRayTracer.Hit[] hits,
+						   Vec3 listener) {
+		int[] channelSpeaker = rtChannelSpeakers();
+		double[] directMeters = new double[RtLateFieldBins.CHANNELS];
+		double[] directDelay = new double[RtLateFieldBins.CHANNELS];
+		rtDirectPaths(channelSpeaker, listener, directMeters, directDelay);
+		double maxDelay = Math.min(lateBusMaxDelaySeconds,
+			CinemaAudioEngine.lateBusMaxDelaySeconds());
+		maxDelay = Math.min(maxDelay, RtLateFieldBins.MAX_DELAY_SECONDS);
+		int connected = 0;
+		for (CudaRayTracer.Hit hit : hits) {
+			int channel = hit.channel();
+			if (channel < 0 || channel >= directMeters.length
+				|| !(hit.gain() > 0.0f)) {
+				continue;
+			}
+			if (hit.order() < RT_MIN_ORDER) {
+				continue;
+			}
+			double pathMeters = hit.delaySeconds() * 343.0;
+			// Same convention as lateTapFromPath: excess delay over the direct
+			// path, plus the mod's direct flight-time offset.
+			double tapDelay = (pathMeters - directMeters[channel])
+				/ DirectPropagationDelay.SPEED_OF_SOUND + directDelay[channel];
+			if (!(tapDelay >= 0.0) || tapDelay >= maxDelay) {
+				continue;
+			}
+			if (build.bins.accumulate(hit, tapDelay)) {
+				connected++;
+			}
+		}
+		return connected;
+	}
+
+	/**
+	 * Advances the order >= 3 tail. The CUDA ray tracer is the only source for
+	 * it: when RT is disabled, unavailable, or yields no taps, the bus
+	 * legitimately stays at the published order-2 field (plus scatter).
+	 */
+	private void stepRtPhase(ClientLevel level, Vec3 listener, Vec3 forward,
+							 CinemaClientConfig config) {
+		if (audio == null || !config.lateReverb()
+			|| publishedOrder < PUBLISHED_ORDER_MIRROR) {
+			return;
+		}
+		if (!config.rayTracingEnabled() || !lateScatteringEnabled(config)
+			|| rtGridFailed || !CudaRayTracer.available()) {
+			return;
+		}
+		if (latePathResetPending) {
+			// The order-2 field is about to be rebuilt, so an in-flight average
+			// describes a field that is already gone.
+			rtBuild = null;
+			return;
+		}
+		if (!runRtPhase(level, listener, forward, config)) {
+			// Keep the order-2 field and do not re-trace every tick; the next
+			// rebuild clears the flag.
+			rtGridFailed = true;
+		}
+	}
+
+	/**
+	 * CUDA ray-traced diffuse tail for order >= 3. premium2 and the exact
+	 * order-1/2 reflections stay untouched. Each call runs exactly one pass
+	 * and folds it into the delay/direction bins; the field is published only
+	 * after {@code rayTraceAccumulation} passes, so in-progress ticks keep the
+	 * previous taps playing. Returns false only when the build failed; true
+	 * also means "one more pass is still needed".
+	 */
+	private boolean runRtPhase(ClientLevel level, Vec3 listener, Vec3 forward,
+							   CinemaClientConfig config) {
+		CinemaAudioEngine engine = audio;
+		if (engine == null || level == null || listener == null
+			|| physicalSpeakerWorldPositions == null
+			|| physicalSpeakerWorldPositions.length == 0 || rtGridFailed) {
+			return false;
+		}
+		if (!lateScatteringEnabled(config)) {
+			// A/B switch is off: the diffuse field must stay silent. Order >= 3
+			// has no exact fallback anymore, so the bus stops at order 2.
+			return false;
+		}
+		int rays = config.rayTraceRays();
+		int bounces = config.rayTraceBounces();
+		int passes = Math.max(1, config.rayTraceAccumulation());
+		try {
+			if (rtTracer == null) {
+				rtTracer = new CudaRayTracer();
+			}
+			boolean rebuild = rtGrid == null
+				|| rtGridRoomVersion != lastReflectionRoomVersion;
+			long gridNanos = 0L;
+			if (rebuild) {
+				long gridStart = System.nanoTime();
+				rtGrid = buildRtGrid(level, listener);
+				gridNanos = System.nanoTime() - gridStart;
+				if (rtGrid == null) {
+					rtGridFailed = true;
+					rtBuild = null;
+					return false;
+				}
+				rtTracer.upload(rtGrid);
+				rtGridRoomVersion = lastReflectionRoomVersion;
+			}
+			// One accumulation describes one listener position, one room and
+			// one ray budget; anything else is a different field, so restart.
+			if (rtBuild != null && (rebuild
+				|| rtBuild.passes != passes || rtBuild.rays != rays
+				|| rtBuild.bounces != bounces
+				|| rtBuild.roomVersion != lastReflectionRoomVersion
+				|| rtBuild.listener.distanceToSqr(listener)
+					> RT_ACCUM_MOVE_TOLERANCE_SQR)) {
+				rtBuild = null;
+				rtRestartPending = true;
+			}
+			if (rtBuild == null) {
+				if (rtRestartPending && System.currentTimeMillis()
+					- lastLatePathMoveMillis < requiredStableMillis(config)) {
+					// Still moving: do not burn a pass per tick on a field that
+					// would be discarded again next tick.
+					return true;
+				}
+				rtRestartPending = false;
+				if (rtBins == null) {
+					rtBins = new RtLateFieldBins();
+				}
+				rtBins.reset();
+				rtBuild = new RtBuild(listener,
+					lastReflectionRoomVersion, passes, rays, bounces, rtBins);
+			}
+			RtBuild build = rtBuild;
+			build.gridNanos += gridNanos;
+
+			List<CudaRayTracer.Speaker> speakers = new ArrayList<>(
+				physicalSpeakerWorldPositions.length);
+			for (int i = 0; i < physicalSpeakerWorldPositions.length; i++) {
+				float[] position = physicalSpeakerWorldPositions[i];
+				int channel = physicalSpeakerChannels != null
+					&& i < physicalSpeakerChannels.length
+					? physicalSpeakerChannels[i] : i;
+				if (position == null || channel < 0) {
+					continue;
+				}
+				// Speaker trim and reflection-FIR level are applied on the host.
+				speakers.add(new CudaRayTracer.Speaker(position[0],
+					position[1], position[2], channel, 1.0f));
+			}
+			float metersPerBlock = (float) AcousticScale.blocksToMeters(1.0);
+			long traceStart = System.nanoTime();
+			CudaRayTracer.Hit[] hits = rtTracer.trace((float) listener.x,
+				(float) listener.y, (float) listener.z, rays, bounces,
+				RT_MAX_DISTANCE_METERS, metersPerBlock, speakers,
+				nextRtRayOffset());
+			build.traceNanos += System.nanoTime() - traceStart;
+			if (hits.length == 0) {
+				rtBuild = null;
+				return false;
+			}
+			// Fold this pass into the delay/direction bins; the previously
+			// published taps keep playing until the last pass has landed.
+			build.connected += foldRtHits(build, hits, listener);
+			build.bins.finishPass();
+			build.pass++;
+			if (build.pass < build.passes) {
+				return true;
+			}
+
+			long convertStart = System.nanoTime();
+			WetLayout.Frame frame = frameFor(listener, forward);
+			List<RtLateFieldBins.BinTap> binTaps = build.bins.taps(0.0);
+			if (binTaps.isEmpty()) {
+				rtBuild = null;
+				return false;
+			}
+			binTaps.sort(java.util.Comparator.comparingDouble(
+				RtLateFieldBins.BinTap::gain).reversed());
+			List<LateReflectionBus.Tap> candidates = new ArrayList<>();
+			int[] channelSpeaker = rtChannelSpeakers();
+			double[] directMeters = new double[RtLateFieldBins.CHANNELS];
+			double[] directDelay = new double[RtLateFieldBins.CHANNELS];
+			rtDirectPaths(channelSpeaker, listener, directMeters, directDelay);
+			double temperatureC = config.airTemperatureC();
+			double humidityPercent = config.airHumidityPercent();
+			double pressureKpa = AirAbsorption.REFERENCE_PRESSURE_KPA;
+			for (RtLateFieldBins.BinTap bin : binTaps) {
+				int channel = bin.channel();
+				int speakerIndex = channel;
+				if (channel >= 0 && channel < channelSpeaker.length) {
+					speakerIndex = channelSpeaker[channel];
+				}
+				float[] world = {bin.direction()[0], bin.direction()[1],
+					bin.direction()[2]};
+				float[] local = frame.toLocalDirection(world);
+				if (matchesPremium(channel, bin.delaySeconds(), local)) {
+					continue;
+				}
+				Vbap.Weights weights = Vbap.pan(local, physicalSpeakerPositions,
+					physicalSpeakerChannels);
+				if (weights.isEmpty()) {
+					continue;
+				}
+				double tapDelay = bin.delaySeconds();
+				String key = "rt:" + channel + ":"
+					+ Math.round(tapDelay * 1_000.0) + ":"
+					+ Math.round(local[0] * 20.0) + ":"
+					+ Math.round(local[1] * 20.0) + ":"
+					+ Math.round(local[2] * 20.0);
+				// Same brightness contract as Tap.fromPath: material EQ keeps
+				// only the distance term and attaches the three-band filter.
+				AcousticMaterial material = materialFor(bin.material());
+				// The bin delay is listener-relative; recover the travelled
+				// path so the directivity and air terms stay physical.
+				double pathMeters = (tapDelay - directDelay[channel])
+					* DirectPropagationDelay.SPEED_OF_SOUND
+					+ directMeters[channel];
+				pathMeters = Math.max(0.0, pathMeters);
+				Vec3 firstReflection = new Vec3(
+					listener.x + world[0] * pathMeters,
+					listener.y + world[1] * pathMeters,
+					listener.z + world[2] * pathMeters);
+				double gain = bin.gain() * RT_GAIN;
+				if (speakerIndex >= 0
+					&& speakerIndex < physicalSpeakerProfiles.length) {
+					SpeakerDataProfile profile =
+						physicalSpeakerProfiles[speakerIndex];
+					Vec3 frontPosition = physicalSpeakerFronts[speakerIndex];
+					Vec3 speakerForward = physicalSpeakerForwards[speakerIndex];
+					if (profile != null && frontPosition != null
+						&& speakerForward != null) {
+						SpeakerDirectivityService.Angles angles =
+							SpeakerDirectivityService.angles(frontPosition,
+								speakerForward, firstReflection);
+						CommonAcousticFirProfile fir =
+							CommonAcousticFirProfile.reflection(profile,
+								angles.horizontal(), angles.vertical(),
+								pathMeters, config.airAbsorption(),
+								temperatureC, humidityPercent, pressureKpa,
+								material, OcclusionResult.NONE,
+								speakerIndex < physicalSpeakerSubwoofers.length
+									? physicalSpeakerSubwoofers[speakerIndex] : null);
+						gain *= physicalSpeakerGains[speakerIndex]
+							* overallGain(fir);
+					}
+				}
+				boolean materialEq = config.lateMaterialEq();
+				double damping = Math.max(2_000.0, materialEq
+					? 12_000.0 - 150.0 * pathMeters
+					: 12_000.0 - 6_000.0 * bin.high()
+						- 150.0 * pathMeters);
+				MaterialReflectionFilter filter = materialEq && material != null
+					? MaterialReflectionFilter.of(material,
+						CinemaAudioEngine.SAMPLE_RATE)
+					: MaterialReflectionFilter.FLAT;
+				candidates.add(new LateReflectionBus.Tap(channel, tapDelay, gain,
+					damping, world, weights.channels(), weights.weights(), key,
+					filter, Math.min(4, bin.order())));
+			}
+			if (candidates.isEmpty()) {
+				rtBuild = null;
+				return false;
+			}
+			candidates.sort(java.util.Comparator.comparingDouble(
+				(LateReflectionBus.Tap tap) -> tap.gain()).reversed());
+			int keep = Math.min(RT_TAP_CANDIDATES, candidates.size());
+			List<LateReflectionBus.Tap> rtTaps = new ArrayList<>(keep);
+			for (int i = 0; i < keep; i++) {
+				rtTaps.add(candidates.get(i));
+			}
+			double rtPower = 0.0;
+			double rtMax = 0.0;
+			for (LateReflectionBus.Tap tap : rtTaps) {
+				double gain = tap.gain();
+				rtPower += gain * gain;
+				rtMax = Math.max(rtMax, gain);
+			}
+
+			List<LateReflectionBus.Tap> combined = new ArrayList<>(
+				latePathTaps.size() + rtTaps.size());
+			combined.addAll(latePathTaps);
+			combined.addAll(rtTaps);
+			rebuildScatterTaps(config.lateMaterialEq());
+			tapListener = listener;
+			tapForward = forward;
+			currentLateTaps = withScatter(combined);
+			engineTaps(currentLateTaps);
+			publishedOrder = PUBLISHED_ORDER_RT;
+			lastScatterRefreshMillis = System.currentTimeMillis();
+			CinemaLog.info(CinemaLog.RECEIVER,
+				"{}: late bus publishedOrder=3 solver=raytrace order>=3 rays={} "
+					+ "bounces={} passes={} connected={} taps={} maxGain={} "
+					+ "powerDb={} grid={}x{}x{} gridMs={} traceMs={} "
+					+ "convertMs={} totalMs={}",
+				receiverPos.toShortString(), rays, bounces, build.passes,
+				build.connected, rtTaps.size(),
+				String.format(java.util.Locale.ROOT, "%.4f", rtMax),
+				String.format(java.util.Locale.ROOT, "%.1f",
+					10.0 * Math.log10(Math.max(1.0e-12, rtPower))),
+				rtGrid.sizeX, rtGrid.sizeY, rtGrid.sizeZ,
+				build.gridNanos / 1.0e6, build.traceNanos / 1.0e6,
+				(System.nanoTime() - convertStart) / 1.0e6,
+				(System.nanoTime() - build.startNanos) / 1.0e6);
+			rtBuild = null;
+			return true;
+		} catch (Throwable t) {
+			rtGridFailed = true;
+			rtBuild = null;
+			CinemaLog.warn(CinemaLog.RECEIVER,
+				"{}: CUDA ray tracing failed, keeping order-2 late field: {}",
+				receiverPos.toShortString(), t.toString());
+			return false;
+		}
+	}
+
+	private AcousticVoxelGrid buildRtGrid(ClientLevel level, Vec3 listener) {
+		double minX = listener.x;
+		double maxX = listener.x;
+		double minY = listener.y;
+		double maxY = listener.y;
+		double minZ = listener.z;
+		double maxZ = listener.z;
+		for (float[] position : physicalSpeakerWorldPositions) {
+			if (position == null) {
+				continue;
+			}
+			minX = Math.min(minX, position[0]);
+			maxX = Math.max(maxX, position[0]);
+			minY = Math.min(minY, position[1]);
+			maxY = Math.max(maxY, position[1]);
+			minZ = Math.min(minZ, position[2]);
+			maxZ = Math.max(maxZ, position[2]);
+		}
+		int x0 = (int) Math.floor(minX) - RT_GRID_MARGIN;
+		int x1 = (int) Math.ceil(maxX) + RT_GRID_MARGIN;
+		int z0 = (int) Math.floor(minZ) - RT_GRID_MARGIN;
+		int z1 = (int) Math.ceil(maxZ) + RT_GRID_MARGIN;
+		int y0 = Math.max(level.getMinBuildHeight(),
+			(int) Math.floor(minY) - RT_GRID_MARGIN);
+		int y1 = Math.min(level.getMaxBuildHeight() - 1,
+			(int) Math.ceil(maxY) + RT_GRID_MARGIN);
+		long cells = (long) (x1 - x0 + 1) * (y1 - y0 + 1) * (z1 - z0 + 1);
+		if (cells <= 0 || cells > AcousticVoxelGrid.MAX_CELLS) {
+			CinemaLog.warn(CinemaLog.RECEIVER,
+				"{}: ray-trace grid too large ({} cells), skipping",
+				receiverPos.toShortString(), cells);
+			return null;
+		}
+		return AcousticVoxelGrid.from(level, x0, y0, z0, x1, y1, z1);
+	}
+
+	/** Resolves a voxel material index for the tap filter. */
+	private AcousticMaterial materialFor(int index) {
+		if (rtGrid == null || rtGrid.materials == null || index < 0
+			|| index >= rtGrid.materials.size()) {
+			return null;
+		}
+		return rtGrid.materials.get(index);
+	}
+
+	/** Drops RT taps that duplicate a discrete premium path. */
+	private boolean matchesPremium(int channel, double delay, float[] direction) {
+		return matchesPremium(premiumOrder2Sources, channel, delay, direction);
+	}
+
+	private static boolean matchesPremium(List<ReflectionSource> sources,
+										  int channel, double delay,
+										  float[] direction) {
+		if (sources == null || sources.isEmpty() || direction == null) {
+			return false;
+		}
+		for (ReflectionSource source : sources) {
+			if (source.channel() != channel
+				|| Math.abs(source.delaySeconds() - delay)
+					> RT_DEDUP_DELAY_SECONDS) {
+				continue;
+			}
+			double length = Math.sqrt(source.x() * source.x()
+				+ source.y() * source.y() + source.z() * source.z());
+			if (length < 1.0e-6) {
+				continue;
+			}
+			double dot = (source.x() * direction[0]
+				+ source.y() * direction[1] + source.z() * direction[2])
+				/ length;
+			if (dot >= RT_DEDUP_ANGLE) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**
 	 * Mirrors {@code LateReflectionBus.setTaps}: invalid taps are discarded and
 	 * the bus keeps only its strongest {@code LATE_BUS_MAX_TAPS}. Reporting the
-	 * published list size alone hides deep taps that never reach the bus.
+	 * published list size alone hides taps that never reach the bus.
 	 */
 	private int effectiveBusTaps(List<LateReflectionBus.Tap> taps) {
 		if (taps == null || taps.isEmpty()) {
@@ -2316,7 +2885,7 @@ public final class AvReceiverPlayback {
 
 	/**
 	 * Replaces any existing {@code scatter:*} taps with the latest diffuse
-	 * send while preserving the order-2/3/4 taps.
+	 * send while preserving the exact order-1/2 taps.
 	 */
 	private List<LateReflectionBus.Tap> withScatter(
 		List<LateReflectionBus.Tap> base) {
@@ -2349,12 +2918,20 @@ public final class AvReceiverPlayback {
 
 	/**
 	 * Refreshes the diffuse send even when the late path solver is in a steady
-	 * state and does not republish order-2/3/4 taps.
+	 * state and does not republish the exact or ray-traced taps.
 	 */
 	private void refreshScatterTaps() {
 		if (audio == null) {
 			return;
 		}
+		// Republishing the merged bus rebuilds the whole wet layout and repans
+		// every tap (~900), so a diffuse-bed change must not run at the 5-10 Hz
+		// reflection cadence. 750 ms keeps the bed responsive without a spike.
+		long now = System.currentTimeMillis();
+		if (now - lastScatterRefreshMillis < SCATTER_REFRESH_MILLIS) {
+			return;
+		}
+		lastScatterRefreshMillis = now;
 		List<LateReflectionBus.Tap> merged = withScatter(currentLateTaps);
 		if (merged.equals(currentLateTaps)) {
 			return;
@@ -2369,9 +2946,11 @@ public final class AvReceiverPlayback {
 			return;
 		}
 		long now = System.currentTimeMillis();
+		WetLayout.Frame frame = wetFrame();
 		WetLayout.Layout layout = wetLayoutBuilder.build(taps,
 			physicalSpeakerWorldPositions, physicalSpeakerChannels,
-			wetFrame(), now);
+			frame, now);
+		lastWetLayout = layout;
 		lastWetPointCount = layout.pointCount();
 		lastWetPhysicalCount = layout.physicalCount();
 		lastWetActiveCount = layout.activeCount();
@@ -2391,7 +2970,8 @@ public final class AvReceiverPlayback {
 				continue;
 			}
 			if (tap.channel() == Vbap.LFE_CHANNEL
-				&& tap.key().startsWith("scatter:")) {
+				&& (tap.key().startsWith("scatter:")
+					|| tap.key().startsWith("rt:"))) {
 				int[] lfe = layout.lfeIndices();
 				if (lfe.length > 0) {
 					float weight = (float) (1.0 / Math.sqrt(lfe.length));
@@ -2402,7 +2982,11 @@ public final class AvReceiverPlayback {
 				continue;
 			}
 			boolean directional = isDirectional(tap.direction());
-			Vbap.Weights weights = layout.pan(tap.direction(), directional);
+			// Taps store world-space directions; VBAP consumes listener space.
+			// A rigid listener rotation keeps every pan weight identical, so
+			// this conversion only happens when the tap set is (re)built.
+			Vbap.Weights weights = layout.pan(
+				frame.toLocalDirection(tap.direction()), directional);
 			if (weights.isEmpty()) {
 				continue;
 			}
@@ -2444,9 +3028,13 @@ public final class AvReceiverPlayback {
 
 	/**
 	 * Reprices only the listener-relative representation when the player turns.
-	 * Reflection geometry, delays and gains are unchanged; no path solver runs.
-	 * Taps and per-tap sources are rotated from the last published listener
-	 * frame to the new one, then the wet layout is republished.
+	 * Reflection geometry, delays, gains and the tap list are unchanged; no path
+	 * solver runs and no tap is rewritten.
+	 *
+	 * <p>Taps and the wet layout keep world-space directions/positions, and a
+	 * rigid listener rotation leaves every VBAP weight identical. Only the
+	 * OpenAL source positions (reflection sources and wet points) are moved into
+	 * the new listener frame, which is O(sources + points) instead of O(taps).
 	 */
 	private void updateReflectionOrientation(Vec3 listener, Vec3 forward) {
 		if (tapListener == null || tapForward == null
@@ -2458,15 +3046,7 @@ public final class AvReceiverPlayback {
 		}
 		WetLayout.Frame oldFrame = frameFor(tapListener, tapForward);
 		WetLayout.Frame newFrame = frameFor(listener, forward);
-		currentLateTaps = rotateTaps(currentLateTaps, oldFrame, newFrame);
-		scatterTaps = rotateTaps(scatterTaps, oldFrame, newFrame);
-		diffuseRayTaps = rotateTaps(diffuseRayTaps, oldFrame, newFrame);
-		order2RayTaps = rotateTaps(order2RayTaps, oldFrame, newFrame);
-		order3RayTaps = rotateTaps(order3RayTaps, oldFrame, newFrame);
-		order4RayTaps = rotateTaps(order4RayTaps, oldFrame, newFrame);
 		premiumOrder2Sources = rotateSources(premiumOrder2Sources,
-			oldFrame, newFrame);
-		premiumOrder3Sources = rotateSources(premiumOrder3Sources,
 			oldFrame, newFrame);
 		if (!currentReflectionSources.isEmpty()) {
 			currentReflectionSources = rotateSources(currentReflectionSources,
@@ -2477,27 +3057,23 @@ public final class AvReceiverPlayback {
 		}
 		tapListener = listener;
 		tapForward = forward;
+		refreshWetLayoutFrame(newFrame);
 		debugListener = listener;
 		debugForward = forward;
-		engineTaps(currentLateTaps);
+		if (lastWetLayout != null) {
+			updateDebugSources(lastWetLayout);
+		}
 	}
 
-	private static List<LateReflectionBus.Tap> rotateTaps(
-		List<LateReflectionBus.Tap> taps, WetLayout.Frame oldFrame,
-		WetLayout.Frame newFrame) {
-		if (taps == null || taps.isEmpty()) {
-			return List.of();
+	/** Moves the wet points into a new listener frame without rebuilding taps. */
+	private void refreshWetLayoutFrame(WetLayout.Frame frame) {
+		CinemaAudioEngine engine = audio;
+		WetLayout.Layout layout = lastWetLayout;
+		if (engine == null || layout == null) {
+			return;
 		}
-		List<LateReflectionBus.Tap> rotated = new ArrayList<>(taps.size());
-		for (LateReflectionBus.Tap tap : taps) {
-			if (tap == null) {
-				continue;
-			}
-			float[] world = oldFrame.toWorldDirection(tap.direction());
-			rotated.add(tap.withDirection(
-				newFrame.toLocalDirection(world)));
-		}
-		return List.copyOf(rotated);
+		engine.setWetLayout(layout.pointCount(),
+			layout.localPositions(frame), layout.lfeIndices());
 	}
 
 	private static List<ReflectionSource> rotateSources(
@@ -2608,30 +3184,27 @@ public final class AvReceiverPlayback {
 		return x * x + y * y + z * z > 1.0e-12;
 	}
 
+	/**
+	 * Discards the current late-path build so the next {@link #stepLatePhase}
+	 * restarts at the exact order-2 mirrors and then re-runs the RT tail.
+	 */
 	private void resetLatePathBuild() {
 		latePathBuildActive = false;
-		latePathFastApplied = false;
-		latePathDeepApplied = false;
+		order2Publish = null;
+		publishedOrder = PUBLISHED_ORDER_NONE;
 		latePathCandidates.clear();
 		order2Scatter = List.of();
-		order3Scatter = List.of();
-		order4Scatter.clear();
 		order2RayTaps = List.of();
-		order3RayTaps = List.of();
-		order4RayTaps = List.of();
-		order4ScatterCandidates.clear();
-		latePathFastNextSource = 0;
-		latePathFastSession = null;
-		latePathFastRequest = null;
-		latePathFastTaps = List.of();
-		latePathDeepTaps.clear();
-		latePathDeepNextSource = 0;
-		latePathDeepSession = null;
-		latePathDeepRequest = null;
+		latePathNextSource = 0;
+		latePathSession = null;
+		latePathRequest = null;
+		latePathTaps = List.of();
 		latePathBuildStartMillis = 0L;
 		latePathBuildNanos = 0L;
-		latePathDeepStartMillis = 0L;
-		latePathDeepNanos = 0L;
+		// A multi-pass RT accumulation belongs to the previous listener
+		// position / room; drop it instead of publishing a stale average.
+		rtBuild = null;
+		rtRestartPending = false;
 	}
 
 	private static String sourceKey(SpeakerBlockEntity speaker) {
@@ -2717,6 +3290,22 @@ public final class AvReceiverPlayback {
 			(float) relative.dot(right),
 			(float) relative.y,
 			(float) -relative.dot(forward),
+		};
+	}
+
+	/** Normalizes a world-space offset into a unit direction (zero-safe). */
+	private static float[] toWorldDirection(Vec3 relative) {
+		if (relative == null) {
+			return new float[3];
+		}
+		double length = relative.length();
+		if (!Double.isFinite(length) || length < 1.0e-9) {
+			return new float[3];
+		}
+		return new float[]{
+			(float) (relative.x / length),
+			(float) (relative.y / length),
+			(float) (relative.z / length),
 		};
 	}
 

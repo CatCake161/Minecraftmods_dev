@@ -1,5 +1,8 @@
 package com.example.cinema;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * Single entry point for Cinema log output.
  *
@@ -35,24 +38,27 @@ public final class CinemaLog {
 	public static final String VIDEO_SPIKE = "video spike";
 	public static final String VIDEO_TEXTURE = "video texture";
 
+	/** Same name as {@link Cinema#LOGGER}, but without initializing the mod. */
+	private static final Logger LOGGER = LoggerFactory.getLogger("cinema");
+
 	private CinemaLog() {
 	}
 
 	public static void info(String area, String message, Object... args) {
-		Cinema.LOGGER.info(line(area, message), args);
+		LOGGER.info(line(area, message), args);
 	}
 
 	public static void warn(String area, String message, Object... args) {
-		Cinema.LOGGER.warn(line(area, message), args);
+		LOGGER.warn(line(area, message), args);
 	}
 
 	public static void error(String area, String message, Object... args) {
-		Cinema.LOGGER.error(line(area, message), args);
+		LOGGER.error(line(area, message), args);
 	}
 
 	public static void debug(String area, String message, Object... args) {
-		if (Cinema.LOGGER.isDebugEnabled()) {
-			Cinema.LOGGER.debug(line(area, message), args);
+		if (LOGGER.isDebugEnabled()) {
+			LOGGER.debug(line(area, message), args);
 		}
 	}
 

@@ -376,7 +376,9 @@ public final class ImageSourcePathSolver {
 					done = true;
 					break;
 				}
-				if (didWork && (visits & 63) == 0
+				// Check the time slice often enough that a single frame never
+				// carries a whole batch of expensive occlusion queries.
+				if (didWork && (visits & 7) == 0
 					&& System.nanoTime() >= deadline) {
 					break;
 				}

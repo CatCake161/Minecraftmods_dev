@@ -5,7 +5,7 @@ import com.example.cinema.client.media.audio.AcousticScale;
 import com.example.cinema.client.media.audio.acoustics.propagation.AirAbsorption;
 import com.example.cinema.client.media.audio.AudioChunk;
 import com.example.cinema.client.media.audio.dsp.Biquad;
-import com.example.cinema.client.media.audio.dsp.FirProcessor;
+import com.example.cinema.client.media.audio.dsp.FirBackend;
 import com.example.cinema.client.media.audio.dsp.MinimumPhaseFir;
 import com.example.cinema.client.media.audio.reflection.LateReflectionBus;
 import com.example.cinema.client.media.audio.reflection.LateReflectionSettings;
@@ -178,6 +178,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	private final BlockingQueue<AudioChunk> input = new ArrayBlockingQueue<>(32);
 	private final Deque<ChunkMeta> masterQueue = new ArrayDeque<>();
 	private final AtomicBoolean running = new AtomicBoolean(true);
+	private final AtomicBoolean closeStarted = new AtomicBoolean();
 	private final Thread thread;
 	private final java.util.concurrent.atomic.AtomicBoolean threadStarted = new java.util.concurrent.atomic.AtomicBoolean();
 	private volatile boolean resetRequested;
@@ -231,7 +232,6 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	private float wetTrimGain;
 	private float appliedWetGain = Float.NaN;
 	private int appliedWetPointCount = -1;
-	private final float[] blockScratch = new float[BLOCK_FRAMES];
 	private boolean float32Buffers;
 	private final DoubleBuffer latencyQuery = BufferUtils.createDoubleBuffer(2);
 
@@ -275,11 +275,13 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	 * the direct sound of the same speaker is unchanged.
 	 */
 	private volatile float[] channelDelays = new float[0];
-	private final FirProcessor[] firProcessors = new FirProcessor[MAX_DIRECT_SOURCES];
+	private final FirBackend firBackend;
 	/** Smoothed/current and target direct delay in frames (audio thread only). */
 	private final double[] directDelayFrames = new double[MAX_DIRECT_SOURCES];
 	private final double[] directTargetDelayFrames = new double[MAX_DIRECT_SOURCES];
 	private final float[] directInputScratch = new float[BLOCK_FRAMES];
+	private final float[][] directOutputScratch =
+		new float[MAX_DIRECT_SOURCES][BLOCK_FRAMES];
 	private final float[] appliedGains = new float[MAX_DIRECT_SOURCES];
 	private final float[] renderedChannelGains = defaultMaxGains();
 	private final float[] renderedLateSendGains = defaultMaxGains();
@@ -291,7 +293,6 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	private int reflectionSourceBudget = MAX_REFLECTION_SOURCES;
 	private final float[][] rawHistory = new float[CHANNELS][RAW_HISTORY_FRAMES];
 	private final float[] reflectionInputScratch = new float[BLOCK_FRAMES];
-	private final float[] reflectionOutputScratch = new float[BLOCK_FRAMES];
 	private final float[] silenceScratch = new float[BLOCK_FRAMES];
 	private final IntBuffer reflectionReclaimScratch =
 		BufferUtils.createIntBuffer(BUFFER_COUNT);
@@ -313,10 +314,11 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	private boolean ownsDevice;
 
 	public CinemaAudioEngine() {
+		firBackend = FirBackend.create(
+			MAX_DIRECT_SOURCES + MAX_REFLECTION_SOURCES, BLOCK_FRAMES, 4096);
 		for (int i = 0; i < MAX_DIRECT_SOURCES; i++) {
 			freeBuffers[i] = new ArrayDeque<>(BUFFER_COUNT);
 			appliedGains[i] = Float.NaN;
-			firProcessors[i] = new FirProcessor();
 		}
 		for (int i = 0; i < WET_SOURCES; i++) {
 			wetFreeBuffers[i] = new ArrayDeque<>(BUFFER_COUNT);
@@ -898,7 +900,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 				// Fresh key: snap position/delay and fade the samples in. The
 				// delay snap is hidden by the fade and avoids a long glide
 				// from an unrelated tap's delay.
-				slot.processor.reset();
+				firBackend.reset(slot.streamId);
 				slot.key = target.key();
 				slot.envelope = 0.0f;
 				slot.envelopeStep = 1.0f / REFLECTION_FADE_FRAMES;
@@ -924,7 +926,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 				target.delaySeconds());
 			if (slot.filter != target.filter()) {
 				slot.filter = target.filter();
-				slot.processor.setFilter(target.filter());
+				firBackend.setFilter(slot.streamId, target.filter());
 			}
 		}
 		for (ReflectionSlot slot : reflectionSlots) {
@@ -1103,6 +1105,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			ensureCinemaContext();
 
 			setupSources();
+			firBackend.prewarm();
 			while (running.get()) {
 				pump();
 				Thread.sleep(5);
@@ -1206,7 +1209,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		alSourcef(sources[index], AL_GAIN, 0.0f);
 		appliedGains[index] = Float.NaN;
 		Arrays.fill(directPeakHistory[index], 0.0f);
-		firProcessors[index].reset();
+		firBackend.reset(index);
 		directDelayFrames[index] = 0.0;
 		directTargetDelayFrames[index] = 0.0;
 		return true;
@@ -1229,7 +1232,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		monoShortBuffers[index] = null;
 		appliedGains[index] = Float.NaN;
 		Arrays.fill(directPeakHistory[index], 0.0f);
-		firProcessors[index].reset();
+		firBackend.reset(index);
 		directDelayFrames[index] = 0.0;
 		directTargetDelayFrames[index] = 0.0;
 	}
@@ -1267,7 +1270,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		if (!ensureCinemaContext()) {
 			return false;
 		}
-		ReflectionSlot slot = new ReflectionSlot();
+		ReflectionSlot slot = new ReflectionSlot(MAX_DIRECT_SOURCES + index);
 		slot.source = alGenSources();
 		if (slot.source == 0) {
 			return false;
@@ -1472,7 +1475,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		for (int i = 0; i < count; i++) {
 			MinimumPhaseFir filter = i < filters.length
 				? filters[i] : MinimumPhaseFir.FLAT;
-			firProcessors[i].setFilter(filter == null
+			firBackend.setFilter(i, filter == null
 				? MinimumPhaseFir.FLAT : filter);
 			if (firstLayout || i >= previousCount) {
 				System.arraycopy(positions[i], 0, renderedPositions[i], 0, 3);
@@ -2116,8 +2119,8 @@ public final class CinemaAudioEngine implements AutoCloseable {
 
 	private void queueBlock(AudioChunk chunk, int frameOffset, int frames) {
 		float[] samples = chunk.samples();
-		if (blockScratch.length < frames) {
-			throw new IllegalStateException("block scratch too small: " + frames);
+		if (frames > BLOCK_FRAMES) {
+			throw new IllegalStateException("block too large: " + frames);
 		}
 		// Reflection taps read the raw source channel before direct-path
 		// directivity, air absorption and occlusion are applied. Copy it into
@@ -2138,6 +2141,9 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		}
 		int[] mappings = directSourceChannels;
 		long startFrame = rawHistoryWriteFrame - frames;
+		// Phase A: fill every direct input and queue it with the backend. The
+		// CUDA backend copies the input, so the shared scratch can be reused.
+		firBackend.beginBlock(frames);
 		for (int source = 0; source < directSourceCount; source++) {
 			if (sources[source] == 0 || source >= mappings.length) {
 				continue;
@@ -2159,22 +2165,36 @@ public final class CinemaAudioEngine implements AutoCloseable {
 					+ (endDelay - startDelay) * ((i + 1.0) / frames);
 				input[i] = rawSample(channel, startFrame + i - delay);
 			}
-			firProcessors[source].process(input, 1, 0, 0, frames,
-				blockScratch);
+			firBackend.process(source, input, 0, frames,
+				directOutputScratch[source]);
+		}
+		for (ReflectionSlot slot : reflectionSlots) {
+			if (slot != null) {
+				fillReflectionInput(slot, frames);
+			}
+		}
+		// Phase B: one batch for direct + reflection (one CUDA launch).
+		firBackend.endBlock();
+		// Phase C: direct outputs are now valid; peak and upload them.
+		for (int source = 0; source < directSourceCount; source++) {
+			if (sources[source] == 0 || source >= mappings.length) {
+				continue;
+			}
+			float[] output = directOutputScratch[source];
 			directPeakHistory[source][directPeakIndex] =
-				OutputLimiter.blockPeak(blockScratch, frames, !float32Buffers);
+				OutputLimiter.blockPeak(output, frames, !float32Buffers);
 			int buffer = freeBuffers[source].removeFirst();
 			if (float32Buffers) {
 				FloatBuffer mono = monoFloatBuffers[source];
 				mono.clear();
-				mono.put(blockScratch, 0, frames);
+				mono.put(output, 0, frames);
 				mono.flip();
 				alBufferData(buffer, EXTFloat32.AL_FORMAT_MONO_FLOAT32, mono, SAMPLE_RATE);
 			} else {
 				ShortBuffer mono = monoShortBuffers[source];
 				mono.clear();
 				for (int i = 0; i < frames; i++) {
-					float value = blockScratch[i];
+					float value = output[i];
 					if (!Float.isFinite(value)) {
 						value = 0.0f;
 					}
@@ -2188,9 +2208,10 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			ensureSourcePlaying(sources[source]);
 		}
 		directPeakIndex = (directPeakIndex + 1) % BUFFER_COUNT;
+		// Phase D: reflection outputs are now valid; envelope, peak and upload.
 		for (ReflectionSlot slot : reflectionSlots) {
 			if (slot != null) {
-				queueReflectionBlock(slot, frames);
+				consumeReflectionOutput(slot, frames);
 			}
 		}
 		if (lateActive) {
@@ -2297,13 +2318,9 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		return wetLfeScratch;
 	}
 
-	private void queueReflectionBlock(ReflectionSlot slot, int frames) {
-		int buffer = slot.freeBuffers.removeFirst();
+	/** Phase B: fill one reflection input and queue it with the backend. */
+	private void fillReflectionInput(ReflectionSlot slot, int frames) {
 		if (slot.key.isEmpty()) {
-			slot.pushPeak(0.0f);
-			uploadSilence(buffer, frames);
-			alSourceQueueBuffers(slot.source, buffer);
-			ensureSourcePlaying(slot.source);
 			return;
 		}
 		double startDelay = slot.delayFrames;
@@ -2319,12 +2336,23 @@ public final class CinemaAudioEngine implements AutoCloseable {
 				+ (endDelay - startDelay) * ((i + 1.0) / frames);
 			input[i] = rawSample(slot.channel, startFrame + i - delay);
 		}
-		slot.processor.process(input, 1, 0, 0, frames,
-			reflectionOutputScratch);
-		applyReflectionEnvelope(slot, reflectionOutputScratch, frames);
-		slot.pushPeak(OutputLimiter.blockPeak(reflectionOutputScratch, frames,
+		firBackend.process(slot.streamId, input, 0, frames, slot.outputScratch);
+	}
+
+	/** Phase D: consume one reflection output after the backend batch. */
+	private void consumeReflectionOutput(ReflectionSlot slot, int frames) {
+		int buffer = slot.freeBuffers.removeFirst();
+		if (slot.key.isEmpty()) {
+			slot.pushPeak(0.0f);
+			uploadSilence(buffer, frames);
+			alSourceQueueBuffers(slot.source, buffer);
+			ensureSourcePlaying(slot.source);
+			return;
+		}
+		applyReflectionEnvelope(slot, slot.outputScratch, frames);
+		slot.pushPeak(OutputLimiter.blockPeak(slot.outputScratch, frames,
 			!float32Buffers));
-		uploadSamples(buffer, reflectionOutputScratch, frames);
+		uploadSamples(buffer, slot.outputScratch, frames);
 		alSourceQueueBuffers(slot.source, buffer);
 		ensureSourcePlaying(slot.source);
 		if (slot.fadingOut && slot.envelope <= 0.0f) {
@@ -2372,7 +2400,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		slot.appliedGain = 0.0f;
 		slot.nextTarget = 0.0f;
 		slot.clearPeaks();
-		slot.processor.reset();
+		firBackend.reset(slot.streamId);
 		alSourcef(slot.source, AL_GAIN, 0.0f);
 	}
 
@@ -2558,6 +2586,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 	}
 
 	private void cleanup() {
+		firBackend.close();
 		if (!ensureCinemaContext()) {
 			directSourceCount = 0;
 			reflectionSourceBudget = 0;
@@ -2647,9 +2676,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			appliedGains[i] = Float.NaN;
 		}
 		appliedLayoutVersion = -1;
-		for (FirProcessor processor : firProcessors) {
-			processor.reset();
-		}
+		firBackend.resetAll();
 		Arrays.fill(directDelayFrames, 0.0);
 		Arrays.fill(directTargetDelayFrames, 0.0);
 		for (ReflectionSlot slot : reflectionSlots) {
@@ -2672,7 +2699,7 @@ public final class CinemaAudioEngine implements AutoCloseable {
 			}
 			alSourcei(slot.source, AL_BUFFER, 0);
 			alSourceRewind(slot.source);
-			slot.processor.reset();
+			firBackend.reset(slot.streamId);
 			slot.key = "";
 			slot.assigned = false;
 			slot.fadingOut = false;
@@ -2790,17 +2817,30 @@ public final class CinemaAudioEngine implements AutoCloseable {
 
 	@Override
 	public void close() {
+		if (!closeStarted.compareAndSet(false, true)) {
+			return;
+		}
 		running.set(false);
 		thread.interrupt();
-		try {
-			thread.join(1_000);
-		} catch (InterruptedException e) {
-			Thread.currentThread().interrupt();
-		}
 		OPEN_ENGINES.remove(this);
-		if (!thread.isAlive()) {
+		// Do not join/close the OpenAL device on the caller (render) thread:
+		// source deletion, CUDA buffer release and alcDestroyContext can take
+		// tens of milliseconds and would appear as a stop-time frame spike.
+		Thread cleanup = new Thread(() -> {
+			try {
+				thread.join(5_000L);
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			}
+			if (thread.isAlive()) {
+				CinemaLog.warn(CinemaLog.AUDIO,
+					"audio thread did not stop; leaving device open");
+				return;
+			}
 			closeDevice();
-		}
+		}, "cinema-audio-cleanup");
+		cleanup.setDaemon(true);
+		cleanup.start();
 	}
 
 	private record ChunkMeta(double startPtsSeconds, double durationSeconds) {
@@ -2808,10 +2848,11 @@ public final class CinemaAudioEngine implements AutoCloseable {
 
 	/** One fixed reflection source plus its delay/fade/filter state. */
 	private static final class ReflectionSlot {
+		private final int streamId;
+		private final float[] outputScratch = new float[BLOCK_FRAMES];
 		private int source;
 		private final int[] buffers = new int[BUFFER_COUNT];
 		private final Deque<Integer> freeBuffers = new ArrayDeque<>(BUFFER_COUNT);
-		private final FirProcessor processor = new FirProcessor();
 		private final float[] position = new float[3];
 		private final float[] targetPosition = new float[3];
 		private String key = "";
@@ -2829,6 +2870,10 @@ public final class CinemaAudioEngine implements AutoCloseable {
 		private float nextTarget;
 		private final float[] peakHistory = new float[BUFFER_COUNT];
 		private int peakIndex;
+
+		private ReflectionSlot(int streamId) {
+			this.streamId = streamId;
+		}
 
 		private void pushPeak(float peak) {
 			peakHistory[peakIndex] = peak;

@@ -1,13 +1,17 @@
 ﻿# Launch one Minecraft client instance for in-game testing.
 #
 # Usage:
-#   .\run-test.ps1
-#   .\run-test.ps1 -GlFinish
+#   .\run-test.ps1                # CUDA audio on (default)
+#   .\run-test.ps1 -NoCuda        # force the CPU audio path
+#   .\run-test.ps1 -CudaRT        # CUDA audio + CUDA ray-traced order-3/4 tail
+#   .\run-test.ps1 -GlFinish      # CUDA audio + NVIDIA glFinish diagnostics
 #   .\run-test.ps1 --info
 #
 # Extra arguments are passed to the Gradle runClient task.
 
 param(
+    [switch]$NoCuda,
+    [switch]$CudaRT,
     [switch]$GlFinish,
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$GradleArgs
@@ -35,9 +39,40 @@ if (-not $env:JAVA_HOME -and -not (Get-Command java -ErrorAction SilentlyContinu
     throw 'JAVA_HOME is not set and java is not on PATH. Install JDK 21+ or set JAVA_HOME.'
 }
 
+# CUDA audio is the default. Keep any unrelated JAVA_TOOL_OPTIONS the user
+# already set, but replace our own toggles so -NoCuda/-GlFinish are authoritative.
+$existingOptions = @()
+if ($env:JAVA_TOOL_OPTIONS) {
+    $existingOptions = $env:JAVA_TOOL_OPTIONS -split '\s+' |
+        Where-Object { $_ -and $_ -notmatch '^-Dcinema\.(audio\.cuda|audio\.cudaRT|video\.glFinish)=' }
+}
+$cinemaOptions = @()
+if (-not $NoCuda) {
+    $cinemaOptions += '-Dcinema.audio.cuda=true'
+}
+if ($CudaRT) {
+    $cinemaOptions += '-Dcinema.audio.cudaRT=true'
+}
 if ($GlFinish) {
-    $env:JAVA_TOOL_OPTIONS = '-Dcinema.video.glFinish=true'
+    $cinemaOptions += '-Dcinema.video.glFinish=true'
+}
+$allOptions = @($cinemaOptions + $existingOptions | Where-Object { $_ })
+if ($allOptions.Count -gt 0) {
+    $env:JAVA_TOOL_OPTIONS = ($allOptions -join ' ')
+} else {
+    Remove-Item Env:JAVA_TOOL_OPTIONS -ErrorAction SilentlyContinue
+}
+
+if ($NoCuda) {
+    Write-Host 'CUDA audio disabled; using the CPU FIR path.'
+} else {
+    Write-Host 'CUDA audio enabled by default (use -NoCuda for the CPU path).'
+}
+if ($GlFinish) {
     Write-Host 'NVIDIA glFinish diagnostics enabled for this client.'
+}
+if ($CudaRT) {
+    Write-Host 'CUDA ray-traced order-3/4 late tail enabled.'
 }
 
 $gradlew = Join-Path $PSScriptRoot 'gradlew.bat'

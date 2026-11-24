@@ -14,7 +14,7 @@ The GUI's **Profile** button opens a paged picker, so every profile for the
 current cabinet type is directly selectable. Changes save immediately; Close
 flushes any debounced field edit.
 
-The development workspace generates 21 ASR profiles into
+The development workspace currently generates 255 ASR profiles into
 `run/cinema/speaker_data/profiles/` with:
 
 ```text
@@ -22,6 +22,59 @@ python docs/examples/speaker_data/convert_spinorama.py
 ```
 
 These profiles are local data and are not packaged into the mod.
+
+## Full ASR import
+
+`import_asr.py` turns a crawl of amirm's ASR review attachments into the
+folder layout used above. It expects a folder of `asr_zip_NNNN.zip` files and
+the crawler metadata JSON (`asr_zips_all.json`), then:
+
+- keeps Bookshelf, Center and Tower reviews (powered/studio monitors are
+  imported as `bookshelf`, matching the mod's three cabinet types);
+- skips models already present in `speaker data` and repeated reviews of the
+  same model (newest thread wins);
+- extracts each ZIP to `speaker data/<category>/<model>/`, normalizing
+  prefixed `* SPL Horizontal.txt` / `* SPL Vertical.txt` names;
+- writes `speaker data/asr_models.json`, a manifest with id/name/type and
+  thread provenance.
+
+```text
+python docs/examples/speaker_data/import_asr.py \
+  --zips <crawl-folder> --metadata <crawl-folder>/asr_zips_all.json \
+  --input "speaker data"
+python docs/examples/speaker_data/convert_spinorama.py
+```
+
+`convert_spinorama.py` reads `asr_models.json` automatically. The original
+ZIPs are kept under `speaker data/original zips/`. Every extracted folder also
+contains `ASR-SOURCE.txt` with the review thread and license. Re-running the
+converter is idempotent: it records the ids it wrote in
+`profiles/generated_profiles.txt` and removes only its own stale profiles.
+Hand-authored profiles in the same folder are never touched.
+
+### Naming
+
+Display names use `Brand Series Model (variant)`:
+
+- brand spellings come from a canonical table (`ADAM Audio`, `AsciLab`,
+  `GoldenEar`, `HEDD`, `ELAC`, ...);
+- dashboard and attachment typos are corrected (`Infinity`, `Diapason`,
+  `Monitor Audio Silver`, `Grimm Audio`, ...);
+- series and variants stay distinguishable, for example
+  `Revel Concerta2 M16`, `Revel Performa3 M105`,
+  `HEDD Type 20 MK2 (open port)`, `HEDD Type 20 MK2 (closed port)`,
+  `ELAC Uni-Fi Reference UCR52`, and
+  `Ascend Acoustics Sierra-2EX V2 (stock)`.
+
+The manifest also stores the canonical `brand` and the dashboard `model`. The
+profile id still comes from the original attachment name, so renaming a profile
+does not break existing selections or assignments. Re-running `import_asr.py`
+refreshes the display names of already imported models from the naming tables,
+then `convert_spinorama.py` updates their profiles.
+
+The full import produces about 61 MB of pretty-printed JSON. The client parses
+every profile at startup, so keep only the cabinet types you need if startup
+time or memory matters.
 
 ## Simple profile
 

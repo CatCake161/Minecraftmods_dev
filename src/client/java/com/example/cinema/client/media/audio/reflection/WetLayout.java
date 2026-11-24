@@ -208,6 +208,22 @@ public final class WetLayout {
 			return worldPositions;
 		}
 
+		/**
+		 * Re-derives listener-space positions for a new listener frame. The
+		 * point set is rigid, so VBAP weights stay valid; only the OpenAL
+		 * source positions have to move.
+		 */
+		public float[][] localPositions(Frame frame) {
+			Frame basis = frame == null ? Frame.identity() : frame;
+			float[][] local = new float[worldPositions.length][];
+			for (int index = 0; index < worldPositions.length; index++) {
+				float[] world = worldPositions[index];
+				local[index] = world == null
+					? new float[3] : basis.toLocal(world);
+			}
+			return local;
+		}
+
 		public boolean isActive(int index) {
 			return index >= 0 && index < active.length && active[index];
 		}
@@ -312,7 +328,7 @@ public final class WetLayout {
 				MAX_POINTS - physicalCount - lfeCount);
 			int[] lfeIndices = new int[lfeCount];
 			float radius = ghostRadius(physicalWorld, basis.origin());
-			List<GhostSource> sources = ghostSources(taps, basis);
+			List<GhostSource> sources = ghostSources(taps);
 			List<Cluster> clusters = cluster(sources, ghostCapacity);
 			updateTracks(clusters, ghostCapacity, nowMillis);
 			boolean[] selected = selectGhosts(ghostCapacity);
@@ -412,13 +428,15 @@ public final class WetLayout {
 		}
 
 		private List<GhostSource> ghostSources(
-			List<LateReflectionBus.Tap> taps, Frame frame) {
+			List<LateReflectionBus.Tap> taps) {
 			List<GhostSource> sources = new ArrayList<>();
 			for (LateReflectionBus.Tap tap : taps) {
 				if (tap == null || tap.order() <= 0 || tap.order() > MAX_ORDER
 					|| tap.gain() <= 0.0) {
 					continue;
 				}
+				// Tap directions are world space, so clustering and smoothing
+				// stay fixed to the room when the player turns their head.
 				float[] direction = tap.direction();
 				if (direction == null || direction.length < 3) {
 					continue;
@@ -429,11 +447,9 @@ public final class WetLayout {
 				if (!Double.isFinite(length) || length < 1.0e-6) {
 					continue;
 				}
-				float[] local = {(float) (direction[0] / length),
+				float[] world = {(float) (direction[0] / length),
 					(float) (direction[1] / length),
 					(float) (direction[2] / length)};
-				float[] world = frame.toWorldDirection(local);
-				normalizeInto(world, world);
 				sources.add(new GhostSource(tap.order(), world,
 					tap.gain() * tap.gain()));
 			}

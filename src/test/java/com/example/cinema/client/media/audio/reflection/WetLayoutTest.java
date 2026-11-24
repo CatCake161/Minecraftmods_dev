@@ -73,10 +73,12 @@ class WetLayoutTest {
 			new float[]{0.0f, 1.0f, 0.0f},
 			new float[]{1.0f, 0.0f, 0.0f});
 
+		// Tap directions are world space, so the same tap must produce the same
+		// world ghost even when the listener frame rotated.
 		builder.build(List.of(tap(1, 1.0f, 0.0f, 0.0f, 1.0)),
 			speakers, CHANNELS, facingNorth, 0L);
 		WetLayout.Layout turned = builder.build(
-			List.of(tap(1, 0.0f, 0.0f, -1.0f, 1.0)), speakers, CHANNELS,
+			List.of(tap(1, 1.0f, 0.0f, 0.0f, 1.0)), speakers, CHANNELS,
 			facingEast, 200L);
 
 		float[] world = turned.worldPositions()[6];

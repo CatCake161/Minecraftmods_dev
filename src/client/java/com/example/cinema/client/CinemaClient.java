@@ -6,6 +6,7 @@ import com.example.cinema.block.entity.SpeakerBlockEntity;
 import com.example.cinema.block.SpeakerBlock;
 import com.example.cinema.Cinema;
 import com.example.cinema.CinemaLog;
+import com.example.cinema.client.media.audio.dsp.FirBackend;
 import com.example.cinema.client.command.ClientAcousticsCommand;
 import com.example.cinema.client.command.ClientHelpCommand;
 import com.example.cinema.client.command.ClientProjectorCommand;
@@ -80,6 +81,7 @@ public class CinemaClient implements ClientModInitializer {
 	@Override
 	public void onInitializeClient() {
 		CinemaPrewarm.start();
+		FirBackend.prewarmCudaAsync();
 		AcousticMaterialConfig.load();
 		SpeakerDataRegistry.load();
 		SpeakerDataAssignments.load();

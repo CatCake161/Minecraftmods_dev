@@ -42,6 +42,11 @@ dependencies {
 	// Reviewed at compile time only; Mod Menu remains optional at runtime.
 	modCompileOnly "com.terraformersmc:modmenu:${project.modmenu_version}"
 
+	// Optional NVIDIA CUDA acceleration for the direct FIR path. JNA is nested
+	// into the mod jar; the CUDA driver itself (nvcuda.dll / libcuda.so.1) comes
+	// from the installed NVIDIA driver and is not bundled.
+	implementation include('net.java.dev.jna:jna:5.14.0')
+
 	// Cinema uses an external FFmpeg full build (ffmpeg.exe/ffprobe.exe) placed
 	// under <game>/mods/. It is not bundled with the mod.
 

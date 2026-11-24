@@ -99,8 +99,9 @@ public final class LateReflectionBus {
 
 	/**
 	 * One rendered tap. {@code channel} is the raw 5.1 source channel;
-	 * {@code direction} is the listener-to-last-reflection-point unit vector
-	 * (x right, y up, z forward negative); {@code outputChannels}/
+	 * {@code direction} is the world-space listener-to-virtual-source unit
+	 * vector, so a head turn never rewrites the tap list (VBAP converts it
+	 * through the current listener frame); {@code outputChannels}/
 	 * {@code outputWeights} carry the energy-normalized VBAP mapping for the
 	 * dynamic wet layout. Empty or invalid output arrays fall back to the
 	 * input channel with weight 1.0.

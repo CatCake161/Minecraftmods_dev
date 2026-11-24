@@ -9,6 +9,11 @@ Generated profiles are local user/import data. They are written to
 ``run/cinema/speaker_data/profiles`` by default and are not packaged into the
 mod.
 
+Model metadata comes from the curated ``MODELS`` table below plus an optional
+``asr_models.json`` manifest in the input root. ``import_asr.py`` generates
+that manifest for crawled ASR attachments, so hundreds of folders can be
+converted without editing this file.
+
 Angle convention (ANSI/CTA-2034-A Figure 1):
   0 deg      on-axis reference
   +H         toward the listener's right when facing the speaker
@@ -35,13 +40,19 @@ from typing import Iterable
 
 # id, display name, speaker type
 MODELS = {
-    "Adam T5V Spinorama": ("adam-t5v", "Adam T5V", "bookshelf"),
-    "AsciLab F6B Frequency Response": ("ascilab-f6b", "Ascilab F6B", "bookshelf"),
+    "Adam T5V Spinorama": ("adam-t5v", "ADAM Audio T5V", "bookshelf"),
+    "AsciLab F6B Frequency Response": ("ascilab-f6b", "AsciLab F6B", "bookshelf"),
     "Edifier MR4 Frequency Response ASR": ("edifier-mr4", "Edifier MR4", "bookshelf"),
+    "Elac Adante AS-61 CEA-2034 spin data": (
+        "elac-adante-as-61", "ELAC Adante AS-61", "bookshelf"),
     "Genelec 8351B Frequency Response": ("genelec-8351b", "Genelec 8351B", "bookshelf"),
+    "HSU CCB-8": ("hsu-ccb-8", "Hsu Research CCB-8", "bookshelf"),
     "JBL 308P MKII Spinorama": ("jbl-308p-mkii", "JBL 308P MkII", "bookshelf"),
-    "Kali LP6 Spinorama": ("kali-lp6", "Kali LP6", "bookshelf"),
+    "Kali IN-8 Spinorama": ("kali-in-8", "Kali Audio IN-8", "bookshelf"),
+    "Kali LP6 Spinorama": ("kali-lp6", "Kali Audio LP-6", "bookshelf"),
+    "KEF LS50 CES2034": ("kef-ls50", "KEF LS50", "bookshelf"),
     "KH80 New Spinorama": ("neumann-kh80", "Neumann KH80", "bookshelf"),
+    "Klipsch R41M Spin Data": ("klipsch-r41m", "Klipsch R41M", "bookshelf"),
     "Neumann KH120 II": ("neumann-kh120-ii", "Neumann KH120 II", "bookshelf"),
     "Neumann KH150": ("neumann-kh150", "Neumann KH150", "bookshelf"),
     "Neumann KH310 Spinorama": ("neumann-kh310", "Neumann KH310", "bookshelf"),
@@ -49,17 +60,22 @@ MODELS = {
         "presonus-eris-3-5-gen2", "PreSonus Eris 3.5 Gen 2", "bookshelf"),
     "Presonus Eris E5 XT Spinorama": (
         "presonus-eris-e5-xt", "PreSonus Eris E5 XT", "bookshelf"),
+    "Realistic MC-1000 spinorama": (
+        "realistic-mc-1000", "Realistic MC-1000", "bookshelf"),
     "Topping MA4 Frequency Response": ("topping-ma4", "Topping MA4", "bookshelf"),
+    "Ascend Acoustics CMT-340 spin data": (
+        "ascend-acoustics-cmt-340", "Ascend Acoustics CMT-340 SE", "center"),
     "Ascilab C8C": ("ascilab-c8c", "Ascilab C8C", "center"),
     "JBL Project Array 880 Center Frequency Response": (
         "jbl-project-array-880-center", "JBL Project Array 880 Center", "center"),
     "KEF Reference 4C Frequency Response ASR": (
         "kef-reference-4c", "KEF Reference 4C", "center"),
-    "Revel C208": ("revel-c208", "Revel C208", "center"),
-    "JBL A180 Frequency Response": ("jbl-a180", "JBL A180", "floorstanding"),
+    "Revel C208": ("revel-c208", "Revel Performa3 C208", "center"),
+    "Revel C52 Spinorama": ("revel-c52", "Revel Performa3 C52", "center"),
+    "JBL A180 Frequency Response": ("jbl-a180", "JBL Stage A180", "floorstanding"),
     "KEF R11 Meta": ("kef-r11-meta", "KEF R11 Meta", "floorstanding"),
     "Polk T50 Frequency Response": ("polk-t50", "Polk T50", "floorstanding"),
-    "Revel F206": ("revel-f206", "Revel F206", "floorstanding"),
+    "Revel F206": ("revel-f206", "Revel Performa3 F206", "floorstanding"),
 }
 
 CATEGORY_TYPES = {
@@ -71,6 +87,9 @@ CATEGORY_TYPES = {
 RANGE_THRESHOLD_DB = -3.0
 SOURCE = "Audio Science Review (ASR) / Spinorama"
 LICENSE = "CC BY-NC-SA 4.0"
+MANIFEST_NAME = "asr_models.json"
+# Not "*.json": the registry scans that glob, and this file is a plain id list.
+GENERATED_MARKER = "generated_profiles.txt"
 
 
 def parse_angle(label: str) -> float:
@@ -158,14 +177,35 @@ def frequency_range(frequencies: list[float], on_axis: list[float]) -> list[int]
     return [rounded_low, rounded_high]
 
 
-def convert_model(model_dir: Path, category: str) -> dict:
-    model = MODELS.get(model_dir.name)
-    if model is None:
-        raise ValueError(f"unknown model folder: {model_dir.name}")
-    model_id, name, speaker_type = model
+def load_manifest(root: Path) -> dict[str, dict]:
+    path = root / MANIFEST_NAME
+    if not path.is_file():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"{path}: manifest must be a JSON object")
+    return data
+
+
+def convert_model(model_dir: Path, category: str,
+                  manifest: dict[str, dict] | None = None) -> dict:
     expected_type = CATEGORY_TYPES.get(category)
     if expected_type is None:
         raise ValueError(f"unknown category: {category}")
+    entry = (manifest or {}).get(f"{category}/{model_dir.name}")
+    if entry is not None:
+        model_id = entry["id"]
+        name = entry["name"]
+        speaker_type = entry["type"]
+        source = entry.get("source", SOURCE)
+        license_name = entry.get("license", LICENSE)
+    else:
+        model = MODELS.get(model_dir.name)
+        if model is None:
+            raise ValueError(f"unknown model folder: {model_dir.name}")
+        model_id, name, speaker_type = model
+        source = SOURCE
+        license_name = LICENSE
     if speaker_type != expected_type:
         raise ValueError(f"{model_dir.name}: type {speaker_type} does not match {category}")
 
@@ -203,8 +243,8 @@ def convert_model(model_dir: Path, category: str) -> dict:
         "type": speaker_type,
         "pattern": "measured",
         "frequencyRange": frequency_range(frequencies_h, on_axis),
-        "source": SOURCE,
-        "license": LICENSE,
+        "source": source,
+        "license": license_name,
         "frequencies": frequencies_h,
         "onAxis": on_axis,
         "horizontal": rows(by_angle_h),
@@ -231,22 +271,58 @@ def main() -> None:
     parser.add_argument("--output", type=Path,
                         default=Path("run/cinema/speaker_data/profiles"),
                         help="profile output directory")
+    parser.add_argument("--manifest", type=Path,
+                        help=f"model manifest (default: <input>/{MANIFEST_NAME})")
     args = parser.parse_args()
 
     if not args.input.is_dir():
         parser.error(f"input directory not found: {args.input}")
+    if args.manifest is None:
+        manifest = load_manifest(args.input)
+    elif args.manifest.is_file():
+        manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
+    else:
+        manifest = {}
     args.output.mkdir(parents=True, exist_ok=True)
+    marker = args.output / GENERATED_MARKER
+    previous = set()
+    if marker.is_file():
+        previous = {line.strip() for line in
+                    marker.read_text(encoding="utf-8").splitlines() if line.strip()}
+    written: set[str] = set()
     count = 0
+    failures = 0
     for model_dir, category in find_models(args.input):
-        profile = convert_model(model_dir, category)
+        try:
+            profile = convert_model(model_dir, category, manifest)
+        except Exception as exc:  # noqa: BLE001 - report bad measurement folders
+            failures += 1
+            print(f"ERROR {category}/{model_dir.name}: {exc}")
+            continue
         target = args.output / f"{profile['id']}.json"
         target.write_text(json.dumps(profile, ensure_ascii=False, indent=2) + "\n",
                           encoding="utf-8", newline="\n")
+        written.add(profile["id"])
         print(f"{profile['id']}: {len(profile['frequencies'])} bands, "
               f"{len(profile['horizontal'])} H rows, {len(profile['vertical'])} V rows, "
               f"range {profile['frequencyRange'][0]:.1f}-{profile['frequencyRange'][1]:.1f} Hz")
         count += 1
-    print(f"wrote {count} profile(s) to {args.output}")
+    # Remove profiles this script generated on an earlier run but no longer
+    # produces (for example after a model was deduplicated or removed). Skip
+    # this when a conversion failed, so a transient read error cannot delete a
+    # still-valid profile.
+    if failures:
+        print("kept previous profiles because of conversion failures")
+    else:
+        for stale in sorted(previous - written):
+            path = args.output / f"{stale}.json"
+            if path.is_file():
+                path.unlink()
+                print(f"removed stale profile {stale}")
+    marker.write_text("".join(f"{profile_id}\n" for profile_id in sorted(written)),
+                      encoding="utf-8", newline="\n")
+    print(f"wrote {count} profile(s) to {args.output}"
+          + (f", {failures} failure(s)" if failures else ""))
 
 
 if __name__ == "__main__":

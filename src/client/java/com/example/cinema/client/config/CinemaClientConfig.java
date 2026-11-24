@@ -31,6 +31,8 @@ public final class CinemaClientConfig {
 	public static final String VIDEO_GL_FINISH_PROPERTY = "cinema.video.glFinish";
 	public static final String VIDEO_SHOWINFO_PROPERTY = "cinema.video.showinfo";
 	public static final String FFMPEG_HWACCEL_PROPERTY = "cinema.ffmpeg.hwaccel";
+	/** Legacy launch seed for {@link #rayTracingEnabled()}; see {@link #load()}. */
+	public static final String CUDA_RT_PROPERTY = "cinema.audio.cudaRT";
 
 	public static final int MIN_SCREEN_MAX_SIZE = 1;
 	public static final int MAX_SCREEN_MAX_SIZE = 64;
@@ -72,6 +74,33 @@ public final class CinemaClientConfig {
 	 * one-pole. This is the A/B switch for the material EQ.
 	 */
 	public static final boolean DEFAULT_LATE_MATERIAL_EQ = false;
+	/**
+	 * Hybrid solver switch: image sources keep order 1-2 (and the exact early
+	 * reflections), CUDA ray tracing owns the order-3..N diffuse tail. Off
+	 * keeps the image-only solver, i.e. the behaviour before the RT backend.
+	 *
+	 * <p>{@code -Dcinema.audio.cudaRT=true} is only the initial value for a
+	 * fresh or pre-RT config; once {@code cinema.json} has the key, the saved
+	 * value is authoritative.
+	 */
+	public static final boolean DEFAULT_RAY_TRACING = true;
+	public static final int MIN_RAY_TRACE_RAYS = 512;
+	public static final int MAX_RAY_TRACE_RAYS = 16384;
+	public static final int DEFAULT_RAY_TRACE_RAYS = 4096;
+	public static final int RAY_TRACE_RAYS_STEP = 512;
+	/** Highest geometric order traced; order = bounce number. */
+	public static final int MIN_RAY_TRACE_BOUNCES = 3;
+	public static final int MAX_RAY_TRACE_BOUNCES = 8;
+	public static final int DEFAULT_RAY_TRACE_BOUNCES = 4;
+	public static final int RAY_TRACE_BOUNCES_STEP = 1;
+	/**
+	 * Temporal averaging passes. Stored for the planned multi-pass kernel;
+	 * the current kernel traces a single pass, so the value is reserved.
+	 */
+	public static final int MIN_RAY_TRACE_ACCUMULATION = 1;
+	public static final int MAX_RAY_TRACE_ACCUMULATION = 16;
+	public static final int DEFAULT_RAY_TRACE_ACCUMULATION = 4;
+	public static final int RAY_TRACE_ACCUMULATION_STEP = 1;
 	/**
 	 * Late-bus audibility floor relative to the direct sound at the listener.
 	 * -60 dB means the bus stops one RT60 after the direct arrival.
@@ -135,7 +164,7 @@ public final class CinemaClientConfig {
 	public static final int MAX_FFMPEG_PATH_LENGTH = 260;
 
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-	private static final int CONFIG_VERSION = 6;
+	private static final int CONFIG_VERSION = 8;
 	private static final CinemaClientConfig INSTANCE = load();
 	private static final Integer SCREEN_MAX_SIZE_OVERRIDE = readScreenMaxSizeOverride();
 
@@ -150,6 +179,10 @@ public final class CinemaClientConfig {
 	private boolean lateReverb = DEFAULT_LATE_REVERB;
 	private boolean scatteringEnabled = DEFAULT_SCATTERING_ENABLED;
 	private boolean lateMaterialEq = DEFAULT_LATE_MATERIAL_EQ;
+	private boolean rayTracingEnabled = DEFAULT_RAY_TRACING;
+	private int rayTraceRays = DEFAULT_RAY_TRACE_RAYS;
+	private int rayTraceBounces = DEFAULT_RAY_TRACE_BOUNCES;
+	private int rayTraceAccumulation = DEFAULT_RAY_TRACE_ACCUMULATION;
 	private double lateFloorDb = DEFAULT_LATE_FLOOR_DB;
 	private int reflectionUpdateMillis = DEFAULT_REFLECTION_UPDATE_MILLIS;
 	private double reflectionMoveThresholdMeters =
@@ -275,6 +308,40 @@ public final class CinemaClientConfig {
 
 	public void setLateMaterialEq(boolean value) {
 		lateMaterialEq = value;
+	}
+
+	public boolean rayTracingEnabled() {
+		return rayTracingEnabled;
+	}
+
+	public void setRayTracingEnabled(boolean value) {
+		rayTracingEnabled = value;
+	}
+
+	public int rayTraceRays() {
+		return rayTraceRays;
+	}
+
+	public void setRayTraceRays(int value) {
+		rayTraceRays = clamp(value, MIN_RAY_TRACE_RAYS, MAX_RAY_TRACE_RAYS);
+	}
+
+	public int rayTraceBounces() {
+		return rayTraceBounces;
+	}
+
+	public void setRayTraceBounces(int value) {
+		rayTraceBounces = clamp(value, MIN_RAY_TRACE_BOUNCES,
+			MAX_RAY_TRACE_BOUNCES);
+	}
+
+	public int rayTraceAccumulation() {
+		return rayTraceAccumulation;
+	}
+
+	public void setRayTraceAccumulation(int value) {
+		rayTraceAccumulation = clamp(value, MIN_RAY_TRACE_ACCUMULATION,
+			MAX_RAY_TRACE_ACCUMULATION);
 	}
 
 	public double lateFloorDb() {
@@ -441,6 +508,10 @@ public final class CinemaClientConfig {
 		root.addProperty("airHumidityPercent", airHumidityPercent);
 		root.addProperty("lateReverb", lateReverb);
 		root.addProperty("scatteringEnabled", scatteringEnabled);
+		root.addProperty("rayTracingEnabled", rayTracingEnabled);
+		root.addProperty("rayTraceRays", rayTraceRays);
+		root.addProperty("rayTraceBounces", rayTraceBounces);
+		root.addProperty("rayTraceAccumulation", rayTraceAccumulation);
 		root.addProperty("lateMaterialEq", lateMaterialEq);
 		root.addProperty("lateFloorDb", lateFloorDb);
 		root.addProperty("reflectionUpdateMillis", reflectionUpdateMillis);
@@ -470,7 +541,9 @@ public final class CinemaClientConfig {
 					+ "pauseGameInDeviceGuis={}, emptyHandOpensDeviceGuis={}, "
 					+ "spikeModifiesWorld={}, metersPerBlock={}, airAbsorption={}, "
 					+ "airTemperatureC={}, airHumidityPercent={}, lateReverb={}, "
-					+ "scatteringEnabled={}, lateMaterialEq={}, lateFloorDb={}, "
+					+ "scatteringEnabled={}, rayTracingEnabled={}, rayTraceRays={}, "
+					+ "rayTraceBounces={}, rayTraceAccumulation={}, "
+					+ "lateMaterialEq={}, lateFloorDb={}, "
 					+ "reflectionUpdateMillis={}, "
 					+ "reflectionMoveThresholdMeters={}, "
 					+ "lateReflectionUpdateMillis={}, "
@@ -483,7 +556,9 @@ public final class CinemaClientConfig {
 				file, screenMaxSize, pauseGameInDeviceGuis,
 				emptyHandOpensDeviceGuis, spikeModifiesWorld, metersPerBlock,
 				airAbsorption, airTemperatureC, airHumidityPercent, lateReverb,
-				scatteringEnabled, lateMaterialEq, lateFloorDb,
+				scatteringEnabled, rayTracingEnabled, rayTraceRays,
+				rayTraceBounces, rayTraceAccumulation,
+				lateMaterialEq, lateFloorDb,
 				reflectionUpdateMillis,
 				reflectionMoveThresholdMeters, lateReflectionUpdateMillis,
 				latePathMoveThresholdMeters, latePathStepBudgetMillis,
@@ -565,6 +640,12 @@ public final class CinemaClientConfig {
 
 	private static CinemaClientConfig load() {
 		CinemaClientConfig config = new CinemaClientConfig();
+		// run-test.ps1 -CudaRT compatibility: the launch property seeds a
+		// fresh or pre-RT config. A saved rayTracingEnabled value wins below,
+		// so cinema.json stays authoritative once the key exists.
+		if (Boolean.getBoolean(CUDA_RT_PROPERTY)) {
+			config.rayTracingEnabled = true;
+		}
 		// The acoustic layer has a static 1.00 default so pure unit tests do
 		// not need FabricLoader. Publish the configured scale here.
 		AcousticScale.setMetersPerBlock(config.metersPerBlock);
@@ -617,6 +698,27 @@ public final class CinemaClientConfig {
 			if (root.has("scatteringEnabled")) {
 				config.scatteringEnabled =
 					root.get("scatteringEnabled").getAsBoolean();
+			}
+			if (root.has("rayTracingEnabled")) {
+				config.rayTracingEnabled =
+					root.get("rayTracingEnabled").getAsBoolean();
+				if (!config.rayTracingEnabled
+					&& Boolean.getBoolean(CUDA_RT_PROPERTY)) {
+					CinemaLog.info(CinemaLog.CONFIG, "{} is only the initial "
+						+ "value; saved rayTracingEnabled=false wins",
+						CUDA_RT_PROPERTY);
+				}
+			}
+			if (root.has("rayTraceRays")) {
+				config.setRayTraceRays(root.get("rayTraceRays").getAsInt());
+			}
+			if (root.has("rayTraceBounces")) {
+				config.setRayTraceBounces(
+					root.get("rayTraceBounces").getAsInt());
+			}
+			if (root.has("rayTraceAccumulation")) {
+				config.setRayTraceAccumulation(
+					root.get("rayTraceAccumulation").getAsInt());
 			}
 			if (root.has("lateMaterialEq")) {
 				config.lateMaterialEq =
@@ -688,19 +790,27 @@ public final class CinemaClientConfig {
 			if (root.has("ffmpegPath")) {
 				config.setFfmpegPath(root.get("ffmpegPath").getAsString());
 			}
+			if (version < 8 && !config.rayTracingEnabled) {
+				// v7 shipped rayTracingEnabled with a false default; treat that as
+				// "not chosen yet" and switch to the new default once. A user who
+				// turns it off later stays off (version is already 8).
+				config.rayTracingEnabled = true;
+			}
 			if (version < 2) {
 				CinemaLog.info(CinemaLog.CONFIG, "migrated to version {}; "
 					+ "late reflections default is off", CONFIG_VERSION);
 			} else if (version < CONFIG_VERSION) {
 				CinemaLog.info(CinemaLog.CONFIG, "migrated to version {}; "
-					+ "new video, diagnostic, world-scale, scattering and late-material settings use defaults",
+					+ "new video, diagnostic, world-scale, scattering, ray-tracing and late-material settings use defaults",
 					CONFIG_VERSION);
 			}
 			CinemaLog.info(CinemaLog.CONFIG, "loaded {} (screenMaxSize={}, "
 					+ "pauseGameInDeviceGuis={}, emptyHandOpensDeviceGuis={}, "
 					+ "spikeModifiesWorld={}, metersPerBlock={}, airAbsorption={}, "
 					+ "airTemperatureC={}, airHumidityPercent={}, lateReverb={}, "
-					+ "scatteringEnabled={}, lateMaterialEq={}, lateFloorDb={}, "
+					+ "scatteringEnabled={}, rayTracingEnabled={}, rayTraceRays={}, "
+					+ "rayTraceBounces={}, rayTraceAccumulation={}, "
+					+ "lateMaterialEq={}, lateFloorDb={}, "
 					+ "reflectionUpdateMillis={}, "
 					+ "reflectionMoveThresholdMeters={}, "
 					+ "lateReflectionUpdateMillis={}, "
@@ -715,7 +825,9 @@ public final class CinemaClientConfig {
 				config.metersPerBlock, config.airAbsorption,
 				config.airTemperatureC,
 				config.airHumidityPercent, config.lateReverb,
-				config.scatteringEnabled, config.lateMaterialEq,
+				config.scatteringEnabled, config.rayTracingEnabled,
+				config.rayTraceRays, config.rayTraceBounces,
+				config.rayTraceAccumulation, config.lateMaterialEq,
 				config.lateFloorDb, config.reflectionUpdateMillis,
 				config.reflectionMoveThresholdMeters,
 				config.lateReflectionUpdateMillis,

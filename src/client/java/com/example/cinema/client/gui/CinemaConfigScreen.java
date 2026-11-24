@@ -40,6 +40,15 @@ public final class CinemaConfigScreen extends Screen {
 	private static final int PANEL_MAX_HEIGHT = 320;
 	private static final int ROW_HEIGHT = 18;
 	private static final int ROW_SPACING = 22;
+	/** Audio page section offsets from {@code contentTop}. */
+	private static final int AUDIO_LATE_HEADER_Y = 4 * ROW_SPACING;
+	private static final int AUDIO_LATE_ROW_Y = AUDIO_LATE_HEADER_Y + 11;
+	private static final int AUDIO_SCATTER_HEADER_Y =
+		AUDIO_LATE_ROW_Y + 3 * ROW_SPACING;
+	private static final int AUDIO_SCATTER_ROW_Y = AUDIO_SCATTER_HEADER_Y + 11;
+	private static final int AUDIO_NOTES_Y = AUDIO_SCATTER_ROW_Y + 24;
+	/** Pages holding a single group reserve this much for its section label. */
+	private static final int SECTION_ROW_OFFSET = 13;
 	private static final int TAB_HEIGHT = 18;
 	private static final int TAB_GAP = 2;
 	private static final long SAVE_DEBOUNCE_MS = 250L;
@@ -77,6 +86,10 @@ public final class CinemaConfigScreen extends Screen {
 	private boolean draftLateReverb;
 	private boolean draftScatteringEnabled;
 	private boolean draftLateMaterialEq;
+	private boolean draftRayTracingEnabled;
+	private int draftRayTraceRays;
+	private int draftRayTraceBounces;
+	private int draftRayTraceAccumulation;
 	private double draftLateFloorDb;
 	private int draftReflectionUpdateMillis;
 	private double draftReflectionMoveThresholdMeters;
@@ -118,6 +131,10 @@ public final class CinemaConfigScreen extends Screen {
 		draftLateReverb = config.lateReverb();
 		draftScatteringEnabled = config.scatteringEnabled();
 		draftLateMaterialEq = config.lateMaterialEq();
+		draftRayTracingEnabled = config.rayTracingEnabled();
+		draftRayTraceRays = config.rayTraceRays();
+		draftRayTraceBounces = config.rayTraceBounces();
+		draftRayTraceAccumulation = config.rayTraceAccumulation();
 		draftLateFloorDb = config.lateFloorDb();
 		draftReflectionUpdateMillis = config.reflectionUpdateMillis();
 		draftReflectionMoveThresholdMeters =
@@ -166,6 +183,7 @@ public final class CinemaConfigScreen extends Screen {
 		switch (tab) {
 			case SCREEN -> buildScreenTab();
 			case AUDIO -> buildAudioTab();
+			case RAYTRACING -> buildRayTracingTab();
 			case OUTPUT -> buildOutputTab();
 			case PERFORMANCE -> buildPerformanceTab();
 			case VIDEO -> buildVideoTab();
@@ -232,30 +250,22 @@ public final class CinemaConfigScreen extends Screen {
 			draftAirHumidityPercent, value -> draftAirHumidityPercent = value);
 		tooltip(humidity, "Relative humidity used by ISO 9613-1. Higher humidity "
 			+ "moves absorption toward higher frequencies.");
-		y += ROW_SPACING;
-		Button late = toggle(contentLeft, y, contentWidth, "Order 2-4 reflections",
+		Button late = toggle(contentLeft, contentTop + AUDIO_LATE_ROW_Y,
+			contentWidth, "Order 2-4 reflections",
 			() -> draftLateReverb, value -> draftLateReverb = value);
 		tooltip(late, "Order 1 is always active. Order 2/3/4 are geometric "
 			+ "reflections: the strongest paths run through a per-tap FIR and the "
 			+ "rest feed the late bus. Off disables order 2-4 only.");
-		y += ROW_SPACING;
-		Button scattering = toggle(contentLeft, y, contentWidth,
-			"First-order scattering", () -> draftScatteringEnabled,
-			value -> draftScatteringEnabled = value);
-		tooltip(scattering, "A3-S1a/S1b energy split: scattering removes energy "
-			+ "from the specular early reflection and sends it to the late bus "
-			+ "diffuse send. Effective only while Order 2-4 reflections is on. "
-			+ "Use this switch for A/B; /cinema_acoustics scattering also toggles it.");
-		y += ROW_SPACING;
-		Button materialEq = toggle(contentLeft, y, contentWidth,
+		Button materialEq = toggle(contentLeft,
+			contentTop + AUDIO_LATE_ROW_Y + ROW_SPACING, contentWidth,
 			"Late material EQ", () -> draftLateMaterialEq,
 			value -> draftLateMaterialEq = value);
 		tooltip(materialEq, "A3-D1: late taps use a combined all-bounce material "
 			+ "with low-shelf / peak / high-shelf PEQ instead of the old single "
 			+ "one-pole damping. Off keeps the previous sound. "
 			+ "/cinema_acoustics materialeq also toggles it.");
-		y += ROW_SPACING;
-		ValueSlider lateFloor = valueSlider(contentLeft, y, contentWidth,
+		ValueSlider lateFloor = valueSlider(contentLeft,
+			contentTop + AUDIO_LATE_ROW_Y + 2 * ROW_SPACING, contentWidth,
 			"Order 2-4 floor: %+.0f dB re direct",
 			CinemaClientConfig.MIN_LATE_FLOOR_DB,
 			CinemaClientConfig.MAX_LATE_FLOOR_DB, 1.0, draftLateFloorDb,
@@ -264,10 +274,62 @@ public final class CinemaConfigScreen extends Screen {
 			+ "total direct sound at the listener are dropped. -60 dB stops the "
 			+ "tail after one RT60, which is also used as the higher-order delay "
 			+ "cap.");
+		Button scattering = toggle(contentLeft,
+			contentTop + AUDIO_SCATTER_ROW_Y, contentWidth,
+			"First-order scattering", () -> draftScatteringEnabled,
+			value -> draftScatteringEnabled = value);
+		tooltip(scattering, "A3-S1a/S1b energy split: scattering removes energy "
+			+ "from the specular early reflection and sends it to the late bus "
+			+ "diffuse send. Effective only while Order 2-4 reflections is on. "
+			+ "Off also mutes the CUDA ray-traced diffuse tail. "
+			+ "Use this switch for A/B; /cinema_acoustics scattering also toggles it.");
+	}
+
+	private void buildRayTracingTab() {
+		int y = contentTop + SECTION_ROW_OFFSET;
+		Button rayTracing = toggle(contentLeft, y, contentWidth,
+			"CUDA ray tracing", () -> draftRayTracingEnabled,
+			value -> draftRayTracingEnabled = value);
+		tooltip(rayTracing, "Hybrid solver: image sources keep order 1-2 and the "
+			+ "exact early reflections; CUDA ray tracing owns the order-3..N "
+			+ "diffuse tail. Off keeps the image-only solver and the previous "
+			+ "sound. Needs an NVIDIA CUDA driver; when the GPU path is "
+			+ "unavailable the image solver stays active. -D"
+			+ CinemaClientConfig.CUDA_RT_PROPERTY + "=true only seeds the first "
+			+ "launch; this switch is authoritative afterwards.");
+		y += ROW_SPACING;
+		ValueSlider rays = valueSlider(contentLeft, y, contentWidth,
+			"Rays per pass: %.0f", CinemaClientConfig.MIN_RAY_TRACE_RAYS,
+			CinemaClientConfig.MAX_RAY_TRACE_RAYS,
+			CinemaClientConfig.RAY_TRACE_RAYS_STEP, draftRayTraceRays,
+			value -> draftRayTraceRays = (int) Math.round(value));
+		tooltip(rays, "Fibonacci-sphere directions traced per pass. Higher "
+			+ "values smooth the diffuse tail and cost GPU time; 4096 is the "
+			+ "reference. Applies to the next ray-tracing pass.");
+		y += ROW_SPACING;
+		ValueSlider bounces = valueSlider(contentLeft, y, contentWidth,
+			"Max order: %.0f", CinemaClientConfig.MIN_RAY_TRACE_BOUNCES,
+			CinemaClientConfig.MAX_RAY_TRACE_BOUNCES,
+			CinemaClientConfig.RAY_TRACE_BOUNCES_STEP, draftRayTraceBounces,
+			value -> draftRayTraceBounces = (int) Math.round(value));
+		tooltip(bounces, "Highest reflection order the tracer follows; order = "
+			+ "bounce number. Orders 1-2 stay with the image solver, so only "
+			+ "order 3..N feed the ray-traced tail.");
+		y += ROW_SPACING;
+		ValueSlider accumulation = valueSlider(contentLeft, y, contentWidth,
+			"Temporal passes: %.0f",
+			CinemaClientConfig.MIN_RAY_TRACE_ACCUMULATION,
+			CinemaClientConfig.MAX_RAY_TRACE_ACCUMULATION,
+			CinemaClientConfig.RAY_TRACE_ACCUMULATION_STEP,
+			draftRayTraceAccumulation,
+			value -> draftRayTraceAccumulation = (int) Math.round(value));
+		tooltip(accumulation, "Reserved for multi-pass temporal averaging. The "
+			+ "current kernel traces one pass per rebuild, so the value is "
+			+ "saved but not applied yet.");
 	}
 
 	private void buildPerformanceTab() {
-		int y = contentTop;
+		int y = contentTop + SECTION_ROW_OFFSET;
 		ValueSlider reflectionUpdate = valueSlider(contentLeft, y, contentWidth,
 			"Reflection update: %.0f ms",
 			CinemaClientConfig.MIN_REFLECTION_UPDATE_MILLIS,
@@ -346,7 +408,7 @@ public final class CinemaConfigScreen extends Screen {
 	}
 
 	private void buildOutputTab() {
-		int y = contentTop;
+		int y = contentTop + SECTION_ROW_OFFSET;
 		Button limiter = toggle(contentLeft, y, contentWidth, "Limiter",
 			() -> draftLimiterEnabled, value -> draftLimiterEnabled = value);
 		tooltip(limiter, "Feed-forward output limiter. Off bypasses gain "
@@ -516,6 +578,11 @@ public final class CinemaConfigScreen extends Screen {
 		draftLateReverb = CinemaClientConfig.DEFAULT_LATE_REVERB;
 		draftScatteringEnabled = CinemaClientConfig.DEFAULT_SCATTERING_ENABLED;
 		draftLateMaterialEq = CinemaClientConfig.DEFAULT_LATE_MATERIAL_EQ;
+		draftRayTracingEnabled = CinemaClientConfig.DEFAULT_RAY_TRACING;
+		draftRayTraceRays = CinemaClientConfig.DEFAULT_RAY_TRACE_RAYS;
+		draftRayTraceBounces = CinemaClientConfig.DEFAULT_RAY_TRACE_BOUNCES;
+		draftRayTraceAccumulation =
+			CinemaClientConfig.DEFAULT_RAY_TRACE_ACCUMULATION;
 		draftLateFloorDb = CinemaClientConfig.DEFAULT_LATE_FLOOR_DB;
 		draftReflectionUpdateMillis =
 			CinemaClientConfig.DEFAULT_REFLECTION_UPDATE_MILLIS;
@@ -589,6 +656,10 @@ public final class CinemaConfigScreen extends Screen {
 		config.setLateReverb(draftLateReverb);
 		config.setScatteringEnabled(draftScatteringEnabled);
 		config.setLateMaterialEq(draftLateMaterialEq);
+		config.setRayTracingEnabled(draftRayTracingEnabled);
+		config.setRayTraceRays(draftRayTraceRays);
+		config.setRayTraceBounces(draftRayTraceBounces);
+		config.setRayTraceAccumulation(draftRayTraceAccumulation);
 		config.setLateFloorDb(draftLateFloorDb);
 		config.setReflectionUpdateMillis(draftReflectionUpdateMillis);
 		config.setReflectionMoveThresholdMeters(
@@ -704,24 +775,40 @@ public final class CinemaConfigScreen extends Screen {
 				}
 			}
 			case AUDIO -> {
-				int y = contentTop + ROW_SPACING * 6 + 4;
+				sectionLabel(graphics, "Late reverb",
+					contentTop + AUDIO_LATE_HEADER_Y);
+				sectionLabel(graphics, "Scattering",
+					contentTop + AUDIO_SCATTER_HEADER_Y);
+				int y = contentTop + AUDIO_NOTES_Y;
 				graphics.drawString(font, truncate("Order 1 is always active; "
 					+ "order 2-4 add geometric reflections.", contentWidth),
 					contentLeft, y, 0x9A9A9A, false);
-				graphics.drawString(font, truncate("Levels come from the room "
-					+ "calibration; there are no user gain trims.", contentWidth),
+				graphics.drawString(font, truncate("Scattering off also mutes "
+					+ "the ray-traced diffuse tail.", contentWidth),
 					contentLeft, y + 11, 0x9A9A9A, false);
-				graphics.drawString(font, truncate("Order 2-4 floor is relative to "
-					+ "direct sound; RT60 caps the delay.", contentWidth),
+			}
+			case RAYTRACING -> {
+				sectionLabel(graphics, "Ray tracing", contentTop);
+				int y = contentTop + SECTION_ROW_OFFSET + ROW_SPACING * 4 + 2;
+				graphics.drawString(font, truncate("Hybrid: image order 1-2 + "
+					+ "CUDA RT order 3..N diffuse tail.", contentWidth),
+					contentLeft, y, 0x9A9A9A, false);
+				graphics.drawString(font, truncate("Off keeps the image-only "
+					+ "solver and the previous sound.", contentWidth),
+					contentLeft, y + 11, 0x9A9A9A, false);
+				graphics.drawString(font, truncate("Scattering off also mutes "
+					+ "the RT tail. Falls back when CUDA is unavailable.",
+					contentWidth),
 					contentLeft, y + 22, 0x9A9A9A, false);
-				graphics.drawString(font, truncate("World scale only changes "
-					+ "acoustics; geometry and rendering stay in blocks.", contentWidth),
+				graphics.drawString(font, truncate("Ray count and order apply "
+					+ "to the next ray-tracing pass.", contentWidth),
 					contentLeft, y + 33, 0x9A9A9A, false);
 			}
 			case OUTPUT -> {
-				int y = contentTop + ROW_SPACING * 3 + 4;
-				graphics.drawString(font, truncate("Feed-forward gain limiter; "
-					+ "not a measured SPL.", contentWidth),
+				sectionLabel(graphics, "Limiter", contentTop);
+				int y = contentTop + SECTION_ROW_OFFSET + ROW_SPACING * 3 + 4;
+				graphics.drawString(font, truncate("Limiter: feed-forward gain "
+					+ "limiter; not a measured SPL.", contentWidth),
 					contentLeft, y, 0x9A9A9A, false);
 				graphics.drawString(font, truncate("Attack is fixed at 3 ms; "
 					+ "ceiling and release apply live.", contentWidth),
@@ -731,7 +818,8 @@ public final class CinemaConfigScreen extends Screen {
 					contentLeft, y + 22, 0x9A9A9A, false);
 			}
 			case PERFORMANCE -> {
-				int y = contentTop + ROW_SPACING * 7 + 4;
+				sectionLabel(graphics, "Solver budget", contentTop);
+				int y = contentTop + SECTION_ROW_OFFSET + ROW_SPACING * 7 + 4;
 				String cpu;
 				if (cpuUnavailable) {
 					cpu = "Process CPU: n/a";
@@ -746,8 +834,8 @@ public final class CinemaConfigScreen extends Screen {
 				graphics.drawString(font, truncate("JVM process CPU, sampled every "
 					+ "0.5 s; not an acoustic result.", contentWidth),
 					contentLeft, y + 11, 0x9A9A9A, false);
-				graphics.drawString(font, truncate("Solver settings apply live; "
-					+ "no restart needed.", contentWidth),
+				graphics.drawString(font, truncate("Solver budget: settings "
+					+ "apply live; no restart needed.", contentWidth),
 					contentLeft, y + 22, 0x9A9A9A, false);
 			}
 			case VIDEO -> {
@@ -835,6 +923,10 @@ public final class CinemaConfigScreen extends Screen {
 		}
 		String ellipsis = "…";
 		return font.plainSubstrByWidth(text, Math.max(0, width - font.width(ellipsis))) + ellipsis;
+	}
+
+	private void sectionLabel(GuiGraphics graphics, String text, int y) {
+		graphics.drawString(font, text, contentLeft, y, 0xFFD54F, false);
 	}
 
 	private static double normalize(int actual, int min, int max) {
@@ -974,8 +1066,9 @@ public final class CinemaConfigScreen extends Screen {
 	private enum Tab {
 		SCREEN("Screen"),
 		AUDIO("Audio"),
-		OUTPUT("Output"),
-		PERFORMANCE("Performance"),
+		RAYTRACING("Raytrace"),
+		PERFORMANCE("Solver"),
+		OUTPUT("Limiter"),
 		VIDEO("Video"),
 		BEHAVIOR("Behavior"),
 		ADVANCED("Advanced");

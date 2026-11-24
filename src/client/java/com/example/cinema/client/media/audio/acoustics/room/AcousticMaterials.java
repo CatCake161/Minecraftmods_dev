@@ -15,6 +15,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Acoustic material lookup and built-in fallback table.
@@ -34,6 +35,9 @@ public final class AcousticMaterials {
 	 */
 	private static final Map<String, AcousticMaterial> DEFAULTS = defaults();
 	private static volatile Map<String, AcousticMaterial> table = DEFAULTS;
+	private static final int OCCLUSION_CACHE_LIMIT = 8192;
+	private static final Map<BlockState, OcclusionProfile> OCCLUSION_CACHE =
+		new ConcurrentHashMap<>();
 
 	/*
 	 * Occlusion values are game tuning, not STC tables. Attenuation is per metre
@@ -242,11 +246,27 @@ public final class AcousticMaterials {
 	}
 
 	/**
-	 * Direct-path occlusion properties. Screens are intentionally transparent
-	 * here: they are part of the room for reverb, but they should not muffle a
-	 * speaker placed behind them. The mod's own furniture is also transparent.
+	 * Direct-path occlusion properties, cached per block state. Screens are
+	 * intentionally transparent here: they are part of the room for reverb, but
+	 * they should not muffle a speaker placed behind them. The mod's own
+	 * furniture is also transparent. Block states are interned, so identity is
+	 * stable and the map stays small; the tag lookups below are otherwise
+	 * repeated for every block along every occlusion ray.
 	 */
 	public static OcclusionProfile occlusionForState(BlockState state) {
+		OcclusionProfile cached = OCCLUSION_CACHE.get(state);
+		if (cached != null) {
+			return cached;
+		}
+		OcclusionProfile computed = computeOcclusionForState(state);
+		if (OCCLUSION_CACHE.size() > OCCLUSION_CACHE_LIMIT) {
+			OCCLUSION_CACHE.clear();
+		}
+		OCCLUSION_CACHE.put(state, computed);
+		return computed;
+	}
+
+	private static OcclusionProfile computeOcclusionForState(BlockState state) {
 		if (state.getBlock() instanceof ScreenBlock || isIgnoredObstacle(state)) {
 			return OcclusionProfile.TRANSPARENT;
 		}
